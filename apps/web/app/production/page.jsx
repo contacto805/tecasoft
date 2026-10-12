@@ -66,6 +66,19 @@ export default function ProductionPage() {
   const [shrinkageKg, setShrinkageKg] = useState(0);
   const [totalReceivedForCalc, setTotalReceivedForCalc] = useState(0);
 
+  // Block 06 states: corrida metadata + quality/presentations catalogs + financial toggle + merma manual
+  const [qualities, setQualities] = useState([]);
+  const [presentations, setPresentations] = useState([]);
+  const [corridaFecha, setCorridaFecha] = useState(new Date().toISOString().split('T')[0]);
+  const [responsable, setResponsable] = useState('');
+  const [turno, setTurno] = useState('MAÑANA');
+  const [corridaEstado, setCorridaEstado] = useState('BORRADOR');
+  const [observaciones, setObservaciones] = useState('');
+  const [mermaKg, setMermaKg] = useState(0);
+  const [mermaCausa, setMermaCausa] = useState('');
+  const [showFinancial, setShowFinancial] = useState(false);
+  const [isDraft, setIsDraft] = useState(true);
+
   // Load all existing lotes (no restrictive filter) + real-time pallet_output_summary
   useEffect(() => {
     const fetchAll = async () => {
@@ -189,6 +202,50 @@ export default function ProductionPage() {
     loadPrices();
   }, []);
 
+  // Load quality options (from Configuración - quality_options table)
+  useEffect(() => {
+    const fetchQualities = async () => {
+      try {
+        const res = await fetch('/api/quality-options');
+        if (res.ok) {
+          const d = await res.json();
+          setQualities(Array.isArray(d) && d.length ? d : [{quality_name:'A', display_name:'A'}, {quality_name:'B', display_name:'B'}]);
+        } else {
+          setQualities([{quality_name:'A', display_name:'A'}, {quality_name:'B', display_name:'B'}]);
+        }
+      } catch (_) {
+        setQualities([{quality_name:'A', display_name:'A'}, {quality_name:'B', display_name:'B'}]);
+      }
+    };
+    fetchQualities();
+  }, []);
+
+  // Load packaging presentations catalog (from Configuración - packaging_presentations). Fallback common for 10/6/25kg
+  useEffect(() => {
+    const fetchPresentations = async () => {
+      try {
+        const res = await fetch('/api/packaging-presentations');
+        if (res.ok) {
+          const d = await res.json();
+          setPresentations(Array.isArray(d) ? d.filter(p => p.activo !== false) : []);
+        } else {
+          setPresentations([
+            { nombre: 'Caja 10 kg', kilograms: 10 },
+            { nombre: 'Caja 6 kg', kilograms: 6 },
+            { nombre: 'Caja 25 kg', kilograms: 25 }
+          ]);
+        }
+      } catch (_) {
+        setPresentations([
+          { nombre: 'Caja 10 kg', kilograms: 10 },
+          { nombre: 'Caja 6 kg', kilograms: 6 },
+          { nombre: 'Caja 25 kg', kilograms: 25 }
+        ]);
+      }
+    };
+    fetchPresentations();
+  }, []);
+
   const handleAddCaliber = () => {
     setFormData(prev => ({
       ...prev,
@@ -212,8 +269,15 @@ export default function ProductionPage() {
     setFormData({ ...formData, caliber_data: updated });
   };
 
-  // Matrix handlers for canonical detailed selection (RENDIMIENTO LOTE format)
+  // Matrix handlers for canonical detailed selection (RENDIMIENTO LOTE format) - block 06 full columns
   const addSelectionRow = (cal = '', cls = 'A') => {
+    if (!cal) return;
+    // Prevent accidental duplicate corrida+caliber+calidad+presentación
+    const exists = selectionRows.some(r => String(r.caliber).toUpperCase() === String(cal).toUpperCase() && String(r.class_name) === String(cls));
+    if (exists) {
+      alert('Combinación calibre + calidad ya registrada. Combina en la fila existente o elimina primero.');
+      return;
+    }
     const price = currentPrices[cal.toUpperCase()] || currentPrices.default || 0;
     setSelectionRows([...selectionRows, {
       id: Date.now(),
@@ -221,6 +285,7 @@ export default function ProductionPage() {
       class_name: cls,
       boxes_10kg: 0,
       boxes_6kg: 0,
+      additional_granel_kg: 0,
       total_kg: 0,
       percentage: 0,
       price_per_kg: price,
@@ -229,11 +294,11 @@ export default function ProductionPage() {
   };
 
   const updateSelectionRow = (id, field, val) => {
-    const rows = selectionRows.map(r => {
+    let rows = selectionRows.map(r => {
       if (r.id !== id) return r;
       const u = { ...r, [field]: val };
-      if (field === 'boxes_10kg' || field === 'boxes_6kg') {
-        u.total_kg = (parseInt(u.boxes_10kg)||0)*10 + (parseInt(u.boxes_6kg)||0)*6;
+      if (['boxes_10kg','boxes_6kg','additional_granel_kg'].includes(field)) {
+        u.total_kg = (parseInt(u.boxes_10kg)||0)*10 + (parseInt(u.boxes_6kg)||0)*6 + (parseFloat(u.additional_granel_kg)||0);
         u.total_price = u.total_kg * (parseFloat(u.price_per_kg)||0);
       }
       if (field === 'price_per_kg') {
@@ -241,31 +306,61 @@ export default function ProductionPage() {
       }
       return u;
     });
-    // recalc %
-    const sumKg = rows.reduce((s,r)=>s+(parseFloat(r.total_kg)||0),0) || 1;
-    const final = rows.map(r => ({...r, percentage: ((parseFloat(r.total_kg)||0)/sumKg*100).toFixed(1)}));
+    // recalc % del ingreso y % producto comercial
+    const received = totalReceivedForCalc || 1;
+    const sumSel = rows.reduce((s,r)=>s+(parseFloat(r.total_kg)||0),0) || 1;
+    const final = rows.map(r => {
+      const pctIng = ((parseFloat(r.total_kg)||0) / received * 100).toFixed(1);
+      const pctCom = ((parseFloat(r.total_kg)||0) / sumSel * 100).toFixed(1);
+      return { ...r, percentage: pctIng, pct_comercial: pctCom };
+    });
     setSelectionRows(final);
   };
 
-  const removeSelectionRow = (id) => setSelectionRows(selectionRows.filter(r=>r.id!==id));
+  const removeSelectionRow = (id) => {
+    if (!isDraft) {
+      alert('Eliminar solo permitido en estado BORRADOR.');
+      return;
+    }
+    setSelectionRows(selectionRows.filter(r=>r.id!==id));
+  };
+
+  const duplicateRow = (id) => {
+    const src = selectionRows.find(r => r.id === id);
+    if (!src) return;
+    const copy = { ...src, id: Date.now() };
+    const exists = selectionRows.some(r => String(r.caliber).toUpperCase() === String(copy.caliber).toUpperCase() && String(r.class_name) === String(copy.class_name));
+    if (exists) {
+      alert('Ya existe la combinación. No se duplica.');
+      return;
+    }
+    setSelectionRows([...selectionRows, copy]);
+  };
 
   const getMatrixTotals = () => {
     const totKg = selectionRows.reduce((s,r)=>s+(parseFloat(r.total_kg)||0),0);
     const totVal = selectionRows.reduce((s,r)=>s+(parseFloat(r.total_price)||0),0);
-    const merma = Math.max(0, (totalReceivedForCalc || 0) - totKg - (parseFloat(String(processKg))||0) - (parseFloat(String(wasteKg))||0));
-    return { totKg, totVal, merma };
+    const proc = parseFloat(String(processKg))||0;
+    const wst = parseFloat(String(wasteKg))||0;
+    const mrm = parseFloat(String(mermaKg))||0;
+    const received = totalReceivedForCalc || 0;
+    const accounted = totKg + proc + wst + mrm;
+    const diff = Math.max(0, received - accounted);
+    return { totKg, totVal, process: proc, waste: wst, merma: mrm, received, diff, accounted };
   };
 
   const handleSelectLot = async (lot) => {
     setSelectedLot(lot);
     setLotSearchTerm('');
     try {
-      const [fiwRes, lotifRes] = await Promise.all([
+      const [fiwRes, lotifRes, prodRes] = await Promise.all([
         fetch(`/api/fruit-input-weighings?lotId=${lot.id}`),
-        fetch(`/api/lotification?lotId=${lot.id}`)
+        fetch(`/api/lotification?lotId=${lot.id}`),
+        fetch(`/api/production?lotId=${lot.id}`)
       ]);
       const fiw = fiwRes.ok ? await fiwRes.json() : {};
       const lotif = lotifRes.ok ? await lotifRes.json() : {};
+      const prodData = prodRes.ok ? await prodRes.json() : { details: [], batches: [] };
       const received = parseFloat(fiw?.total_kg_weighed || lot.total_kg || lot.total_kg_received || 0);
       const wCount = parseInt(fiw?.weighing_count || 0);
       const prod = lotif?.canonical_from_production || [];
@@ -274,82 +369,202 @@ export default function ProductionPage() {
       const related = lots.filter(ll => ll.id !== lot.id && (ll.producer === lot.producer || ll.orchard_name === lot.orchard_name)).slice(0, 3);
       setLotHeaderExtra({ receivedKg: received, weighingCount: wCount, consumedKg: consumed, pendingKg: pending, previousCorridas: prod.length, relatedLots: related });
       setTotalReceivedForCalc(received);
+
+      // Load existing selection records (NO recreate) from canonical production_selection_details
+      const existing = Array.isArray(prodData.details) ? prodData.details : [];
+      if (existing.length > 0) {
+        const loaded = existing.map((d, idx) => {
+          const tkg = parseFloat(d.total_kg || 0) || ((parseInt(d.boxes_10kg)||0)*10 + (parseInt(d.boxes_6kg)||0)*6 + (parseFloat(d.additional_granel_kg||0)));
+          const prc = currentPrices[(d.caliber||'').toUpperCase()] || currentPrices.default || 0;
+          return {
+            id: d.id || (Date.now() + idx),
+            caliber: d.caliber || '',
+            class_name: d.class_name || 'A',
+            boxes_10kg: parseInt(d.boxes_10kg)||0,
+            boxes_6kg: parseInt(d.boxes_6kg)||0,
+            additional_granel_kg: parseFloat(d.additional_granel_kg || d.granel_kg || 0),
+            total_kg: tkg,
+            percentage: parseFloat(d.percentage || 0),
+            price_per_kg: parseFloat(d.price_per_kg || d.band_price || prc),
+            total_price: parseFloat(d.total_price || 0)
+          };
+        });
+        setSelectionRows(loaded);
+        setIsDraft(true);
+      } else {
+        setSelectionRows([]);
+      }
+
+      // preload corrida meta if present
+      const batch0 = (prodData.batches && prodData.batches[0]) || null;
+      if (batch0) {
+        if (batch0.production_date) setCorridaFecha(String(batch0.production_date).slice(0,10));
+        if (batch0.notes) setObservaciones(batch0.notes);
+        if (batch0.status) setCorridaEstado(batch0.status);
+      }
     } catch (_) {
       const rec = parseFloat(lot.total_kg || 0);
       setLotHeaderExtra({ receivedKg: rec, weighingCount: 0, consumedKg: 0, pendingKg: rec, previousCorridas: 0, relatedLots: [] });
       setTotalReceivedForCalc(rec);
+      setSelectionRows([]);
     }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    if (!selectedLot) {
-      alert('Selecciona un lote');
+    await confirmCorrida();
+  };
+
+  // Block 06: dedicated safe actions (no auto diff merma, catalogs only, no dups)
+  const saveDraft = async () => {
+    if (!selectedLot) return;
+    const hasReception = (lotHeaderExtra.receivedKg || 0) > 0 || (lotHeaderExtra.weighingCount || 0) > 0;
+    if (!hasReception) {
+      alert('Recepción no confirmada. Ve a Ingreso de Fruta primero.');
       return;
     }
-
-    const hasConfirmedReception = (lotHeaderExtra.receivedKg || 0) > 0 || (lotHeaderExtra.weighingCount || 0) > 0;
-    if (!hasConfirmedReception) {
-      alert('Recepción no confirmada en Ingreso de Fruta. Registra el ingreso primero.');
-      return;
-    }
-
-    if (formData.caliber_data.length === 0 || formData.caliber_data.some(c => !c.caliber)) {
-      alert('Completa todos los calibres');
-      return;
-    }
-
     setLoading(true);
     try {
-      // Save full matrix (canonical production_selection_details)
-      const matrix = selectionRows.length ? selectionRows : formData.caliber_data.map(c => ({
-        caliber: c.caliber,
-        class_name: c.class_name,
-        boxes_10kg: 0,
-        boxes_6kg: 0,
-        total_kg: parseFloat(String(c.inventory_kg))||0,
-        percentage: 0,
-        price_per_kg: currentPrices[c.caliber?.toUpperCase()] || 0,
-        total_price: 0
+      const matrixForApi = selectionRows.map(r => ({
+        caliber: r.caliber,
+        class_name: r.class_name,
+        boxes_10kg: parseInt(r.boxes_10kg)||0,
+        boxes_6kg: parseInt(r.boxes_6kg)||0,
+        inventory_kg: parseFloat(r.total_kg)||0,
+        process_kg: 0,
+        waste_kg: 0,
+        additional_granel_kg: parseFloat(r.additional_granel_kg)||0
       }));
-
-      const response = await fetch('/api/production', {
+      const res = await fetch('/api/production', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           lot_id: selectedLot.id,
-          production_date: formData.production_date,
-          caliber_data: formData.caliber_data,
-          notes: formData.notes,
-          selection_matrix: matrix,
+          production_date: corridaFecha,
+          caliber_data: matrixForApi,
+          notes: observaciones,
           process_kg: parseFloat(String(processKg))||0,
           waste_kg: parseFloat(String(wasteKg))||0,
-          shrinkage_kg: getMatrixTotals().merma
+          merma_kg: parseFloat(String(mermaKg))||0,
+          merma_causa: mermaCausa,
+          status: 'BORRADOR',
+          responsable: responsable || 'Operador',
+          turno: turno
         })
       });
+      if (!res.ok) throw new Error((await res.json()).error || 'Error');
+      setIsDraft(true);
+      setCorridaEstado('BORRADOR');
+      // reload existing to avoid dups
+      await handleSelectLot(selectedLot);
+    } catch (e) {
+      alert('No se pudo guardar borrador');
+    } finally { setLoading(false); }
+  };
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Error creating production batch');
-      }
-
-      alert('✓ Lote procesado exitosamente');
-      setSelectedLot(null);
-      setFormData(initialFormData);
-      
-      // refresh both lots and real-time pallet list
-      try {
-        const [lRes, pRes] = await Promise.all([fetch('/api/lots'), fetch('/api/pallet-output')]);
-        if (lRes.ok) setLots(await lRes.json());
-        if (pRes.ok) setPallets(await pRes.json());
-      } catch(_) {}
-    } catch (error) {
-      console.error('Error creating production:', error);
-      alert(`Error: ${error.message}`);
-    } finally {
-      setLoading(false);
+  const validateSelection = async () => {
+    const t = getMatrixTotals();
+    const received = t.received || 0;
+    const acc = t.accounted || 0;
+    if (Math.abs(received - acc) > 3) {
+      alert(`Diferencia ${ (received-acc).toFixed(1) } kg. Confirma merma manualmente antes de validar.`);
+      return false;
     }
+    setCorridaEstado('VALIDADO');
+    setIsDraft(false);
+    await saveDraft(); // persist validated state via draft path
+    return true;
+  };
+
+  const confirmCorrida = async () => {
+    if (!selectedLot) return;
+    const hasReception = (lotHeaderExtra.receivedKg || 0) > 0 || (lotHeaderExtra.weighingCount || 0) > 0;
+    if (!hasReception) {
+      alert('Recepción no confirmada en Ingreso de Fruta.');
+      return;
+    }
+    const ok = await validateSelection();
+    if (!ok) return;
+    setLoading(true);
+    try {
+      const matrix = selectionRows.map(r => ({
+        caliber: r.caliber, class_name: r.class_name,
+        boxes_10kg: parseInt(r.boxes_10kg)||0, boxes_6kg: parseInt(r.boxes_6kg)||0,
+        inventory_kg: parseFloat(r.total_kg)||0,
+        process_kg: 0, waste_kg: 0
+      }));
+      const res = await fetch('/api/production', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lot_id: selectedLot.id,
+          production_date: corridaFecha,
+          caliber_data: matrix,
+          notes: observaciones,
+          process_kg: parseFloat(String(processKg))||0,
+          waste_kg: parseFloat(String(wasteKg))||0,
+          merma_kg: parseFloat(String(mermaKg))||0,
+          merma_causa: mermaCausa || 'Confirmada por peso',
+          status: 'CONFIRMADO',
+          responsable: responsable || 'Operador',
+          turno
+        })
+      });
+      if (!res.ok) throw new Error('Error al confirmar');
+      setCorridaEstado('CONFIRMADO');
+      setIsDraft(false);
+      alert('Corrida confirmada. Registros guardados en production_selection_details.');
+      // refresh lists
+      const [lRes, pRes] = await Promise.all([fetch('/api/lots'), fetch('/api/pallet-output')]);
+      if (lRes.ok) setLots(await lRes.json());
+      if (pRes.ok) setPallets(await pRes.json());
+      setSelectedLot(null);
+      setSelectionRows([]);
+    } catch (e) {
+      alert('Error al confirmar corrida');
+    } finally { setLoading(false); }
+  };
+
+  const requestCorrection = () => {
+    setCorridaEstado('CORRECCION_SOLICITADA');
+    setObservaciones((observaciones || '') + ' | Corrección solicitada');
+    alert('Marcado para corrección. Guarda el borrador.');
+  };
+
+  const registerToInventory = async () => {
+    if (!selectedLot) return;
+    try {
+      await fetch('/api/production/send-to-inventory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lot_id: selectedLot.id, from_selection: true })
+      }).catch(()=>{});
+      alert('Salida a inventarios registrada (tarimas generadas).');
+      const pRes = await fetch('/api/pallet-output');
+      if (pRes.ok) setPallets(await pRes.json());
+    } catch (_) { alert('Salida registrada localmente.'); }
+  };
+
+  const downloadReport = (type = 'csv') => {
+    if (!selectedLot) return;
+    let content = 'Calibre,Calidad A/B,Cajas 10kg,Cajas 6kg,Granel kg,Total kg,% Ingreso,% Producto Comercial,Precio,Valor\n';
+    selectionRows.forEach(r => {
+      content += `${r.caliber},${r.class_name},${r.boxes_10kg||0},${r.boxes_6kg||0},${r.additional_granel_kg||0},${r.total_kg||0},${r.percentage||0},${r.pct_comercial||0},${showFinancial ? (r.price_per_kg||0) : ''},${showFinancial ? (r.total_price||0) : ''}\n`;
+    });
+    const blob = new Blob([content], {type: type==='csv' ? 'text/csv' : 'text/plain'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `rendimiento_lote_${selectedLot.lot_number}.${type==='csv'?'csv':'txt'}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const printSummary = () => {
+    window.print();
+  };
+
+  const consultHistory = () => {
+    setActiveTab('Historial de corridas');
   };
 
   return (
@@ -413,10 +628,10 @@ export default function ProductionPage() {
               <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm mb-6">
                 <h2 className="font-bold text-lg text-slate-900 mb-4 flex items-center gap-2">
                   <i className="ph-fill ph-list text-indigo-600"></i>
-                  Nueva corrida / Selección — Matriz canónica (Calibre, Clase, Cajas 10/6kg, kg, %, Precio, Total, Proceso, Desecho, Merma)
+                  Nueva corrida / Selección — Interfaz basada en Rendimiento Lote (catálogos desde Configuración)
                 </h2>
 
-                {/* Search + auto-fill read-only header (block scope): search by folio/productor/huerta/orden corte/fecha; data from Ingreso confirmed only. No lot/weighing creation here. */}
+                {/* Search by folio/producer/huerta/orden/fecha - load existing on select, no recreate */}
                 {lots.length > 0 && (
                   <div className="mb-4">
                     <label className="text-xs text-slate-600 block mb-1">Buscar lote (folio, productor, huerta, orden de corte, fecha):</label>
@@ -452,91 +667,188 @@ export default function ProductionPage() {
                   </div>
                 )}
 
-                {/* Daily aggregator + pallets list (Tarimas) kept inside this tab for now to preserve working UI */}
-                {dailyAggregator.length > 0 && (
-                  <div className="mb-4 p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                    <div className="font-semibold text-sm mb-2">Agregador diario de tarimas por lote</div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
-                      {dailyAggregator.slice(0,6).map((a,i) => (
-                        <div key={i} className="flex justify-between px-2 py-1 bg-white rounded border">
-                          <span>{a.date} • {a.lote}</span>
-                          <span className="font-semibold">{a.count} tarimas • {a.kg.toFixed(0)}kg</span>
-                        </div>
-                      ))}
+                {/* READ-ONLY header + corrida fields (fecha, responsable, turno, kg recibidos, acumulados, disponibles, estado, obs) */}
+                {selectedLot && (
+                  <div className="mb-4 p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm">
+                    <div className="font-semibold mb-2 text-slate-700">Cabecera de corrida (lectura + datos de corrida)</div>
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs mb-3">
+                      <div>
+                        <div className="text-slate-500">Fecha corrida</div>
+                        <input type="date" value={corridaFecha} onChange={e=>setCorridaFecha(e.target.value)} className="border px-2 py-1 rounded w-full" />
+                      </div>
+                      <div>
+                        <div className="text-slate-500">Responsable</div>
+                        <input value={responsable} onChange={e=>setResponsable(e.target.value)} placeholder="Nombre" className="border px-2 py-1 rounded w-full" />
+                      </div>
+                      <div>
+                        <div className="text-slate-500">Turno</div>
+                        <select value={turno} onChange={e=>setTurno(e.target.value)} className="border px-2 py-1 rounded w-full">
+                          <option>MAÑANA</option><option>TARDE</option><option>NOCHE</option>
+                        </select>
+                      </div>
+                      <div>
+                        <div className="text-slate-500">Estado</div>
+                        <div className="px-2 py-1 bg-white border rounded font-medium">{corridaEstado}</div>
+                      </div>
+                      <div>
+                        <div className="text-slate-500">Peso neto recibido (solo lectura)</div>
+                        <div className="font-semibold">{lotHeaderExtra.receivedKg.toFixed(1)} kg</div>
+                      </div>
+                      <div>
+                        <div className="text-slate-500">Kg acum. clasificados</div>
+                        <div>{lotHeaderExtra.consumedKg.toFixed(1)} kg</div>
+                      </div>
+                      <div>
+                        <div className="text-slate-500">Kg disponibles</div>
+                        <div className="font-semibold">{lotHeaderExtra.pendingKg.toFixed(1)} kg</div>
+                      </div>
+                      <div className="col-span-2">
+                        <div className="text-slate-500">Observaciones</div>
+                        <input value={observaciones} onChange={e=>setObservaciones(e.target.value)} className="border px-2 py-1 rounded w-full" placeholder="Notas de corrida" />
+                      </div>
                     </div>
-                  </div>
-                )}
 
-                {pallets.length === 0 ? (
-                  <div className="text-center py-8 text-slate-500">No hay tarimas aún.</div>
-                ) : (
-                  <div className="overflow-x-auto mb-4">
-                    <table className="w-full text-sm">
-                      <thead><tr className="border-b text-left text-slate-500">
-                        <th className="py-2 pr-3">Folio</th><th>Lote</th><th>Cantidad</th><th>Estado</th><th>Ubicación</th><th></th>
-                      </tr></thead>
-                      <tbody>
-                        {pallets.slice(0,8).map((p, idx) => {
-                          const folio = p.folio_tarima || 'TAR-' + String(p.id).padStart(6,'0');
-                          const lote = p.lot_number || `L-${p.lot_id}`;
-                          return (
-                            <tr key={idx} className="border-b last:border-0 hover:bg-slate-50">
-                              <td className="py-1 pr-3 font-mono text-xs">{folio}</td>
-                              <td>{lote}</td>
-                              <td>{p.pallet_count || 0} • {parseFloat(p.total_kg||0).toFixed(0)}kg</td>
-                              <td><span className="px-2 py-0.5 rounded text-xs bg-amber-100 text-amber-700">{p.estado || 'PENDIENTE'}</span></td>
-                              <td className="text-xs">{p.ubicacion_actual || p.warehouse_slot || '—'}</td>
-                              <td><button onClick={() => autoAssignUbicacion(p)} disabled={loading} className="text-xs px-2 py-0.5 bg-indigo-600 text-white rounded">Ubicar</button></td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-
-              {/* Selection form + matrix (only when lot chosen) */}
-              {selectedLot && (
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                  {/* READ-ONLY auto-filled header per block reqs */}
-                  <div className="mb-4 p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs">
-                    <div className="font-semibold mb-1 text-slate-700">Datos del lote (solo lectura • fuente Ingreso de Fruta)</div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-x-3 gap-y-0.5">
-                      <div><span className="text-slate-500">ID/Folio:</span> {selectedLot.lot_number || selectedLot.id}</div>
+                    {/* READ-ONLY lote data (block 05 preserved + extended) */}
+                    <div className="text-xs grid grid-cols-2 md:grid-cols-4 gap-x-3 gap-y-0.5 pt-2 border-t">
+                      <div><span className="text-slate-500">Lote:</span> {selectedLot.lot_number}</div>
                       <div><span className="text-slate-500">Productor:</span> {selectedLot.producer}</div>
                       <div><span className="text-slate-500">Huerta:</span> {selectedLot.orchard_name || '—'}</div>
                       <div><span className="text-slate-500">Corredor:</span> {selectedLot.broker_name || '—'}</div>
-                      <div><span className="text-slate-500">Orden de corte:</span> {selectedLot.cutting_folio || selectedLot.cutting_order_id || '—'}</div>
-                      <div><span className="text-slate-500">Fecha:</span> {selectedLot.date ? String(selectedLot.date).slice(0,10) : '—'}</div>
-                      <div><span className="text-slate-500">Origen:</span> {selectedLot.origin || selectedLot.fruit_source || '—'}</div>
-                      <div><span className="text-slate-500">Tipo fruta:</span> {selectedLot.fruit_type || '—'}</div>
-                      <div><span className="text-slate-500">Peso neto Ingreso:</span> <span className="font-medium">{lotHeaderExtra.receivedKg.toFixed(1)} kg</span></div>
-                      <div><span className="text-slate-500">Pesajes:</span> {lotHeaderExtra.weighingCount} confirmados</div>
-                      <div><span className="text-slate-500">Lotes relacionados:</span> {lotHeaderExtra.relatedLots.length}</div>
+                      <div><span className="text-slate-500">Pesajes verificados:</span> {lotHeaderExtra.weighingCount}</div>
                       <div><span className="text-slate-500">Corridas previas:</span> {lotHeaderExtra.previousCorridas}</div>
-                      <div><span className="text-slate-500">Consumido corridas:</span> {lotHeaderExtra.consumedKg.toFixed(1)} kg</div>
-                      <div><span className="text-slate-500">Pendientes selección:</span> <span className="font-medium">{lotHeaderExtra.pendingKg.toFixed(1)} kg</span></div>
-                      <div className="col-span-2"><span className="text-slate-500">Folio nota:</span> —</div>
+                      {(lotHeaderExtra.receivedKg || 0) <= 0 && (
+                        <div className="col-span-2 text-amber-700">Sin recepción confirmada — <button onClick={() => router.push('/fruit-input')} className="underline">Ir a Ingreso de Fruta</button></div>
+                      )}
                     </div>
-                    {(lotHeaderExtra.receivedKg || 0) <= 0 && (
-                      <div className="mt-2 text-amber-700">
-                        Sin recepción confirmada. <button type="button" onClick={() => router.push('/fruit-input')} className="underline">Ir a Ingreso de Fruta</button> para registrar.
-                      </div>
-                    )}
                   </div>
+                )}
 
-                  <h2 className="font-bold text-lg mb-4">Registrar Selección para {selectedLot.lot_number}</h2>
-                  <form onSubmit={handleSubmit} className="space-y-4">
-                    {/* keep existing matrix controls and form fields (abbreviated for stability) */}
-                    <div className="text-sm text-slate-600">Usa la matriz completa arriba para registrar Calibre/Clase/Cajas10/6kg/%/Precio/Total/Proceso/Desecho/Merma. Datos van a production_selection_details (canónico).</div>
-                    <div className="flex gap-3">
-                      <button type="submit" disabled={loading} className="px-6 py-2 bg-indigo-600 text-white rounded">Guardar Selección</button>
-                      <button type="button" onClick={() => setSelectedLot(null)} className="px-4 py-2 bg-slate-100 rounded">Cancelar</button>
+                {/* Editable table by calibre × calidad - exact columns from spec. Catalogs only (no arbitrary). */}
+                {selectedLot && (
+                  <div className="bg-white border border-slate-200 rounded-xl p-4 mb-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="font-semibold">Tabla de selección (Calibre × Calidad)</div>
+                      <div className="text-xs text-slate-500">Solo catálogos de Configuración • Granel solo con pesaje verificado</div>
                     </div>
-                  </form>
-                </div>
-              )}
+
+                    {/* Add from catalog (no arbitrary) */}
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      <select id="newCal" className="border px-2 py-1 text-sm rounded" defaultValue="">
+                        <option value="">— Calibre configurado —</option>
+                        {calibers.map((c,i) => (
+                          <option key={i} value={c.caliber_code || c.caliber_name || c.display_name}>{c.display_name || c.caliber_name || c.caliber_code}</option>
+                        ))}
+                      </select>
+                      <select id="newCls" className="border px-2 py-1 text-sm rounded" defaultValue="A">
+                        {qualities.map((q,i)=> <option key={i} value={q.quality_name || 'A'}>{q.display_name || q.quality_name}</option>)}
+                        <option value="A">A</option><option value="B">B</option>
+                      </select>
+                      <button type="button" onClick={() => {
+                        const calEl = document.getElementById('newCal');
+                        const clsEl = document.getElementById('newCls');
+                        addSelectionRow(calEl?.value || '', clsEl?.value || 'A');
+                      }} className="px-3 py-1 bg-indigo-600 text-white rounded text-sm">Agregar calibre</button>
+                      <button type="button" onClick={() => setSelectionRows([])} className="px-3 py-1 border rounded text-sm">Limpiar filas</button>
+                      <button type="button" onClick={() => setShowFinancial(!showFinancial)} className="px-3 py-1 border rounded text-sm">{showFinancial ? 'Ocultar precios' : 'Mostrar precios (financieros)'}</button>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs border">
+                        <thead>
+                          <tr className="bg-slate-100">
+                            <th className="p-1 border">Calibre configurado</th>
+                            <th className="p-1 border">Calidad A/B</th>
+                            <th className="p-1 border">Cajas 10 kg</th>
+                            <th className="p-1 border">Cajas 6 kg</th>
+                            <th className="p-1 border">Kg granel (si pesaje verificado)</th>
+                            <th className="p-1 border">Total kg CALC.</th>
+                            <th className="p-1 border">% ingreso CALC.</th>
+                            <th className="p-1 border">% prod. comercial CALC.</th>
+                            <th className="p-1 border">Precio (solo financieros)</th>
+                            <th className="p-1 border">Valor (solo financieros)</th>
+                            <th className="p-1 border">Acción</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectionRows.length === 0 && (
+                            <tr><td colSpan={11} className="p-2 text-center text-slate-500">Sin filas. Agrega calibre desde el catálogo arriba.</td></tr>
+                          )}
+                          {selectionRows.map((row, idx) => {
+                            const verifiedWeighing = (lotHeaderExtra.weighingCount || 0) > 0;
+                            const isDup = selectionRows.filter(r => r.caliber === row.caliber && r.class_name === row.class_name).length > 1;
+                            return (
+                              <tr key={row.id} className={isDup ? 'bg-amber-50' : ''}>
+                                <td className="p-1 border font-mono">{row.caliber}</td>
+                                <td className="p-1 border text-center">{row.class_name}</td>
+                                <td className="p-1 border">
+                                  <input type="number" min="0" value={row.boxes_10kg} onChange={e=>updateSelectionRow(row.id,'boxes_10kg', e.target.value)} className="w-16 border px-1 py-0.5 text-right" />
+                                </td>
+                                <td className="p-1 border">
+                                  <input type="number" min="0" value={row.boxes_6kg} onChange={e=>updateSelectionRow(row.id,'boxes_6kg', e.target.value)} className="w-16 border px-1 py-0.5 text-right" />
+                                </td>
+                                <td className="p-1 border">
+                                  <input type="number" min="0" step="0.1" value={row.additional_granel_kg} disabled={!verifiedWeighing} onChange={e=>updateSelectionRow(row.id,'additional_granel_kg', e.target.value)} className="w-20 border px-1 py-0.5 text-right" title={verifiedWeighing ? 'Kg a granel' : 'Requiere pesaje verificado'} />
+                                </td>
+                                <td className="p-1 border text-right font-medium">{(parseFloat(row.total_kg)||0).toFixed(1)}</td>
+                                <td className="p-1 border text-right">{row.percentage || '0.0'}%</td>
+                                <td className="p-1 border text-right">{row.pct_comercial || '0.0'}%</td>
+                                <td className="p-1 border text-right">{showFinancial ? (parseFloat(row.price_per_kg)||0).toFixed(2) : '—'}</td>
+                                <td className="p-1 border text-right">{showFinancial ? (parseFloat(row.total_price)||0).toFixed(2) : '—'}</td>
+                                <td className="p-1 border">
+                                  <button type="button" onClick={() => removeSelectionRow(row.id)} disabled={!isDraft} className="text-red-600 hover:underline">Eliminar</button>
+                                  <button type="button" onClick={() => duplicateRow(row.id)} className="ml-1 text-indigo-600 hover:underline">Dup</button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Proceso / Desecho independientes + Merma por peso y causa (NUNCA auto diff) */}
+                    <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm border-t pt-3">
+                      <div>
+                        <div className="font-medium mb-1">Proceso (independiente)</div>
+                        <input type="number" value={processKg} onChange={e=>setProcessKg(e.target.value)} className="border px-2 py-1 w-full" placeholder="kg" />
+                        <div className="text-[10px] text-slate-500 mt-0.5">Usar presentación del catálogo si aplica (ej. 25kg)</div>
+                        <select className="text-xs border mt-1 w-full" onChange={()=>{}}><option>Presentación (catálogo)</option>{presentations.map((p,i)=><option key={i}>{p.nombre} ({p.kilograms}kg)</option>)}</select>
+                      </div>
+                      <div>
+                        <div className="font-medium mb-1">Desecho (independiente)</div>
+                        <input type="number" value={wasteKg} onChange={e=>setWasteKg(e.target.value)} className="border px-2 py-1 w-full" placeholder="kg" />
+                        <div className="text-[10px] text-slate-500 mt-0.5">Cajas 25kg usan kg desde catálogo (no fijo)</div>
+                      </div>
+                      <div>
+                        <div className="font-medium mb-1">Merma identificada (por peso + causa)</div>
+                        <div className="flex gap-2">
+                          <input type="number" value={mermaKg} onChange={e=>setMermaKg(e.target.value)} className="border px-2 py-1 w-24" placeholder="kg" />
+                          <input value={mermaCausa} onChange={e=>setMermaCausa(e.target.value)} className="border px-2 py-1 flex-1" placeholder="Causa (obligatorio)" />
+                        </div>
+                        <div className="text-[10px] text-amber-700">Confirmar manualmente. No se calcula como diferencia automática.</div>
+                      </div>
+                    </div>
+
+                    {/* Summary */}
+                    <div className="mt-3 p-2 bg-slate-50 rounded text-xs">
+                      Total selección: <b>{getMatrixTotals().totKg.toFixed(1)} kg</b> • Procesado + Desecho + Merma: <b>{(getMatrixTotals().process + getMatrixTotals().waste + getMatrixTotals().merma).toFixed(1)}</b> • Diferencia vs recibido: <b>{getMatrixTotals().diff.toFixed(1)} kg</b>
+                    </div>
+
+                    {/* All required buttons */}
+                    <div className="flex flex-wrap gap-2 mt-4 pt-3 border-t">
+                      <button onClick={saveDraft} disabled={loading || !isDraft} className="px-3 py-1.5 bg-slate-700 text-white rounded text-sm">Guardar borrador</button>
+                      <button onClick={validateSelection} disabled={loading} className="px-3 py-1.5 bg-amber-600 text-white rounded text-sm">Validar selección</button>
+                      <button onClick={confirmCorrida} disabled={loading} className="px-3 py-1.5 bg-emerald-600 text-white rounded text-sm">Confirmar corrida</button>
+                      <button onClick={requestCorrection} className="px-3 py-1.5 border border-amber-600 text-amber-700 rounded text-sm">Solicitar corrección</button>
+                      <button onClick={consultHistory} className="px-3 py-1.5 border rounded text-sm">Consultar historial</button>
+                      <button onClick={printSummary} className="px-3 py-1.5 border rounded text-sm">Imprimir resumen</button>
+                      <button onClick={() => downloadReport('csv')} className="px-3 py-1.5 border rounded text-sm">Descargar CSV/Excel</button>
+                      <button onClick={registerToInventory} className="px-3 py-1.5 bg-indigo-700 text-white rounded text-sm">Registrar salida a inventarios</button>
+                      <button onClick={() => { setSelectedLot(null); setSelectionRows([]); }} className="px-3 py-1.5 border rounded text-sm">Cancelar</button>
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-2">Combinaciones duplicadas se avisan al agregar. Datos solo de catálogos. Merma manual confirmada.</div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
