@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "Módulo de Gastos",
+    "slug": "gastos-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0f766e"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.tecavofruits.gastos"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0f766e"
+      },
+      "package": "com.tecavofruits.gastos",
+      "versionCode": 1,
+      "permissions": ["INTERNET", "CAMERA", "READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE"]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      ["expo-camera", { "cameraPermission": "Permitir que Gastos acceda a la cámara para fotos de comprobantes" }]
+    ],
+    "experiments": { "typedRoutes": false },
+    "extra": { "eas": { "projectId": "tecavo-gastos-mobile" } }
+  }
+}

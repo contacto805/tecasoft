@@ -1,0 +1,10 @@
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Avocado shape -->
+  <circle cx="12" cy="13" r="10" fill="#10b981" opacity="0.9"/>
+  
+  <!-- Pit -->
+  <circle cx="12" cy="13" r="4" fill="#92400e"/>
+  
+  <!-- Leaf accent -->
+  <ellipse cx="15" cy="8" rx="3.5" ry="2.5" fill="#059669" opacity="0.8" transform="rotate(35 15 8)"/>
+</svg>

@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "Acopios de Campo",
+    "slug": "acopios-campo",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#14532d"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.tecavofruits.acopioscampo"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#14532d"
+      },
+      "package": "com.tecavofruits.acopioscampo",
+      "versionCode": 1,
+      "permissions": [
+        "INTERNET",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      ["expo-camera", {"cameraPermission": "Allow Acopios to access your camera and take photos of huertas and odometers"}],
+      ["expo-location", {"locationAlwaysAndWhenInUsePermission": "Allow Acopios to use your GPS location for huerta visits"}]
+    ],
+    "extra": {
+      "eas": { "projectId": "acopios-campo" }
+    }
+  }
+}

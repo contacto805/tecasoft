@@ -1,0 +1,229 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Colores del sistema Tecavo Fruits - Brandboard Palette */
+  --brand-primary: #024D32;
+  --brand-primary-rgb: 2, 77, 50;
+  --brand-secondary: #9E4633;
+  --brand-secondary-rgb: 158, 70, 51;
+  --brand-accent: #E8D547;
+  --brand-accent-rgb: 232, 213, 71;
+  --brand-text: #0A3020;
+  --brand-text-rgb: 10, 48, 32;
+  --brand-border: #E8D547;
+  
+  /* Variantes de luminosidad */
+  --brand-50: #E8F3EC;
+  --brand-100: #C8E3D1;
+  --brand-500: #024D32;
+  --brand-600: #0A3020;
+  --brand-700: #071F15;
+  
+  /* Fondo del sistema */
+  --bg-primary: #f8fafc;
+  --bg-white: #ffffff;
+}
+
+/* Clases de utilidad para colores del sistema */
+.bg-brand-primary { background-color: var(--brand-primary) !important; }
+.bg-brand-secondary { background-color: var(--brand-secondary) !important; }
+.bg-brand-accent { background-color: var(--brand-accent) !important; }
+.text-brand-primary { color: var(--brand-primary) !important; }
+.text-brand-secondary { color: var(--brand-secondary) !important; }
+.text-brand-accent { color: var(--brand-accent) !important; }
+.text-brand-text { color: var(--brand-text) !important; }
+.border-brand-primary { border-color: var(--brand-primary) !important; }
+.border-brand-secondary { border-color: var(--brand-secondary) !important; }
+.border-brand-accent { border-color: var(--brand-accent) !important; }
+.border-brand-border { border-color: var(--brand-border) !important; }
+
+/* ==========================================
+   Custom styles extracted from design HTML
+   ========================================== */
+
+body {
+  background-color: #f1f5f9;
+  color: var(--brand-text);
+  -webkit-font-smoothing: antialiased;
+}
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+        }
+        /* Custom scrollbar for inner areas */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+        .bg-mesh {
+            background-image: 
+                radial-gradient(at 0% 0%, hsla(160, 100%, 75%, 0.1) 0px, transparent 50%),
+                radial-gradient(at 100% 0%, hsla(210, 100%, 75%, 0.1) 0px, transparent 50%);
+        }
+
+body {
+background-color: #f8fafc; color: #0f172a; -webkit-font-smoothing: antialiased;
+}
+        .glass-panel { background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.5); }
+        .bg-mesh { background-image: radial-gradient(at 0% 0%, hsla(160, 100%, 75%, 0.1) 0px, transparent 50%), radial-gradient(at 100% 0%, hsla(210, 100%, 75%, 0.1) 0px, transparent 50%); }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+
+body {
+  background-color: #f1f5f9;
+  color: #0f172a;
+  -webkit-font-smoothing: antialiased;
+}
+        .scanner-frame {
+            position: relative;
+            width: 100%;
+            height: 200px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        .scanner-line {
+            position: absolute;
+            width: 100%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #10b981, transparent);
+            animation: scan 2s linear infinite;
+        }
+        @keyframes scan {
+            0% { top: 0; }
+            50% { top: 100%; }
+            100% { top: 0; }
+        }
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        .animate-spin {
+            animation: spin 1s linear infinite;
+        }
+
+/* ==========================================
+   Estilos globales para inputs visibles
+   ========================================== */
+
+/* Todos los inputs, textareas y selects tendrán texto negro visible */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+input[type="date"],
+input[type="tel"],
+input[type="url"],
+input[type="search"],
+input[type="time"],
+input[type="datetime-local"],
+textarea,
+select {
+  color: #000000 !important;
+  font-weight: 600 !important;
+  position: relative !important;
+  z-index: 10 !important;
+  -webkit-text-fill-color: #000000 !important;
+}
+
+/* Placeholder visible pero más claro */
+input::placeholder,
+textarea::placeholder {
+  color: #64748b !important;
+  font-weight: 400 !important;
+  opacity: 0.7 !important;
+  -webkit-text-fill-color: #64748b !important;
+}
+
+/* Cuando el input está enfocado - aún más visible */
+input:focus,
+textarea:focus,
+select:focus {
+  color: #000000 !important;
+  font-weight: 700 !important;
+  z-index: 20 !important;
+  -webkit-text-fill-color: #000000 !important;
+}
+
+/* Input deshabilitado - gris pero visible */
+input:disabled,
+textarea:disabled,
+select:disabled {
+  color: #475569 !important;
+  -webkit-text-fill-color: #475569 !important;
+}
+/* ==========================================
+   THEME VARIABLES (centralized for UI config)
+   ========================================== */
+:root {
+  --ui-primary: var(--brand-primary, #024D32);
+  --ui-secondary: var(--brand-secondary, #9E4633);
+  --ui-accent: var(--brand-accent, #E8D547);
+  --ui-background: #f8fafc;
+  --ui-surface: #ffffff;
+  --ui-text: #0f172a;
+  --ui-text-muted: #475569;
+  --ui-border: #e2e8f0;
+  --ui-success: #10b981;
+  --ui-warning: #f59e0b;
+  --ui-danger: #ef4444;
+  --ui-info: #3b82f6;
+}
+
+/* ==========================================
+   CLEANED GLOBAL STYLES - no universal black !important that blocks themes
+   ========================================== */
+body, html {
+  background-color: var(--ui-background);
+  color: var(--ui-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: var(--ui-text);
+  font-weight: 700;
+}
+
+/* Keep good contrast for body text while allowing component overrides and theme vars */
+p, span, label, li, td, th, a:not([class*="bg-"]):not(.no-black-force) {
+  color: inherit;
+}
+
+/* Tables */
+th {
+  font-weight: 700;
+  color: var(--ui-text);
+}
+
+/* Preserve white text on dark/brand buttons */
+[class*="bg-black"], [class*="bg-slate-900"], [class*="bg-emerald"], [class*="bg-blue"], [class*="bg-green"], [class*="bg-brand"], .btn, .button {
+  color: inherit;
+}
+
+[class*="bg-black"] *, [class*="bg-slate-900"] * {
+  color: inherit;
+}
+
+/* Footer appropriate muted */
+footer * { color: #cbd5e1; }
+footer a, footer h4 { color: #e2e8f0; }
+
+/* Icons inherit */
+i.ph, .ph { color: inherit; }
