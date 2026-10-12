@@ -961,8 +961,8 @@ ${fmt(gsemis)}`;
                     <button onClick={() => router.push('/fruit-input')} className="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-medium text-sm transition-colors">
                         Ingreso de Fruta
                     </button>
-                    <button onClick={() => router.push('/lot-registration')} className="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-medium text-sm transition-colors">
-                        Registro de Lotificación
+                    <button onClick={() => router.push('/production?tab=seleccion')} className="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-medium text-sm transition-colors">
+                        Producción (Selección)
                     </button>
                 </nav>
             </div>

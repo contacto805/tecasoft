@@ -6,13 +6,19 @@ export async function GET(request) {
   const lotId = searchParams.get('lotId');
 
   if (lotId) {
-    const result = await sql`
-      SELECT * FROM fruit_input_weighings 
+    // Authoritative: sum only confirmed weighings for the lot (exclude any future annulled/replaced via status if added).
+    // No JOIN duplication; direct aggregate from fruit_input_weighings (single source of reception).
+    const [result] = await sql`
+      SELECT 
+        COALESCE(SUM(total_kg_weighed), 0) as total_kg_weighed,
+        MAX(public_scale_date) as public_scale_date,
+        MAX(notes) as notes,
+        MAX(master_batch_id) as master_batch_id,
+        COUNT(*) as weighing_count
+      FROM fruit_input_weighings 
       WHERE lot_id = ${parseInt(lotId)}
-      ORDER BY created_at DESC
-      LIMIT 1
     `;
-    return NextResponse.json(result[0] || null);
+    return NextResponse.json(result || null);
   }
 
   return NextResponse.json(null);

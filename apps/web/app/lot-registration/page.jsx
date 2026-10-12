@@ -22,9 +22,12 @@ export default function ProductionPage() {
   const router = useRouter();
   // DEPRECATED: Lote Registro ha sido desincorporado del flujo activo.
   // Toda la selección y rendimiento ahora se registra en el módulo Producción (fuente canónica).
-  // Redirigiendo... 
+  // Redirección HTTP-style a pestaña de selección (con lotId si aplica).
   if (typeof window !== 'undefined') {
-    setTimeout(() => router.push('/production'), 1200);
+    const params = new URLSearchParams(window.location.search);
+    const lotId = params.get('lotId');
+    const target = lotId ? `/production?tab=seleccion&lotId=${lotId}` : '/production?tab=seleccion';
+    setTimeout(() => router.replace(target), 800);
   }
   const [availableLots, setAvailableLots] = useState([]);
   const [selectedLot, setSelectedLot] = useState(null);

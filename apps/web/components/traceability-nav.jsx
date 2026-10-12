@@ -29,7 +29,7 @@ export default function TraceabilityNav({ type, id, data = {} }) {
         { label: 'Orden de Corte', route: '/cutting-orders', icon: 'ph-clipboard-text', condition: data.cutting_order_id },
         { label: 'Pesajes', route: '/fruit-input', icon: 'ph-scales', condition: true },
         { label: 'Rendimiento', route: '/lot-performance', icon: 'ph-chart-bar', condition: true },
-        { label: 'Lotificación', route: '/lot-registration', icon: 'ph-tag', condition: true },
+        { label: 'Lotificación', route: '/production?tab=rendimiento', icon: 'ph-tag', condition: true },
         { label: 'Inventario', route: '/inventory', icon: 'ph-thermometer-cold', condition: true },
         { label: 'Embarques', route: '/embarques', icon: 'ph-truck', condition: true },
         { label: 'Costos', route: `/admin/lot-cost-summary?lotId=${id}`, icon: 'ph-currency-dollar', condition: true },

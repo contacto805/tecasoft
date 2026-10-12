@@ -7,12 +7,33 @@ export async function GET(request) {
     const lotId = searchParams.get('lotId');
 
     if (lotId) {
-      const record = await sql`
-        SELECT * FROM lotification_records 
+      // RECONCILIATION: lotification_records is legacy structure. 
+      // Canonical yield/selection now ONLY from production_selection_details + fruit_input_weighings (Ingreso de Fruta).
+      // Do NOT sum across lotification_registry / lot_selection_results / lot_performance as additional production.
+      // Return consolidated view from canonical sources for analysis (read-only).
+      const [lot] = await sql`SELECT * FROM lots WHERE id = ${parseInt(lotId)}`;
+      const prod = await sql`
+        SELECT 
+          caliber, class_name,
+          COALESCE(SUM(boxes_10kg),0) as boxes_10,
+          COALESCE(SUM(boxes_6kg),0) as boxes_6,
+          COALESCE(SUM(total_kg),0) as total_kg,
+          COALESCE(SUM(process_kg),0) as process_kg,
+          COALESCE(SUM(waste_kg),0) as waste_kg
+        FROM production_selection_details 
         WHERE lot_id = ${parseInt(lotId)}
-        LIMIT 1
+        GROUP BY caliber, class_name
       `;
-      return NextResponse.json(record[0] || null);
+      const [fiw] = await sql`
+        SELECT COALESCE(SUM(total_kg_weighed),0) as received_kg 
+        FROM fruit_input_weighings WHERE lot_id = ${parseInt(lotId)}
+      `;
+      return NextResponse.json({ 
+        lot, 
+        canonical_from_production: prod, 
+        received_kg: fiw?.received_kg || 0,
+        note: 'Use /production as single source. This route returns consolidated view only.'
+      });
     }
 
     const records = await sql`
