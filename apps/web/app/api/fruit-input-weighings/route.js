@@ -6,8 +6,10 @@ export async function GET(request) {
   const lotId = searchParams.get('lotId');
 
   if (lotId) {
-    // Authoritative: sum only confirmed weighings for the lot (exclude any future annulled/replaced via status if added).
-    // No JOIN duplication; direct aggregate from fruit_input_weighings (single source of reception).
+    // Authoritative net weight for the lot: ONLY from confirmed reception in fruit_input_weighings.
+    // This is the single source of truth for Ingreso de Fruta. Production MUST NOT recapture or alter this value.
+    // Sum all rows for the lot (current model has one primary confirmed weighing per lot; future status filter for anulados/reemplazados can be added without JOIN duplication).
+    // No other tables (weighings, cutting_orders, etc) override this for canonical received_kg.
     const [result] = await sql`
       SELECT 
         COALESCE(SUM(total_kg_weighed), 0) as total_kg_weighed,
@@ -34,6 +36,7 @@ export async function POST(request) {
         { status: 400 }
       );
     }
+    // Reception confirmed here only. Production and other areas consume via getCanonicalReceivedKg / this endpoint.
 
     // Get or create master batch for this lot
     let batchId = master_batch_id;

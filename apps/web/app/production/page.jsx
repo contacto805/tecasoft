@@ -21,12 +21,25 @@ export default function ProductionPage() {
   const [formData, setFormData] = useState(initialFormData);
 
   // Support deep links: /production?tab=...&lotId=...
+  // Map short aliases from legacy redirects (seleccion, rendimiento, etc) to exact tab labels
+  const resolveTab = (t) => {
+    if (!t) return 'Nueva corrida / Selección';
+    const lower = t.toLowerCase();
+    if (lower === 'seleccion' || lower === 'nueva' || lower === 'selección') return 'Nueva corrida / Selección';
+    if (lower === 'rendimiento') return 'Rendimiento del lote';
+    if (lower === 'pendientes' || lower === 'lotes') return 'Lotes pendientes';
+    if (lower === 'tarimas' || lower.includes('inventario')) return 'Tarimas y salida a Inventarios';
+    if (lower === 'historial' || lower.includes('corrida')) return 'Historial de corridas';
+    if (lower === 'diferencias' || lower.includes('correccion')) return 'Diferencias y correcciones';
+    return t; // full label fallback
+  };
+
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const t = params.get('tab');
       const l = params.get('lotId');
-      if (t) setActiveTab(t);
+      if (t) setActiveTab(resolveTab(t));
       if (l) {
         // preload selected lot when arriving from legacy link
         fetch('/api/lots').then(r => r.json()).then(data => {

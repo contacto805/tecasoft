@@ -7,19 +7,16 @@ export async function GET(request) {
     const lotId = searchParams.get('lotId');
 
     if (lotId) {
-      // RECONCILIATION: lotification_records is legacy structure. 
-      // Canonical yield/selection now ONLY from production_selection_details + fruit_input_weighings (Ingreso de Fruta).
-      // Do NOT sum across lotification_registry / lot_selection_results / lot_performance as additional production.
-      // Return consolidated view from canonical sources for analysis (read-only).
+      // RECONCILIATION (BLOQUE 04): lotification_records / lotification_registry / lot_selection_results / lot_performance are legacy.
+      // Canonical yield/selection is ONLY from production_selection_details + fruit_input_weighings (Ingreso de Fruta reception confirmed).
+      // NEVER sum multiple sources as if they were additional productions. This is read-only view.
       const [lot] = await sql`SELECT * FROM lots WHERE id = ${parseInt(lotId)}`;
       const prod = await sql`
         SELECT 
           caliber, class_name,
           COALESCE(SUM(boxes_10kg),0) as boxes_10,
           COALESCE(SUM(boxes_6kg),0) as boxes_6,
-          COALESCE(SUM(total_kg),0) as total_kg,
-          COALESCE(SUM(process_kg),0) as process_kg,
-          COALESCE(SUM(waste_kg),0) as waste_kg
+          COALESCE(SUM(total_kg),0) as total_kg
         FROM production_selection_details 
         WHERE lot_id = ${parseInt(lotId)}
         GROUP BY caliber, class_name
@@ -32,7 +29,7 @@ export async function GET(request) {
         lot, 
         canonical_from_production: prod, 
         received_kg: fiw?.received_kg || 0,
-        note: 'Use /production as single source. This route returns consolidated view only.'
+        note: 'Use /production as single canonical source for Producción. Legacy structures preserved for history only. No parallel captures.'
       });
     }
 
@@ -57,6 +54,10 @@ export async function GET(request) {
 
 export async function POST(request) {
   try {
+    const body = await request.json();
+    // RECONCILIATION: Writes to lotification_records are legacy.
+    // Canonical selection must be done exclusively via /api/production and production_selection_details (matriz Calibre/Clase/Cajas10/6kg/%/Precio/Total/Proceso/Desecho/Merma).
+    // No parallel capture. This keeps historical compatibility but does not count as new production.
     const {
       lotId,
       boxSize10kg,
@@ -80,7 +81,7 @@ export async function POST(request) {
       totalKgWaste,
       totalKgLoss,
       notes
-    } = await request.json();
+    } = body;
 
     const result = await sql`
       INSERT INTO lotification_records (
@@ -133,10 +134,10 @@ export async function POST(request) {
       RETURNING *
     `;
 
-    return NextResponse.json(result[0]);
+    return NextResponse.json({ ...result[0], _warning: 'LEGACY: Use /production for new canonical selection. Old structures for migration only.' });
   } catch (error) {
     console.error('Error in lotification POST:', error);
-    return NextResponse.json({ error: 'Failed to create' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to create (legacy path)' }, { status: 500 });
   }
 }
 
@@ -196,7 +197,7 @@ export async function PUT(request) {
       RETURNING *
     `;
 
-    return NextResponse.json(result[0]);
+    return NextResponse.json({ ...result[0], _warning: 'LEGACY update only. Prefer /production for new data.' });
   } catch (error) {
     console.error('Error in lotification PUT:', error);
     return NextResponse.json({ error: 'Failed to update' }, { status: 500 });
