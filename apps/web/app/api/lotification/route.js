@@ -2,9 +2,10 @@ import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
 
 export async function GET(request) {
+  let lotId = null;
   try {
     const { searchParams } = new URL(request.url);
-    const lotId = searchParams.get('lotId');
+    lotId = searchParams.get('lotId');
 
     if (lotId) {
       // RECONCILIATION (BLOQUE 04): lotification_records / lotification_registry / lot_selection_results / lot_performance are legacy.
