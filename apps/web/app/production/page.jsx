@@ -294,11 +294,14 @@ export default function ProductionPage() {
   };
 
   const updateSelectionRow = (id, field, val) => {
+    // use catalog weights (backend formulas mirrored for live UI)
+    const p10 = presentations.find(p => Number(p.kilograms) === 10 || /10/.test(String(p.nombre||'')))?.kilograms || 10;
+    const p6 = presentations.find(p => Number(p.kilograms) === 6 || /6/.test(String(p.nombre||'')))?.kilograms || 6;
     let rows = selectionRows.map(r => {
       if (r.id !== id) return r;
       const u = { ...r, [field]: val };
       if (['boxes_10kg','boxes_6kg','additional_granel_kg'].includes(field)) {
-        u.total_kg = (parseInt(u.boxes_10kg)||0)*10 + (parseInt(u.boxes_6kg)||0)*6 + (parseFloat(u.additional_granel_kg)||0);
+        u.total_kg = (parseInt(u.boxes_10kg)||0)*Number(p10) + (parseInt(u.boxes_6kg)||0)*Number(p6) + (parseFloat(u.additional_granel_kg)||0);
         u.total_price = u.total_kg * (parseFloat(u.price_per_kg)||0);
       }
       if (field === 'price_per_kg') {
@@ -306,13 +309,13 @@ export default function ProductionPage() {
       }
       return u;
     });
-    // recalc % del ingreso y % producto comercial
+    // recalc % del ingreso y % producto comercial (unrounded for validation, 2dec display)
     const received = totalReceivedForCalc || 1;
     const sumSel = rows.reduce((s,r)=>s+(parseFloat(r.total_kg)||0),0) || 1;
     const final = rows.map(r => {
-      const pctIng = ((parseFloat(r.total_kg)||0) / received * 100).toFixed(1);
-      const pctCom = ((parseFloat(r.total_kg)||0) / sumSel * 100).toFixed(1);
-      return { ...r, percentage: pctIng, pct_comercial: pctCom };
+      const pctIng = ((parseFloat(r.total_kg)||0) / received * 100);
+      const pctCom = ((parseFloat(r.total_kg)||0) / sumSel * 100);
+      return { ...r, percentage: pctIng.toFixed(2), pct_comercial: pctCom.toFixed(2) };
     });
     setSelectionRows(final);
   };
@@ -360,7 +363,7 @@ export default function ProductionPage() {
       ]);
       const fiw = fiwRes.ok ? await fiwRes.json() : {};
       const lotif = lotifRes.ok ? await lotifRes.json() : {};
-      const prodData = prodRes.ok ? await prodRes.json() : { details: [], batches: [] };
+      const prodData = prodRes.ok ? await prodRes.json() : { details: [], batches: [], yield_summary: null };
       const received = parseFloat(fiw?.total_kg_weighed || lot.total_kg || lot.total_kg_received || 0);
       const wCount = parseInt(fiw?.weighing_count || 0);
       const prod = lotif?.canonical_from_production || [];
@@ -373,8 +376,12 @@ export default function ProductionPage() {
       // Load existing selection records (NO recreate) from canonical production_selection_details
       const existing = Array.isArray(prodData.details) ? prodData.details : [];
       if (existing.length > 0) {
+        const p10 = presentations.find(p => Number(p.kilograms) === 10 || /10/.test(String(p.nombre||'')))?.kilograms || 10;
+        const p6 = presentations.find(p => Number(p.kilograms) === 6 || /6/.test(String(p.nombre||'')))?.kilograms || 6;
         const loaded = existing.map((d, idx) => {
-          const tkg = parseFloat(d.total_kg || 0) || ((parseInt(d.boxes_10kg)||0)*10 + (parseInt(d.boxes_6kg)||0)*6 + (parseFloat(d.additional_granel_kg||0)));
+          const p10 = presentations.find(p => Number(p.kilograms) === 10 || /10/.test(String(p.nombre||'')))?.kilograms || 10;
+          const p6 = presentations.find(p => Number(p.kilograms) === 6 || /6/.test(String(p.nombre||'')))?.kilograms || 6;
+          const tkg = parseFloat(d.kg_comercial_i || d.total_kg || 0) || ((parseInt(d.boxes_10kg)||0)*Number(p10) + (parseInt(d.boxes_6kg)||0)*Number(p6) + (parseFloat(d.additional_granel_kg||0)));
           const prc = currentPrices[(d.caliber||'').toUpperCase()] || currentPrices.default || 0;
           return {
             id: d.id || (Date.now() + idx),
@@ -384,7 +391,7 @@ export default function ProductionPage() {
             boxes_6kg: parseInt(d.boxes_6kg)||0,
             additional_granel_kg: parseFloat(d.additional_granel_kg || d.granel_kg || 0),
             total_kg: tkg,
-            percentage: parseFloat(d.percentage || 0),
+            percentage: parseFloat(d.pct_sobre_ingreso || d.percentage || 0),
             price_per_kg: parseFloat(d.price_per_kg || d.band_price || prc),
             total_price: parseFloat(d.total_price || 0)
           };
@@ -490,6 +497,7 @@ export default function ProductionPage() {
       const matrix = selectionRows.map(r => ({
         caliber: r.caliber, class_name: r.class_name,
         boxes_10kg: parseInt(r.boxes_10kg)||0, boxes_6kg: parseInt(r.boxes_6kg)||0,
+        additional_granel_kg: parseFloat(r.additional_granel_kg)||0,
         inventory_kg: parseFloat(r.total_kg)||0,
         process_kg: 0, waste_kg: 0
       }));

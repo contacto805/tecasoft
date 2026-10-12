@@ -68,18 +68,24 @@ export async function recalculateLot(lotId) {
   try {
     const canonicalReceived = await getCanonicalReceivedKg(lotIdNum);
 
-    // Production outputs (packed = inventory ready, process, waste)
+    // Production outputs (packed = inventory ready, process, waste) - use batches for independent + details
     const prod = await sql`
       SELECT 
-        COALESCE(SUM(CASE WHEN total_kg > 0 THEN total_kg ELSE 0 END), 0) as packed_kg,
-        COALESCE(SUM(process_kg), 0) as process_kg,
-        COALESCE(SUM(waste_kg), 0) as waste_kg
+        COALESCE(SUM(CASE WHEN total_kg > 0 THEN total_kg ELSE 0 END), 0) as packed_kg
       FROM production_selection_details
       WHERE lot_id = ${lotIdNum}
     `;
     const packed = parseFloat(prod[0]?.packed_kg || 0);
-    const processKg = parseFloat(prod[0]?.process_kg || 0);
-    const wasteKg = parseFloat(prod[0]?.waste_kg || 0);
+    // process / waste / merma from confirmed batches (new columns)
+    const batchAgg = await sql`
+      SELECT 
+        COALESCE(SUM(process_kg),0) as process_kg,
+        COALESCE(SUM(desecho_kg),0) as waste_kg,
+        COALESCE(SUM(merma_kg),0) as merma_kg
+      FROM production_batches WHERE lot_id = ${lotIdNum} AND COALESCE(status,'CONFIRMADO') != 'BORRADOR'
+    `;
+    const processKg = parseFloat(batchAgg[0]?.process_kg || 0);
+    const wasteKg = parseFloat(batchAgg[0]?.waste_kg || 0);
 
     // Merma / shrinkage = received - (packed + process + waste)
     const shrinkageKg = Math.max(0, canonicalReceived - packed - processKg - wasteKg);
@@ -140,16 +146,16 @@ export async function validateLotBalance(lotId, tolerance = 5) {
   const received = await getCanonicalReceivedKg(lotIdNum);
 
   const [agg] = await sql`
-    SELECT 
-      COALESCE(SUM(total_kg),0) as packed,
-      COALESCE(SUM(process_kg),0) as proc,
-      COALESCE(SUM(waste_kg),0) as waste
+    SELECT COALESCE(SUM(total_kg),0) as packed
     FROM production_selection_details WHERE lot_id = ${lotIdNum}
   `;
-
   const packed = parseFloat(agg?.packed || 0);
-  const proc = parseFloat(agg?.proc || 0);
-  const waste = parseFloat(agg?.waste || 0);
+  const [bagg] = await sql`
+    SELECT COALESCE(SUM(process_kg),0) as proc, COALESCE(SUM(desecho_kg),0) as waste
+    FROM production_batches WHERE lot_id = ${lotIdNum} AND COALESCE(status,'CONFIRMADO') != 'BORRADOR'
+  `;
+  const proc = parseFloat(bagg?.proc || 0);
+  const waste = parseFloat(bagg?.waste || 0);
 
   const totalAccounted = packed + proc + waste;
   const diff = Math.abs(received - totalAccounted);
