@@ -19,6 +19,14 @@ export default function ProductionPage() {
   };
   const [formData, setFormData] = useState(initialFormData);
 
+  // Full matrix state for canonical production selection (Calibre, Clase, Cajas10, Cajas6, Total kg, %, Precio/kg, Total $, Proceso, Desecho, Merma)
+  const [selectionRows, setSelectionRows] = useState([]);
+  const [currentPrices, setCurrentPrices] = useState({});
+  const [processKg, setProcessKg] = useState(0);
+  const [wasteKg, setWasteKg] = useState(0);
+  const [shrinkageKg, setShrinkageKg] = useState(0);
+  const [totalReceivedForCalc, setTotalReceivedForCalc] = useState(0);
+
   // Load all existing lotes (no restrictive filter) + real-time pallet_output_summary
   useEffect(() => {
     const fetchAll = async () => {
@@ -111,6 +119,37 @@ export default function ProductionPage() {
     fetchCalibers();
   }, []);
 
+  // Repair: load real published prices as canonical source (precios_fruta_publicados + band)
+  useEffect(() => {
+    const loadPrices = async () => {
+      try {
+        const [pubRes, bandRes] = await Promise.all([
+          fetch('/api/precios-fruta/publicados'),
+          fetch('/api/band-pricing')
+        ]);
+        const pub = pubRes.ok ? await pubRes.json() : [];
+        const band = bandRes.ok ? await bandRes.json() : null;
+        const priceMap = {};
+        if (Array.isArray(pub) && pub[0]) {
+          const p = pub[0];
+          // map common calibers to prices
+          if (p.super_extra) priceMap['SUPER'] = p.super_extra;
+          if (p.extra) priceMap['EXTRA'] = p.extra;
+          if (p.primera) priceMap['PRIMERA'] = p.primera;
+          if (p.mediano) priceMap['MEDIANO'] = p.mediano;
+          if (p.tercera) priceMap['TERCERA'] = p.tercera;
+          if (p.cuarta) priceMap['CUARTA'] = p.cuarta;
+          if (p.proceso) priceMap['PROCESO'] = p.proceso;
+        }
+        if (band && band.price_per_kg) {
+          priceMap['default'] = band.price_per_kg;
+        }
+        setCurrentPrices(priceMap);
+      } catch (e) {}
+    };
+    loadPrices();
+  }, []);
+
   const handleAddCaliber = () => {
     setFormData(prev => ({
       ...prev,
@@ -134,6 +173,50 @@ export default function ProductionPage() {
     setFormData({ ...formData, caliber_data: updated });
   };
 
+  // Matrix handlers for canonical detailed selection (RENDIMIENTO LOTE format)
+  const addSelectionRow = (cal = '', cls = 'A') => {
+    const price = currentPrices[cal.toUpperCase()] || currentPrices.default || 0;
+    setSelectionRows([...selectionRows, {
+      id: Date.now(),
+      caliber: cal,
+      class_name: cls,
+      boxes_10kg: 0,
+      boxes_6kg: 0,
+      total_kg: 0,
+      percentage: 0,
+      price_per_kg: price,
+      total_price: 0
+    }]);
+  };
+
+  const updateSelectionRow = (id, field, val) => {
+    const rows = selectionRows.map(r => {
+      if (r.id !== id) return r;
+      const u = { ...r, [field]: val };
+      if (field === 'boxes_10kg' || field === 'boxes_6kg') {
+        u.total_kg = (parseInt(u.boxes_10kg)||0)*10 + (parseInt(u.boxes_6kg)||0)*6;
+        u.total_price = u.total_kg * (parseFloat(u.price_per_kg)||0);
+      }
+      if (field === 'price_per_kg') {
+        u.total_price = u.total_kg * (parseFloat(val)||0);
+      }
+      return u;
+    });
+    // recalc %
+    const sumKg = rows.reduce((s,r)=>s+(parseFloat(r.total_kg)||0),0) || 1;
+    const final = rows.map(r => ({...r, percentage: ((parseFloat(r.total_kg)||0)/sumKg*100).toFixed(1)}));
+    setSelectionRows(final);
+  };
+
+  const removeSelectionRow = (id) => setSelectionRows(selectionRows.filter(r=>r.id!==id));
+
+  const getMatrixTotals = () => {
+    const totKg = selectionRows.reduce((s,r)=>s+(parseFloat(r.total_kg)||0),0);
+    const totVal = selectionRows.reduce((s,r)=>s+(parseFloat(r.total_price)||0),0);
+    const merma = Math.max(0, (totalReceivedForCalc || 0) - totKg - (parseFloat(processKg)||0) - (parseFloat(wasteKg)||0));
+    return { totKg, totVal, merma };
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     
@@ -149,6 +232,18 @@ export default function ProductionPage() {
 
     setLoading(true);
     try {
+      // Save full matrix (canonical production_selection_details)
+      const matrix = selectionRows.length ? selectionRows : formData.caliber_data.map(c => ({
+        caliber: c.caliber,
+        class_name: c.class_name,
+        boxes_10kg: 0,
+        boxes_6kg: 0,
+        total_kg: parseFloat(c.inventory_kg)||0,
+        percentage: 0,
+        price_per_kg: currentPrices[c.caliber?.toUpperCase()] || 0,
+        total_price: 0
+      }));
+
       const response = await fetch('/api/production', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -156,7 +251,11 @@ export default function ProductionPage() {
           lot_id: selectedLot.id,
           production_date: formData.production_date,
           caliber_data: formData.caliber_data,
-          notes: formData.notes
+          notes: formData.notes,
+          selection_matrix: matrix,
+          process_kg: parseFloat(processKg)||0,
+          waste_kg: parseFloat(wasteKg)||0,
+          shrinkage_kg: getMatrixTotals().merma
         })
       });
 
@@ -327,8 +426,62 @@ export default function ProductionPage() {
                 <div>
                   <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
                     <i className="ph ph-chart-bar text-indigo-600"></i>
-                    Detalles de Calibres
+                    Matriz de Selección (Fuente Canónica Producción) — Calibre, Clase, Cajas 10kg/6kg, Total kg, %, Precio/kg, Total $, Proceso, Desecho, Merma
                   </h3>
+
+                  {/* Full matrix table per requirement */}
+                  <div className="mb-4">
+                    <div className="flex gap-2 mb-2 flex-wrap">
+                      <button type="button" onClick={() => addSelectionRow('SUPER','A')} className="px-2 py-1 text-xs bg-emerald-100 rounded">+ SUPER A</button>
+                      <button type="button" onClick={() => addSelectionRow('EXTRA','A')} className="px-2 py-1 text-xs bg-emerald-100 rounded">+ EXTRA A</button>
+                      <button type="button" onClick={() => addSelectionRow('PRIMERA','A')} className="px-2 py-1 text-xs bg-emerald-100 rounded">+ PRIMERA A</button>
+                      <button type="button" onClick={() => addSelectionRow('MEDIANO','A')} className="px-2 py-1 text-xs bg-emerald-100 rounded">+ MEDIANO A</button>
+                      <button type="button" onClick={() => addSelectionRow('TERCERA','A')} className="px-2 py-1 text-xs bg-emerald-100 rounded">+ TERCERA A</button>
+                      <button type="button" onClick={() => addSelectionRow('CUARTA','A')} className="px-2 py-1 text-xs bg-emerald-100 rounded">+ CUARTA A</button>
+                      <button type="button" onClick={() => addSelectionRow('','B')} className="px-2 py-1 text-xs bg-amber-100 rounded">+ Fila Clase B</button>
+                    </div>
+                    {selectionRows.length > 0 && (
+                      <div className="overflow-x-auto border rounded">
+                        <table className="w-full text-xs">
+                          <thead className="bg-slate-100"><tr>
+                            <th>Calibre</th><th>Clase</th><th>Cajas 10kg</th><th>Cajas 6kg</th><th>Total kg</th><th>%</th><th>Precio/kg</th><th>Total $</th><th></th>
+                          </tr></thead>
+                          <tbody>
+                            {selectionRows.map(row => (
+                              <tr key={row.id} className="border-t">
+                                <td className="p-1"><input value={row.caliber} onChange={e=>updateSelectionRow(row.id,'caliber',e.target.value)} className="w-20 border px-1"/></td>
+                                <td className="p-1"><select value={row.class_name} onChange={e=>updateSelectionRow(row.id,'class_name',e.target.value)} className="border px-1"><option>A</option><option>B</option></select></td>
+                                <td className="p-1"><input type="number" value={row.boxes_10kg} onChange={e=>updateSelectionRow(row.id,'boxes_10kg',parseInt(e.target.value)||0)} className="w-16 border px-1 text-center"/></td>
+                                <td className="p-1"><input type="number" value={row.boxes_6kg} onChange={e=>updateSelectionRow(row.id,'boxes_6kg',parseInt(e.target.value)||0)} className="w-16 border px-1 text-center"/></td>
+                                <td className="p-1 font-semibold">{row.total_kg}</td>
+                                <td className="p-1">{row.percentage}%</td>
+                                <td className="p-1"><input type="number" step="0.01" value={row.price_per_kg} onChange={e=>updateSelectionRow(row.id,'price_per_kg',parseFloat(e.target.value)||0)} className="w-16 border px-1"/></td>
+                                <td className="p-1 font-semibold">${parseFloat(row.total_price||0).toFixed(2)}</td>
+                                <td className="p-1"><button type="button" onClick={()=>removeSelectionRow(row.id)} className="text-red-600">✕</button></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    <div className="mt-2 text-xs text-slate-500">Totales: {getMatrixTotals().totKg.toFixed(1)} kg • ${getMatrixTotals().totVal.toFixed(2)} • Merma calc: {getMatrixTotals().merma.toFixed(1)} kg</div>
+                  </div>
+
+                  {/* Proceso / Desecho / Merma */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                    <div>
+                      <label className="text-xs">Proceso (kg)</label>
+                      <input type="number" value={processKg} onChange={e=>setProcessKg(e.target.value)} className="w-full border px-2 py-1 rounded" />
+                    </div>
+                    <div>
+                      <label className="text-xs">Desecho (kg)</label>
+                      <input type="number" value={wasteKg} onChange={e=>setWasteKg(e.target.value)} className="w-full border px-2 py-1 rounded" />
+                    </div>
+                    <div>
+                      <label className="text-xs">Merma (kg) — calculada</label>
+                      <input type="number" value={getMatrixTotals().merma.toFixed(1)} readOnly className="w-full border px-2 py-1 rounded bg-slate-100" />
+                    </div>
+                  </div>
 
                   <div className="space-y-4">
                     {formData.caliber_data.map((caliber, index) => (
@@ -438,6 +591,11 @@ export default function ProductionPage() {
                     rows={3}
                     className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
                   />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-700">Kg recibidos (para cálculo de merma, de Ingreso de Fruta)</label>
+                  <input type="number" value={totalReceivedForCalc} onChange={e=>setTotalReceivedForCalc(parseFloat(e.target.value)||0)} className="w-full px-3 py-2 border rounded" placeholder="Usar valor de fruit_input_weighings" />
                 </div>
 
                 <div className="p-4 bg-blue-50 rounded-xl border border-blue-200">

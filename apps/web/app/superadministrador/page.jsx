@@ -310,7 +310,7 @@ export default function SuperadministradorPage() {
           {name:'Cierres Semanales', route:'/cierres', icon:'ph-calendar-check'},
           {name:'Rendimiento de Lote', route:'/rendimiento-lote', icon:'ph-chart-bar'},
           {name:'Mapa de Trazabilidad', route:'/mapa-trazabilidad', icon:'ph-graph'},
-          {name:'Lotificación', route:'/lotification-registry', icon:'ph-tag'},
+          {name:'Producción (Selección y Rendimiento)', route:'/production', icon:'ph-factory'},
           {name:'Precios de Fruta', route:'/precios-fruta', icon:'ph-coin'},
           {name:'Cuadrillas y Nómina', route:'/cuadrillas', icon:'ph-users-three'},
           {name:'Gastos y Costos', route:'/expenses', icon:'ph-receipt'},

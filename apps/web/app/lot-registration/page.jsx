@@ -20,6 +20,12 @@ const PALLET_TYPES = [
 
 export default function ProductionPage() {
   const router = useRouter();
+  // DEPRECATED: Lote Registro ha sido desincorporado del flujo activo.
+  // Toda la selección y rendimiento ahora se registra en el módulo Producción (fuente canónica).
+  // Redirigiendo... 
+  if (typeof window !== 'undefined') {
+    setTimeout(() => router.push('/production'), 1200);
+  }
   const [availableLots, setAvailableLots] = useState([]);
   const [selectedLot, setSelectedLot] = useState(null);
   const [bandPricing, setBandPricing] = useState(null);
@@ -343,6 +349,7 @@ export default function ProductionPage() {
   return (
     <div className="min-h-screen flex flex-col font-sans bg-slate-50">
       <header className="fixed top-0 left-0 right-0 w-full z-50 glass-panel border-b border-slate-200">
+        <div className="bg-amber-600 text-white text-center text-xs py-1">MÓDULO DESCONTINUADO — Usar /production (fuente canónica única de selección y rendimiento). Redirigiendo...</div>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-8">
             <div className="flex items-center gap-2 text-brand-700">

@@ -1451,6 +1451,7 @@ Precio Real: ${price.toFixed(2)}/kg`);
 export default function LotificationRegistryPage() {
   return (
     <Suspense fallback={null}>
+      <div className="p-4 bg-amber-100 text-amber-900 text-sm border-b">MÓDULO LOTE REGISTRO DESCONTINUADO (FASE 02). La selección física se registra una sola vez en el módulo PRODUCCIÓN como fuente canónica. Datos históricos preservados. <a href="/production" className="underline font-semibold">Ir a Producción →</a></div>
       <LotificationRegistryPageContent />
     </Suspense>
   );
