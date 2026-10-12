@@ -20,6 +20,8 @@ export default function ProductionPage() {
     notes: ''
   };
   const [formData, setFormData] = useState(initialFormData);
+  const [lotSearchTerm, setLotSearchTerm] = useState('');
+  const [lotHeaderExtra, setLotHeaderExtra] = useState({ receivedKg: 0, weighingCount: 0, consumedKg: 0, pendingKg: 0, previousCorridas: 0, relatedLots: [] });
 
   // Support deep links: /production?tab=...&lotId=...
   // Map short aliases from legacy redirects (seleccion, rendimiento, etc) to exact tab labels
@@ -45,7 +47,12 @@ export default function ProductionPage() {
         // preload selected lot when arriving from legacy link
         fetch('/api/lots').then(r => r.json()).then(data => {
           const found = (data || []).find(x => String(x.id) === l);
-          if (found) setSelectedLot(found);
+          if (found) {
+            setSelectedLot(found);
+            const rec = parseFloat(found.total_kg || 0);
+            setLotHeaderExtra({ receivedKg: rec, weighingCount: 0, consumedKg: 0, pendingKg: rec, previousCorridas: 0, relatedLots: [] });
+            setTotalReceivedForCalc(rec);
+          }
         }).catch(() => {});
       }
     }
@@ -249,11 +256,42 @@ export default function ProductionPage() {
     return { totKg, totVal, merma };
   };
 
+  const handleSelectLot = async (lot) => {
+    setSelectedLot(lot);
+    setLotSearchTerm('');
+    try {
+      const [fiwRes, lotifRes] = await Promise.all([
+        fetch(`/api/fruit-input-weighings?lotId=${lot.id}`),
+        fetch(`/api/lotification?lotId=${lot.id}`)
+      ]);
+      const fiw = fiwRes.ok ? await fiwRes.json() : {};
+      const lotif = lotifRes.ok ? await lotifRes.json() : {};
+      const received = parseFloat(fiw?.total_kg_weighed || lot.total_kg || lot.total_kg_received || 0);
+      const wCount = parseInt(fiw?.weighing_count || 0);
+      const prod = lotif?.canonical_from_production || [];
+      const consumed = prod.reduce((s, r) => s + parseFloat(r.total_kg || 0), 0);
+      const pending = Math.max(0, received - consumed);
+      const related = lots.filter(ll => ll.id !== lot.id && (ll.producer === lot.producer || ll.orchard_name === lot.orchard_name)).slice(0, 3);
+      setLotHeaderExtra({ receivedKg: received, weighingCount: wCount, consumedKg: consumed, pendingKg: pending, previousCorridas: prod.length, relatedLots: related });
+      setTotalReceivedForCalc(received);
+    } catch (_) {
+      const rec = parseFloat(lot.total_kg || 0);
+      setLotHeaderExtra({ receivedKg: rec, weighingCount: 0, consumedKg: 0, pendingKg: rec, previousCorridas: 0, relatedLots: [] });
+      setTotalReceivedForCalc(rec);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     
     if (!selectedLot) {
       alert('Selecciona un lote');
+      return;
+    }
+
+    const hasConfirmedReception = (lotHeaderExtra.receivedKg || 0) > 0 || (lotHeaderExtra.weighingCount || 0) > 0;
+    if (!hasConfirmedReception) {
+      alert('Recepción no confirmada en Ingreso de Fruta. Registra el ingreso primero.');
       return;
     }
 
@@ -358,10 +396,10 @@ export default function ProductionPage() {
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
               <h2 className="font-bold text-lg text-slate-900 mb-4">Lotes pendientes de corrida / selección</h2>
               <p className="text-sm text-slate-500 mb-3">Lotes con ingreso confirmado (fruit_input_weighings) pero sin selección completa en production_selection_details.</p>
-              {lots.length > 0 ? (
+                  {lots.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {lots.slice(0,12).map(l => (
-                    <button key={l.id} onClick={() => { setSelectedLot(l); setActiveTab('Nueva corrida / Selección'); }} className="text-left p-3 border rounded hover:bg-indigo-50">
+                    <button key={l.id} onClick={() => { handleSelectLot(l); setActiveTab('Nueva corrida / Selección'); }} className="text-left p-3 border rounded hover:bg-indigo-50">
                       {l.lot_number} — {l.producer} • {parseFloat(l.total_kg_received||0).toFixed(0)} kg
                     </button>
                   ))}
@@ -378,17 +416,39 @@ export default function ProductionPage() {
                   Nueva corrida / Selección — Matriz canónica (Calibre, Clase, Cajas 10/6kg, kg, %, Precio, Total, Proceso, Desecho, Merma)
                 </h2>
 
-                {/* Compact lot selector */}
+                {/* Search + auto-fill read-only header (block scope): search by folio/productor/huerta/orden corte/fecha; data from Ingreso confirmed only. No lot/weighing creation here. */}
                 {lots.length > 0 && (
                   <div className="mb-4">
-                    <label className="text-xs text-slate-600">Seleccionar lote:</label>
-                    <select className="ml-2 border px-2 py-1 text-sm rounded" value={selectedLot?.id || ''} onChange={(e) => {
-                      const l = lots.find(x => x.id === parseInt(e.target.value));
-                      setSelectedLot(l || null);
-                    }}>
-                      <option value="">-- elegir --</option>
-                      {lots.map(l => <option key={l.id} value={l.id}>{l.lot_number} — {l.producer}</option>)}
-                    </select>
+                    <label className="text-xs text-slate-600 block mb-1">Buscar lote (folio, productor, huerta, orden de corte, fecha):</label>
+                    <input
+                      type="text"
+                      value={lotSearchTerm}
+                      onChange={(e) => setLotSearchTerm(e.target.value)}
+                      placeholder="Escribe para filtrar..."
+                      className="w-full border px-3 py-1.5 text-sm rounded mb-2"
+                    />
+                    <div className="max-h-36 overflow-auto border rounded bg-white text-sm">
+                      {(lotSearchTerm ? lots.filter(l => {
+                        const q = lotSearchTerm.toLowerCase();
+                        return (l.lot_number||'').toLowerCase().includes(q) ||
+                               (l.producer||'').toLowerCase().includes(q) ||
+                               (l.orchard_name||'').toLowerCase().includes(q) ||
+                               (l.cutting_folio||'').toLowerCase().includes(q) ||
+                               String(l.date||'').includes(q);
+                      }) : lots.slice(0,15)).map(l => (
+                        <button
+                          key={l.id}
+                          type="button"
+                          onClick={() => handleSelectLot(l)}
+                          className={`w-full text-left px-3 py-1 hover:bg-indigo-50 border-b last:border-0 ${selectedLot?.id === l.id ? 'bg-indigo-100 font-medium' : ''}`}
+                        >
+                          {l.lot_number} — {l.producer} • {l.orchard_name || ''} • OC:{l.cutting_folio || '-'} • {(parseFloat(l.total_kg||0)).toFixed(0)}kg
+                        </button>
+                      ))}
+                      {lotSearchTerm && lots.filter(l => (l.lot_number||'').toLowerCase().includes(lotSearchTerm.toLowerCase()) || (l.producer||'').toLowerCase().includes(lotSearchTerm.toLowerCase())).length === 0 && (
+                        <div className="px-3 py-1 text-slate-500">Sin resultados.</div>
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -439,6 +499,33 @@ export default function ProductionPage() {
               {/* Selection form + matrix (only when lot chosen) */}
               {selectedLot && (
                 <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                  {/* READ-ONLY auto-filled header per block reqs */}
+                  <div className="mb-4 p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs">
+                    <div className="font-semibold mb-1 text-slate-700">Datos del lote (solo lectura • fuente Ingreso de Fruta)</div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-x-3 gap-y-0.5">
+                      <div><span className="text-slate-500">ID/Folio:</span> {selectedLot.lot_number || selectedLot.id}</div>
+                      <div><span className="text-slate-500">Productor:</span> {selectedLot.producer}</div>
+                      <div><span className="text-slate-500">Huerta:</span> {selectedLot.orchard_name || '—'}</div>
+                      <div><span className="text-slate-500">Corredor:</span> {selectedLot.broker_name || '—'}</div>
+                      <div><span className="text-slate-500">Orden de corte:</span> {selectedLot.cutting_folio || selectedLot.cutting_order_id || '—'}</div>
+                      <div><span className="text-slate-500">Fecha:</span> {selectedLot.date ? String(selectedLot.date).slice(0,10) : '—'}</div>
+                      <div><span className="text-slate-500">Origen:</span> {selectedLot.origin || selectedLot.fruit_source || '—'}</div>
+                      <div><span className="text-slate-500">Tipo fruta:</span> {selectedLot.fruit_type || '—'}</div>
+                      <div><span className="text-slate-500">Peso neto Ingreso:</span> <span className="font-medium">{lotHeaderExtra.receivedKg.toFixed(1)} kg</span></div>
+                      <div><span className="text-slate-500">Pesajes:</span> {lotHeaderExtra.weighingCount} confirmados</div>
+                      <div><span className="text-slate-500">Lotes relacionados:</span> {lotHeaderExtra.relatedLots.length}</div>
+                      <div><span className="text-slate-500">Corridas previas:</span> {lotHeaderExtra.previousCorridas}</div>
+                      <div><span className="text-slate-500">Consumido corridas:</span> {lotHeaderExtra.consumedKg.toFixed(1)} kg</div>
+                      <div><span className="text-slate-500">Pendientes selección:</span> <span className="font-medium">{lotHeaderExtra.pendingKg.toFixed(1)} kg</span></div>
+                      <div className="col-span-2"><span className="text-slate-500">Folio nota:</span> —</div>
+                    </div>
+                    {(lotHeaderExtra.receivedKg || 0) <= 0 && (
+                      <div className="mt-2 text-amber-700">
+                        Sin recepción confirmada. <button type="button" onClick={() => router.push('/fruit-input')} className="underline">Ir a Ingreso de Fruta</button> para registrar.
+                      </div>
+                    )}
+                  </div>
+
                   <h2 className="font-bold text-lg mb-4">Registrar Selección para {selectedLot.lot_number}</h2>
                   <form onSubmit={handleSubmit} className="space-y-4">
                     {/* keep existing matrix controls and form fields (abbreviated for stability) */}
