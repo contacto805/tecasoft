@@ -168,7 +168,7 @@ export default function ProductionPage() {
         ]);
         const pub = pubRes.ok ? await pubRes.json() : [];
         const band = bandRes.ok ? await bandRes.json() : null;
-        const priceMap = {};
+        const priceMap = { default: 0 };
         if (Array.isArray(pub) && pub[0]) {
           const p = pub[0];
           // map common calibers to prices
@@ -252,7 +252,7 @@ export default function ProductionPage() {
   const getMatrixTotals = () => {
     const totKg = selectionRows.reduce((s,r)=>s+(parseFloat(r.total_kg)||0),0);
     const totVal = selectionRows.reduce((s,r)=>s+(parseFloat(r.total_price)||0),0);
-    const merma = Math.max(0, (totalReceivedForCalc || 0) - totKg - (parseFloat(processKg)||0) - (parseFloat(wasteKg)||0));
+    const merma = Math.max(0, (totalReceivedForCalc || 0) - totKg - (parseFloat(String(processKg))||0) - (parseFloat(String(wasteKg))||0));
     return { totKg, totVal, merma };
   };
 
@@ -308,7 +308,7 @@ export default function ProductionPage() {
         class_name: c.class_name,
         boxes_10kg: 0,
         boxes_6kg: 0,
-        total_kg: parseFloat(c.inventory_kg)||0,
+        total_kg: parseFloat(String(c.inventory_kg))||0,
         percentage: 0,
         price_per_kg: currentPrices[c.caliber?.toUpperCase()] || 0,
         total_price: 0
@@ -323,8 +323,8 @@ export default function ProductionPage() {
           caliber_data: formData.caliber_data,
           notes: formData.notes,
           selection_matrix: matrix,
-          process_kg: parseFloat(processKg)||0,
-          waste_kg: parseFloat(wasteKg)||0,
+          process_kg: parseFloat(String(processKg))||0,
+          waste_kg: parseFloat(String(wasteKg))||0,
           shrinkage_kg: getMatrixTotals().merma
         })
       });
