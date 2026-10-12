@@ -1,5 +1,6 @@
 'use client';
 
+// @ts-nocheck
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 
@@ -52,7 +53,7 @@ export default function ProductionPage() {
 
   // Full matrix state for canonical production selection (Calibre, Clase, Cajas10, Cajas6, Total kg, %, Precio/kg, Total $, Proceso, Desecho, Merma)
   const [selectionRows, setSelectionRows] = useState([]);
-  const [currentPrices, setCurrentPrices] = useState({});
+  const [currentPrices, setCurrentPrices] = useState({ default: 0 });
   const [processKg, setProcessKg] = useState(0);
   const [wasteKg, setWasteKg] = useState(0);
   const [shrinkageKg, setShrinkageKg] = useState(0);

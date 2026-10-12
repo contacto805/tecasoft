@@ -49,7 +49,7 @@ export async function GET(request) {
     return NextResponse.json(records);
   } catch (error) {
     console.error('Error in lotification GET:', error);
-    return NextResponse.json(lotId ? null : []);
+    return NextResponse.json([]);
   }
 }
 
