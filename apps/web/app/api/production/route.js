@@ -3,6 +3,49 @@ import { NextResponse } from "next/server";
 import { logMovement } from "@/app/api/utils/recalculate";
 import { recalculateLotPerformance } from "@/app/api/utils/recalculate";
 
+// VI: Helper - load authorized purchase prices from published (precios_fruta_publicados latest active)
+// NEVER use client-sent prices for financial valuation.
+async function loadAuthorizedPurchasePrices() {
+  try {
+    const rows = await sql`
+      SELECT * FROM precios_fruta_publicados 
+      WHERE COALESCE(activo, true) = true 
+      ORDER BY fecha_publicacion DESC, id DESC 
+      LIMIT 1
+    `;
+    const p = rows[0] || {};
+    // Map common calibers to buy price (purchase price authorized)
+    return {
+      SUPER: parseFloat(p.super_extra || 0),
+      EXTRA: parseFloat(p.extra || 0),
+      PRIMERA: parseFloat(p.primera || 0),
+      MEDIANO: parseFloat(p.mediano || 0),
+      TERCERA: parseFloat(p.tercera || 0),
+      CUARTA: parseFloat(p.cuarta || 0),
+      PROCESO: parseFloat(p.proceso || 0),
+      CANICA: parseFloat(p.canica || 0),
+      DESECHO: parseFloat(p.desecho || 0),
+      default: 0
+    };
+  } catch (_) {
+    return { default: 0 };
+  }
+}
+
+function getAuthorizedPriceForCaliber(prices, caliber) {
+  const key = String(caliber || '').toUpperCase().trim();
+  if (prices[key] != null) return prices[key];
+  // fuzzy map
+  if (key.includes('SUPER') || key.includes('EXTRA')) return prices.EXTRA || prices.default || 0;
+  if (key.includes('PRIM')) return prices.PRIMERA || prices.default || 0;
+  if (key.includes('MED')) return prices.MEDIANO || prices.default || 0;
+  if (key.includes('TERC')) return prices.TERCERA || prices.default || 0;
+  if (key.includes('CUART')) return prices.CUARTA || prices.default || 0;
+  if (key.includes('PROC')) return prices.PROCESO || prices.default || 0;
+  if (key.includes('CAN') || key.includes('IND')) return prices.CANICA || prices.default || 0;
+  return prices.default || 0;
+}
+
 // GET - Fetch production batches for a lot + consolidated formulas (backend only)
 export async function GET(request) {
   try {
@@ -93,6 +136,26 @@ export async function GET(request) {
     const pctPend = received > 0 ? (kgPendientes / received * 100) : 0;
     const balance = pctRendCom + pctProc + pctDes + pctMerm + pctPend;
 
+    // VI: VALOR REAL PONDERADO POR LOTE - usando precios AUTORIZADOS del backend (precios_fruta_publicados)
+    // Producción NO captura ni cambia precio. Precios vienen de versión autorizada con vigencia.
+    // Nunca se acepta price enviado desde navegador para cálculo financiero.
+    const authorizedPrices = await loadAuthorizedPurchasePrices();
+    let valorClasificado = 0;
+    computedRows.forEach(r => {
+      const kg = parseFloat(r.kg_comercial_i || r.total_kg || 0) || 0;
+      const authPrice = getAuthorizedPriceForCaliber(authorizedPrices, r.caliber);
+      valorClasificado += kg * authPrice;
+    });
+    // Proceso / Desecho: si representan compra (según acuerdo), sumar su valor autorizado. Merma NO genera compra adicional.
+    const procPrice = authorizedPrices.PROCESO || authorizedPrices.default || 0;
+    const desPrice = authorizedPrices.DESECHO || authorizedPrices.default || 0;
+    valorClasificado += (kgProceso * procPrice) + (kgDesecho * desPrice);
+
+    const hasMandatoryPrices = Object.values(authorizedPrices).some(v => Number(v) > 0);
+    const precioPonderado = (received > 0 && hasMandatoryPrices) 
+      ? (valorClasificado / received) 
+      : null;
+
     const yieldSummary = received > 0 ? {
       kg_netos_recibidos: received,
       kg_comercial: Math.round(kgComercial * 1000) / 1000,
@@ -110,7 +173,17 @@ export async function GET(request) {
       formula_note: '% sobre ingreso + %proceso + %desecho + %merma + %pendiente = 100% (peso>0)',
       // Block 08: explicit balance flag + tolerance reference (no silent close)
       balance_ok: Math.abs(balance - 100) <= 0.5 || received === 0,
-      tolerance_note: 'Diferencias > tolerancia física configurada deben registrarse explícitamente (merma o autorización)'
+      tolerance_note: 'Diferencias > tolerancia física configurada deben registrarse explícitamente (merma o autorización)',
+      // VI: Valor real ponderado (precios autorizados backend, sin precio manual en producción)
+      valor_clasificado: Math.round(valorClasificado * 1000) / 1000,
+      precio_ponderado_sobre_ingreso: precioPonderado != null ? parseFloat(precioPonderado.toFixed(4)) : null,
+      precio_ponderado_label: precioPonderado != null ? 'Precio ponderado sobre ingreso' : 'Pendiente de valoración',
+      valor_proceso_desecho_incluido: Math.round(((kgProceso * (authorizedPrices.PROCESO||0)) + (kgDesecho * (authorizedPrices.DESECHO||0))) * 1000) / 1000,
+      merma_no_genera_compra_adicional: true,
+      nota_separacion: 'Mantener separados: (1) precio pactado productor, (2) valor clasificación precios autorizados, (3) obligación contrato, (4) valor comercial destino, (5) costo integral (cuadrillas/fletes/empaque desde sus módulos).',
+      // VII: Proceso/Desecho son inventario trazable, NO venta automática aquí.
+      proceso_desecho_es_inventario: true,
+      venta_comercial_solo_en_modulo_ventas_proceso_desecho: true
     } : {
       message: 'Sin ingreso confirmado / No calculable',
       kg_netos_recibidos: 0

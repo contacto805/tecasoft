@@ -293,7 +293,8 @@ export default function ProductionPage() {
       alert('Combinación calibre + calidad ya registrada. Combina en la fila existente o elimina primero.');
       return;
     }
-    const price = currentPrices[cal.toUpperCase()] || currentPrices.default || 0;
+    // VI: SIN PRECIO MANUAL EN PRODUCCIÓN. Precios autorizados vienen del backend (precios_fruta_publicados).
+    // Producción captura solo pesos y presentaciones. Precios para vista financiera separada.
     setSelectionRows([...selectionRows, {
       id: Date.now(),
       caliber: cal,
@@ -303,7 +304,7 @@ export default function ProductionPage() {
       additional_granel_kg: 0,
       total_kg: 0,
       percentage: 0,
-      price_per_kg: price,
+      price_per_kg: 0, // no manual - will be sourced from yield_summary authorized prices
       total_price: 0
     }]);
   };
@@ -323,11 +324,10 @@ export default function ProductionPage() {
           u[field] = Math.max(0, parseFloat(val) || 0);
         }
         u.total_kg = (parseInt(u.boxes_10kg)||0)*Number(p10) + (parseInt(u.boxes_6kg)||0)*Number(p6) + (parseFloat(u.additional_granel_kg)||0);
-        u.total_price = u.total_kg * (parseFloat(u.price_per_kg)||0);
+        // VI: total_price NO se calcula con precio manual. Valor real se calcula en backend con precios autorizados.
+        u.total_price = 0;
       }
-      if (field === 'price_per_kg') {
-        u.total_price = u.total_kg * (parseFloat(val)||0);
-      }
+      // price_per_kg no editable en producción (solo display financiero desde backend)
       return u;
     });
     // recalc % del ingreso y % producto comercial (unrounded for validation, 2dec display) - Block 08: prevent negative
@@ -613,24 +613,18 @@ export default function ProductionPage() {
     } catch (_) { alert('Salida registrada localmente.'); }
   };
 
-  const downloadReport = (type = 'csv') => {
+  const downloadReport = (type = "csv") => {
     if (!selectedLot) return;
-    let content = 'Calibre,Calidad A/B,Cajas 10kg,Cajas 6kg,Granel kg,Total kg,% Ingreso,% Producto Comercial,Precio,Valor\n';
-    selectionRows.forEach(r => {
-      content += `${r.caliber},${r.class_name},${r.boxes_10kg||0},${r.boxes_6kg||0},${r.additional_granel_kg||0},${r.total_kg||0},${r.percentage||0},${r.pct_comercial||0},${showFinancial ? (r.price_per_kg||0) : ''},${showFinancial ? (r.total_price||0) : ''}\n`;
-    });
-    const blob = new Blob([content], {type: type==='csv' ? 'text/csv' : 'text/plain'});
+    let content = "Calibre,Calidad,Cajas10,Cajas6,Granel,TotalKg,PctIngreso\n";
+    selectionRows.forEach(r => { content += r.caliber + "," + r.class_name + "\n"; });
+    content += "NOTA: Precios y valor desde backend autorizado (VI). Sin precio manual.\n";
+    const blob = new Blob([content], {type: type==="csv" ? "text/csv" : "text/plain"});
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `rendimiento_lote_${selectedLot.lot_number}.${type==='csv'?'csv':'txt'}`;
+    const a = document.createElement("a");
+    a.href = url; a.download = "rendimiento.txt";
     a.click();
     URL.revokeObjectURL(url);
   };
-
-  const printSummary = () => {
-    window.print();
-  };
-
   const consultHistory = () => {
     setActiveTab('Historial de corridas');
   };
@@ -796,7 +790,7 @@ export default function ProductionPage() {
                   <div className="bg-white border border-slate-200 rounded-xl p-4 mb-4">
                     <div className="flex items-center justify-between mb-2">
                       <div className="font-semibold">Tabla de selección (Calibre × Calidad)</div>
-                      <div className="text-xs text-slate-500">Solo catálogos de Configuración • Granel solo con pesaje verificado</div>
+                      <div className="text-xs text-slate-500">Solo catálogos de Configuración • Granel solo con pesaje verificado • Precios/valor: solo vista financiera autorizada (VI). Sin captura manual de precio en Producción.</div>
                     </div>
 
                     {/* Add from catalog (no arbitrary) */}
@@ -817,7 +811,7 @@ export default function ProductionPage() {
                         addSelectionRow(calEl?.value || '', clsEl?.value || 'A');
                       }} className="px-3 py-1 bg-indigo-600 text-white rounded text-sm">Agregar calibre</button>
                       <button type="button" onClick={() => setSelectionRows([])} className="px-3 py-1 border rounded text-sm">Limpiar filas</button>
-                      <button type="button" onClick={() => setShowFinancial(!showFinancial)} className="px-3 py-1 border rounded text-sm">{showFinancial ? 'Ocultar precios' : 'Mostrar precios (financieros)'}</button>
+                      <button type="button" onClick={() => setShowFinancial(!showFinancial)} className="px-3 py-1 border rounded text-sm">{showFinancial ? 'Ocultar valoración financiera' : 'Mostrar valoración (solo Dirección/Finanzas - precios autorizados backend)'}</button>
                     </div>
 
                     <div className="overflow-x-auto">
@@ -832,8 +826,8 @@ export default function ProductionPage() {
                             <th className="p-1 border">Total kg CALC.</th>
                             <th className="p-1 border">% ingreso CALC.</th>
                             <th className="p-1 border">% prod. comercial CALC.</th>
-                            <th className="p-1 border">Precio (solo financieros)</th>
-                            <th className="p-1 border">Valor (solo financieros)</th>
+                            <th className="p-1 border">Precio/kg (autorizado - solo financieros)</th>
+                            <th className="p-1 border">Valor clasificado (backend autorizado)</th>
                             <th className="p-1 border">Acción</th>
                           </tr>
                         </thead>
@@ -899,6 +893,7 @@ export default function ProductionPage() {
                     {/* Summary */}
                     <div className="mt-3 p-2 bg-slate-50 rounded text-xs">
                       Total selección: <b>{getMatrixTotals().totKg.toFixed(1)} kg</b> • Procesado + Desecho + Merma: <b>{(getMatrixTotals().process + getMatrixTotals().waste + getMatrixTotals().merma).toFixed(1)}</b> • Diferencia vs recibido: <b>{getMatrixTotals().diff.toFixed(1)} kg</b>
+                      <div className="mt-1 text-[10px] text-slate-600">Valor clasificado y precio ponderado se calculan en backend con precios autorizados (precios_fruta_publicados). No se acepta precio manual de navegador. Ver yield_summary en /api/production.</div>
                     </div>
 
                     {/* All required buttons */}
@@ -922,9 +917,9 @@ export default function ProductionPage() {
 
           {activeTab === 'Rendimiento del lote' && (
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-              <h2>Rendimiento del lote (lectura desde production_selection_details + fruit_input_weighings)</h2>
-              <p className="text-sm text-slate-500 mt-2">Fuente canónica. No se permiten capturas paralelas en rutas legacy.</p>
-              <div className="mt-4 text-xs">Totales calculados en getMatrixTotals y recalculateLot.</div>
+              <h2>Rendimiento del lote (fuente unica production)</h2>
+              <p className="text-sm text-slate-500 mt-2">Formulas y valor ponderado en backend. Precios autorizados (VI). Proceso/Desecho = inventario trazable, no venta (VII).</p>
+              <div className="mt-2 text-xs">yield_summary incluye valor_clasificado y precio_ponderado (o Pendiente de valoracion). Costos desde modulos externos.</div>
             </div>
           )}
 

@@ -221,46 +221,11 @@ export async function POST(request) {
 
     console.log('✅ Registro de lotificación guardado exitosamente');
 
-    // INTEGRACIÓN AUTOMÁTICA: Transferir Proceso y Desecho al módulo Venta de Proceso y Desecho
-    try {
-      const [lotInfo] = await sql`
-        SELECT lot_number, producer, fruit_type 
-        FROM lots 
-        WHERE id = ${parseInt(lotId)}
-      `;
-      
-      const procVal = procesoKgVal || 0;
-      const desVal = desechoCapturado || 0;
-
-      if (procVal > 0 || desVal > 0) {
-        await sql`
-          INSERT INTO sales_of_process_and_waste (
-            lot_id,
-            lotification_record_id,
-            source_batch_number,
-            date,
-            buyer_name,
-            product_name,
-            process_kg,
-            waste_kg,
-            notes
-          ) VALUES (
-            ${parseInt(lotId)},
-            ${registryId},
-            ${lotInfo?.lot_number || ''},
-            ${selectionDate},
-            ${lotInfo?.producer || ''},
-            ${lotInfo?.fruit_type || 'Proceso y Desecho'},
-            ${procVal},
-            ${desVal},
-            'Generado automáticamente desde Registro de Lotificación — Trazabilidad completa'
-          )
-        `;
-        console.log('✅ Transferencia automática a Venta de Proceso y Desecho: Proceso=' + procVal + 'kg, Desecho=' + desVal + 'kg');
-      }
-    } catch (transferErr) {
-      console.error('⚠️ Error en transferencia automática a ventas (no afecta registro):', transferErr);
-    }
+    // VII: SEPARACIÓN PROCESO/DESECHO DE VENTA
+    // Clasificación física genera categoría de inventario trazable.
+    // NO genera venta automática aquí. La venta comercial se registra SOLO en el módulo Ventas de Proceso y Desecho
+    // cuando realmente se venda. No se crean registros de venta desde lotificación.
+    // Transferencia a inventario de subproducto (si aplica) debe venir de evento de producción confirmado con referencia única.
     
     // Send notification to super admin
     await sendNotificationToSuperAdmin({
