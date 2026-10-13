@@ -728,7 +728,7 @@ export default function ProductionPage() {
               <h2 className="font-bold text-lg text-slate-900 mb-4">Lotes pendientes de corrida / selección</h2>
               <p className="text-sm text-slate-500 mb-3">Lotes con ingreso confirmado (fruit_input_weighings) pero sin selección completa en production_selection_details.</p>
                   {lots.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {lots.slice(0,12).map(l => (
                     <button key={l.id} onClick={() => { handleSelectLot(l); setActiveTab('Nueva corrida / Selección'); }} className="text-left p-3 border rounded hover:bg-indigo-50">
                       {l.lot_number} — {l.producer} • {parseFloat(l.total_kg_received||0).toFixed(0)} kg
