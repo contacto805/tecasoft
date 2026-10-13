@@ -191,9 +191,19 @@ export async function GET(request) {
       kg_netos_recibidos: 0
     };
 
+    // VIII: return each corrida (batch) separately + consolidated confirmed only
+    // Group details by batch for history view (each corrida independent)
+    const detailsByBatch = {};
+    details.forEach(d => {
+      const bid = d.production_batch_id;
+      if (!detailsByBatch[bid]) detailsByBatch[bid] = [];
+      detailsByBatch[bid].push(d);
+    });
+
     return NextResponse.json({
-      batches,
+      batches, // all corridas (BORRADOR + CONFIRMADO), history shows each + consolidated
       details: computedRows,
+      details_by_batch: detailsByBatch,
       yield_summary: yieldSummary
     });
   } catch (error) {
@@ -219,7 +229,8 @@ export async function POST(request) {
       merma_causa = '',
       status = 'BORRADOR',
       responsable = '',
-      turno = 'MAÑANA'
+      turno = 'MAÑANA',
+      idempotency_key = null
     } = body;
 
     if (!lot_id) {
@@ -353,46 +364,86 @@ export async function POST(request) {
       }
     }
 
-    // Create or update batch with meta + formulas fields
-    const [existingBatch] = await sql`
-      SELECT id FROM production_batches WHERE lot_id = ${lot_id} ORDER BY created_at DESC LIMIT 1
-    `;
-    let batchRow;
+    // VIII: UNIDAD DE REGISTRO / CORRIDAS PARCIALES - multiple corridas per lot supported (each confirmed batch = one corrida)
+    // Never reuse fixed batch id. Borrador editable; CONFIRMADO inmutable.
+    // IX: dedup by idempotency_key on confirm (repeat returns same, no kg increase)
     const prodDate = production_date || new Date().toISOString().split('T')[0];
-    if (existingBatch && (status === 'BORRADOR' || status === 'VALIDADO')) {
-      [batchRow] = await sql`
-        UPDATE production_batches SET
-          production_date = ${prodDate},
-          status = ${status},
-          process_kg = ${proc},
-          desecho_kg = ${des},
-          merma_kg = ${merm},
-          merma_causa = ${merma_causa},
-          responsable = ${responsable},
-          turno = ${turno},
-          observaciones = ${notes || ''},
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = ${existingBatch.id}
-        RETURNING *
-      `;
-    } else {
+    let batchRow;
+    let batchId;
+
+    if ((status || '').toUpperCase() === 'CONFIRMADO') {
+      // Dedup: if idempotency_key provided and a confirmed batch with same key+lot exists, return it (no new record)
+      if (idempotency_key) {
+        const [existingConfirmed] = await sql`
+          SELECT * FROM production_batches 
+          WHERE lot_id = ${lot_id} 
+            AND status = 'CONFIRMADO' 
+            AND idempotency_key = ${idempotency_key}
+          LIMIT 1
+        `;
+        if (existingConfirmed) {
+          // repeat confirm: return previous without changing anything (no kg increase)
+          return NextResponse.json({ success: true, batch: existingConfirmed, deduped: true, idempotency_key });
+        }
+      }
+
+      // Always create NEW batch for a fresh corrida (even same day)
       [batchRow] = await sql`
         INSERT INTO production_batches (
-          lot_id, production_date, status, process_kg, desecho_kg, merma_kg, merma_causa, responsable, turno, observaciones
+          lot_id, production_date, status, process_kg, desecho_kg, merma_kg, merma_causa, responsable, turno, observaciones, idempotency_key, version
         )
-        VALUES (${lot_id}, ${prodDate}, ${status}, ${proc}, ${des}, ${merm}, ${merma_causa}, ${responsable}, ${turno}, ${notes || ''})
+        VALUES (${lot_id}, ${prodDate}, 'CONFIRMADO', ${proc}, ${des}, ${merm}, ${merma_causa}, ${responsable}, ${turno}, ${notes || ''}, ${idempotency_key}, 1)
         RETURNING *
       `;
+      batchId = batchRow.id;
+    } else {
+      // Draft/validate: allow update of latest draft only (immutable once confirmed)
+      const [latestDraft] = await sql`
+        SELECT * FROM production_batches 
+        WHERE lot_id = ${lot_id} 
+          AND (status = 'BORRADOR' OR status = 'VALIDADO' OR status IS NULL)
+        ORDER BY created_at DESC LIMIT 1
+      `;
+      if (latestDraft) {
+        // ensure not already confirmed
+        if ((latestDraft.status || '').toUpperCase() === 'CONFIRMADO') {
+          return NextResponse.json({ error: 'Corrida ya confirmada es inmutable. Inicie nueva corrida.' }, { status: 400 });
+        }
+        [batchRow] = await sql`
+          UPDATE production_batches SET
+            production_date = ${prodDate},
+            status = ${status},
+            process_kg = ${proc},
+            desecho_kg = ${des},
+            merma_kg = ${merm},
+            merma_causa = ${merma_causa},
+            responsable = ${responsable},
+            turno = ${turno},
+            observaciones = ${notes || ''},
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ${latestDraft.id}
+          RETURNING *
+        `;
+        batchId = batchRow.id;
+      } else {
+        [batchRow] = await sql`
+          INSERT INTO production_batches (
+            lot_id, production_date, status, process_kg, desecho_kg, merma_kg, merma_causa, responsable, turno, observaciones, idempotency_key, version
+          )
+          VALUES (${lot_id}, ${prodDate}, ${status}, ${proc}, ${des}, ${merm}, ${merma_causa}, ${responsable}, ${turno}, ${notes || ''}, ${idempotency_key}, 1)
+          RETURNING *
+        `;
+        batchId = batchRow.id;
+      }
     }
 
-    const batchId = batchRow ? batchRow.id : (existingBatch ? existingBatch.id : null);
-
-    // Remove draft rows for this batch to avoid dups on re-save (only for draft)
-    if (status === 'BORRADOR' && batchId) {
+    // For confirmed corridas: do NOT delete previous details of other corridas. Details go to this specific batch only.
+    // For draft only: clean to avoid dups on re-save within the draft batch.
+    if ((status || '').toUpperCase() !== 'CONFIRMADO' && batchId) {
       await sql`DELETE FROM production_selection_details WHERE production_batch_id = ${batchId}`;
     }
 
-    // Insert / re-insert rows with precise formula
+    // Insert rows with precise formula - always for the current batch (supports multiple corridas)
     for (const item of caliber_data) {
       const gr = Number(item.additional_granel_kg || 0);
       const rowTotalKg = computeKg(item.boxes_10kg, item.boxes_6kg, gr);
@@ -420,11 +471,11 @@ export async function POST(request) {
       `;
     }
 
-    // Rebuild canonical aggregates
+    // Rebuild canonical aggregates (consolidated from all confirmed corridas)
     const { recalculateLot } = await import('@/app/api/utils/recalculate');
     await recalculateLot(lot_id);
 
-    return NextResponse.json({ success: true, batch: batchRow, tolerance_applied: toleranceKg });
+    return NextResponse.json({ success: true, batch: batchRow, tolerance_applied: toleranceKg, corrida_id: batchId });
   } catch (error) {
     console.error("Error in POST /api/production:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });

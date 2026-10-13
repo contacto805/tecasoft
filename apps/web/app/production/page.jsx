@@ -558,6 +558,7 @@ export default function ProductionPage() {
         inventory_kg: parseFloat(r.total_kg)||0,
         process_kg: 0, waste_kg: 0
       }));
+      const idempKey = `corrida-${selectedLot.id}-${Date.now()}`;
       const res = await fetch('/api/production', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -572,9 +573,22 @@ export default function ProductionPage() {
           merma_causa: mermaCausa || 'Confirmada por peso',
           status: 'CONFIRMADO',
           responsable: responsable || 'Operador',
-          turno
+          turno,
+          idempotency_key: idempKey
         })
       });
+      // IX: after create, invoke dedicated transactional confirm for inventory event + dedup guarantee
+      if (res.ok) {
+        const created = await res.json().catch(()=>({}));
+        const bid = created?.batch?.id || created?.corrida_id;
+        if (bid) {
+          await fetch(`/api/production/batches/${bid}/confirm`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ idempotency_key: idempKey, notes: observaciones })
+          }).catch(()=>{});
+        }
+      }
       if (!res.ok) {
         const err = await res.json().catch(()=>({}));
         throw new Error(err.error || 'Error al confirmar');
