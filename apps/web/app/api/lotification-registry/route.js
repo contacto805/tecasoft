@@ -128,11 +128,11 @@ export async function POST(request) {
         clase_b_kg,
         proceso_kg
       ) VALUES (
-        ${parseInt(lotId)},
+        ${String(parseInt(lotId) || 0)},
         ${selectionDate},
-        ${parseFloat(totalKilosReceived)},
-        ${parseFloat(totalKilosByCaliber)},
-        ${parseFloat(realPricePerLot)},
+        ${String(parseFloat(totalKilosReceived) || 0)},
+        ${String(parseFloat(totalKilosByCaliber) || 0)},
+        ${String(parseFloat(realPricePerLot) || 0)},
         ${selectedQuality},
         ${desechoCapturado},
         ${claseBKilosVal},
@@ -163,14 +163,14 @@ export async function POST(request) {
           waste_kg,
           shrinkage_kg
         ) VALUES (
-          ${registryId},
+          ${String(registryId || 0)},
           ${selectedQuality},
-          ${totalKilosByCaliber},
+          ${String(totalKilosByCaliber || 0)},
           0,
           100,
-          ${procesoKgVal},
-          ${desechoCapturado},
-          ${shrinkageKg}
+          ${String(procesoKgVal || 0)},
+          ${String(desechoCapturado || 0)},
+          ${String(shrinkageKg || 0)}
         )
       `;
     } else if (selectedQuality === 'Clase B') {
@@ -186,14 +186,14 @@ export async function POST(request) {
           waste_kg,
           shrinkage_kg
         ) VALUES (
-          ${registryId},
+          ${String(registryId || 0)},
           'Clase B',
-          ${totalKilosByCaliber},
+          ${String(totalKilosByCaliber || 0)},
           0,
           100,
-          ${procesoKgVal},
-          ${desechoCapturado},
-          ${shrinkageKg}
+          ${String(procesoKgVal || 0)},
+          ${String(desechoCapturado || 0)},
+          ${String(shrinkageKg || 0)}
         )
       `;
     } else {
@@ -208,11 +208,11 @@ export async function POST(request) {
             percentage,
             shrinkage_kg
           ) VALUES (
-            ${registryId},
+            ${String(registryId || 0)},
             ${caliber.caliber},
-            ${parseFloat(caliber.kilos) || 0},
-            ${parseFloat(caliber.price) || 0},
-            ${parseFloat(caliber.percentage) || 0},
+            ${String(parseFloat(caliber.kilos) || 0)},
+            ${String(parseFloat(caliber.price) || 0)},
+            ${String(parseFloat(caliber.percentage) || 0)},
             0
           )
         `;
@@ -231,8 +231,8 @@ export async function POST(request) {
     await sendNotificationToSuperAdmin({
       type: 'create',
       module: 'Lotificación',
-      registryId: registryId,
-      lotId
+      registryId: String(registryId || 0),
+      lotId: lotId ? String(lotId) : null
     });
     
     return NextResponse.json({
@@ -277,19 +277,19 @@ export async function PUT(request) {
       SET
         selection_date = ${selectionDate},
         total_kilos_received = ${parseFloat(totalKilosReceived)},
-        total_kilos_by_caliber = ${parseFloat(totalKilosByCaliber)},
-        real_price_per_lot = ${parseFloat(realPricePerLot)},
+        total_kilos_by_caliber = ${String(parseFloat(totalKilosByCaliber) || 0)},
+        real_price_per_lot = ${String(parseFloat(realPricePerLot) || 0)},
         calidad = COALESCE(${calidad}, calidad),
         desecho_capturado = ${parseFloat(desecho_capturado) || 0},
         clase_b_kg = ${parseFloat(clase_b_kg) || 0},
         proceso_kg = ${parseFloat(putProcesoKg) || 0},
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = ${parseInt(id)}
+      WHERE id = ${String(parseInt(id) || 0)}
       RETURNING *
     `;
 
     // Delete old caliber details
-    await sql`DELETE FROM lotification_calibers WHERE registry_id = ${parseInt(id)}`;
+    await sql`DELETE FROM lotification_calibers WHERE registry_id = ${String(parseInt(id) || 0)}`;
 
     // Insert new caliber details
     for (const caliber of calibers) {
@@ -304,14 +304,14 @@ export async function PUT(request) {
           waste_kg,
           shrinkage_kg
         ) VALUES (
-          ${parseInt(id)},
+          ${String(parseInt(id) || 0)},
           ${caliber.caliber},
-          ${parseFloat(caliber.kilos)},
-          ${parseFloat(caliber.price)},
-          ${parseFloat(caliber.percentage)},
-          ${parseFloat(caliber.process_kg) || 0},
-          ${parseFloat(caliber.waste_kg) || 0},
-          ${parseFloat(caliber.shrinkage_kg) || 0}
+          ${String(parseFloat(caliber.kilos) || 0)},
+          ${String(parseFloat(caliber.price) || 0)},
+          ${String(parseFloat(caliber.percentage) || 0)},
+          ${String(parseFloat(caliber.process_kg) || 0)},
+          ${String(parseFloat(caliber.waste_kg) || 0)},
+          ${String(parseFloat(caliber.shrinkage_kg) || 0)}
         )
       `;
     }
@@ -320,7 +320,8 @@ export async function PUT(request) {
     await sendNotificationToSuperAdmin({
       type: 'update',
       module: 'Lotificación',
-      registryId: parseInt(id)
+      registryId: String(parseInt(id) || 0),
+      lotId: null
     });
     
     return NextResponse.json({
@@ -349,14 +350,15 @@ export async function DELETE(request) {
     await sendNotificationToSuperAdmin({
       type: 'delete',
       module: 'Lotificación',
-      registryId: parseInt(id)
+      registryId: String(parseInt(id) || 0),
+      lotId: null
     });
 
     // Delete caliber details first (foreign key constraint)
-    await sql`DELETE FROM lotification_calibers WHERE registry_id = ${parseInt(id)}`;
+    await sql`DELETE FROM lotification_calibers WHERE registry_id = ${String(parseInt(id) || 0)}`;
     
     // Delete main registry
-    await sql`DELETE FROM lotification_registry WHERE id = ${parseInt(id)}`;
+    await sql`DELETE FROM lotification_registry WHERE id = ${String(parseInt(id) || 0)}`;
 
     return NextResponse.json({ success: true });
   } catch (error) {

@@ -114,7 +114,9 @@ export async function GET(request) {
       return {
         ...d,
         kg_comercial_i: kg_i,
-        pct_sobre_ingreso: parseFloat(pctIng.toFixed(2))
+        pct_sobre_ingreso: parseFloat(pctIng.toFixed(2)),
+        caliber: d.caliber,
+        total_kg: d.total_kg || 0
       };
     });
 

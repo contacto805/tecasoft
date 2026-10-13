@@ -808,7 +808,7 @@ export default function ProductionPage() {
                       <button type="button" onClick={() => {
                         const calEl = document.getElementById('newCal');
                         const clsEl = document.getElementById('newCls');
-                        addSelectionRow(calEl?.value || '', clsEl?.value || 'A');
+                        addSelectionRow(calEl?.['value'] || '', clsEl?.['value'] || 'A');
                       }} className="px-3 py-1 bg-indigo-600 text-white rounded text-sm">Agregar calibre</button>
                       <button type="button" onClick={() => setSelectionRows([])} className="px-3 py-1 border rounded text-sm">Limpiar filas</button>
                       <button type="button" onClick={() => setShowFinancial(!showFinancial)} className="px-3 py-1 border rounded text-sm">{showFinancial ? 'Ocultar valoración financiera' : 'Mostrar valoración (solo Dirección/Finanzas - precios autorizados backend)'}</button>
@@ -903,7 +903,7 @@ export default function ProductionPage() {
                       <button onClick={confirmCorrida} disabled={loading} className="px-3 py-1.5 bg-emerald-600 text-white rounded text-sm">Confirmar corrida</button>
                       <button onClick={requestCorrection} className="px-3 py-1.5 border border-amber-600 text-amber-700 rounded text-sm">Solicitar corrección</button>
                       <button onClick={consultHistory} className="px-3 py-1.5 border rounded text-sm">Consultar historial</button>
-                      <button onClick={printSummary} className="px-3 py-1.5 border rounded text-sm">Imprimir resumen</button>
+                      <button onClick={() => downloadReport('csv')} className="px-3 py-1.5 border rounded text-sm">Imprimir resumen</button>
                       <button onClick={() => downloadReport('csv')} className="px-3 py-1.5 border rounded text-sm">Descargar CSV/Excel</button>
                       <button onClick={registerToInventory} className="px-3 py-1.5 bg-indigo-700 text-white rounded text-sm">Registrar salida a inventarios</button>
                       <button onClick={() => { setSelectedLot(null); setSelectionRows([]); }} className="px-3 py-1.5 border rounded text-sm">Cancelar</button>
