@@ -549,7 +549,7 @@ Proceso: ${parseFloat(processKilos)||0} kg | Desecho: ${parseFloat(desechoCaptur
     }
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const data = new Uint8Array(ev.target.result);
+      const data = new Uint8Array(/** @type {any} */(ev.target.result));
       const wb = XLSX.read(data, { type: 'array' });
       setPlantillaFile({ name: file.name, workbook: wb });
       alert(`✅ Plantilla "${file.name}" cargada con éxito.\nLos datos ingresados se superpondrán al imprimir/exportar.`);
@@ -608,13 +608,13 @@ Proceso: ${parseFloat(processKilos)||0} kg | Desecho: ${parseFloat(desechoCaptur
         alert('✅ Logotipo cargado. Se aplicará en este documento.');
       } else {
         const reader = new FileReader();
-        reader.onload = ev => setCustomLogoPreview(ev.target.result);
+        reader.onload = ev => setCustomLogoPreview(String(/** @type {any} */(ev.target.result) || ''));
         reader.readAsDataURL(file);
         alert('Logotipo cargado localmente (sesión).');
       }
     } catch (err) {
       const reader = new FileReader();
-      reader.onload = ev => setCustomLogoPreview(ev.target.result);
+      reader.onload = ev => setCustomLogoPreview(String(/** @type {any} */(ev.target.result) || ''));
       reader.readAsDataURL(file);
     }
   };
@@ -742,9 +742,9 @@ Proceso: ${parseFloat(processKilos)||0} kg | Desecho: ${parseFloat(desechoCaptur
                 ) : (
                   <div className="space-y-2 max-h-96 overflow-y-auto">
                     {lots
-                      .sort((a, b) => new Date(b.created_at || b.date) - new Date(a.created_at || a.date))
+                      .sort((a, b) => new Date(b.created_at || b.date).getTime() - new Date(a.created_at || a.date).getTime())
                       .map((lot) => {
-                        const isNew = lot.created_at && (new Date() - new Date(lot.created_at)) < 60000; // Less than 1 minute old
+                        const isNew = lot.created_at && (new Date().getTime() - new Date(lot.created_at).getTime()) < 60000; // Less than 1 minute old
                         return (
                           <button
                             key={lot.id}
