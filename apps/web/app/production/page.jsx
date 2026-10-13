@@ -69,6 +69,7 @@ export default function ProductionPage() {
   // Block 06 states: corrida metadata + quality/presentations catalogs + financial toggle + merma manual
   const [qualities, setQualities] = useState([]);
   const [presentations, setPresentations] = useState([]);
+  const [palletConfigs, setPalletConfigs] = useState([]); // Block 08: configurable capacities only (examples, never universal)
   const [corridaFecha, setCorridaFecha] = useState(new Date().toISOString().split('T')[0]);
   const [responsable, setResponsable] = useState('');
   const [turno, setTurno] = useState('MAÑANA');
@@ -246,6 +247,20 @@ export default function ProductionPage() {
     fetchPresentations();
   }, []);
 
+  // Block 08: Load pallet configurations (capacidades configurables SOLO como ejemplos, nunca universales)
+  useEffect(() => {
+    const fetchPalletConfigs = async () => {
+      try {
+        const res = await fetch('/api/pallet-configurations');
+        if (res.ok) {
+          const d = await res.json();
+          setPalletConfigs(Array.isArray(d) ? d.filter(c => c.is_active !== false) : []);
+        }
+      } catch (_) { setPalletConfigs([]); }
+    };
+    fetchPalletConfigs();
+  }, []);
+
   const handleAddCaliber = () => {
     setFormData(prev => ({
       ...prev,
@@ -301,6 +316,12 @@ export default function ProductionPage() {
       if (r.id !== id) return r;
       const u = { ...r, [field]: val };
       if (['boxes_10kg','boxes_6kg','additional_granel_kg'].includes(field)) {
+        // Block 08: enforce non-negative integers for cajas, kg >=0
+        if (field === 'boxes_10kg' || field === 'boxes_6kg') {
+          u[field] = Math.max(0, Math.floor(parseFloat(val) || 0));
+        } else {
+          u[field] = Math.max(0, parseFloat(val) || 0);
+        }
         u.total_kg = (parseInt(u.boxes_10kg)||0)*Number(p10) + (parseInt(u.boxes_6kg)||0)*Number(p6) + (parseFloat(u.additional_granel_kg)||0);
         u.total_price = u.total_kg * (parseFloat(u.price_per_kg)||0);
       }
@@ -309,12 +330,15 @@ export default function ProductionPage() {
       }
       return u;
     });
-    // recalc % del ingreso y % producto comercial (unrounded for validation, 2dec display)
+    // recalc % del ingreso y % producto comercial (unrounded for validation, 2dec display) - Block 08: prevent negative
     const received = totalReceivedForCalc || 1;
     const sumSel = rows.reduce((s,r)=>s+(parseFloat(r.total_kg)||0),0) || 1;
     const final = rows.map(r => {
-      const pctIng = ((parseFloat(r.total_kg)||0) / received * 100);
-      const pctCom = ((parseFloat(r.total_kg)||0) / sumSel * 100);
+      let pctIng = ((parseFloat(r.total_kg)||0) / received * 100);
+      let pctCom = ((parseFloat(r.total_kg)||0) / sumSel * 100);
+      if (received <= 0) { pctIng = 0; pctCom = 0; }
+      pctIng = Math.max(0, Math.min(100, pctIng));
+      pctCom = Math.max(0, pctCom);
       return { ...r, percentage: pctIng.toFixed(2), pct_comercial: pctCom.toFixed(2) };
     });
     setSelectionRows(final);
@@ -470,11 +494,37 @@ export default function ProductionPage() {
   };
 
   const validateSelection = async () => {
+    // Block 08: client-side + catalog enforcement before backend
+    for (const r of selectionRows) {
+      const b10 = parseInt(r.boxes_10kg);
+      const b6 = parseInt(r.boxes_6kg);
+      if (b10 < 0 || b6 < 0 || !Number.isFinite(b10) || !Number.isFinite(b6)) {
+        alert('Cajas deben ser enteras no negativas.');
+        return false;
+      }
+      const gr = parseFloat(r.additional_granel_kg||0);
+      if (gr < 0 || !Number.isFinite(gr)) {
+        alert('Granel debe ser no negativo.');
+        return false;
+      }
+      const cal = String(r.caliber||'').trim();
+      if (cal && !calibers.some(c => [c.caliber_code, c.caliber_name, c.display_name].map(x=>String(x||'').toUpperCase()).includes(cal.toUpperCase()))) {
+        alert(`Calibre ${cal} no está en catálogos de Configuración.`);
+        return false;
+      }
+      const cl = String(r.class_name||'A').trim().toUpperCase();
+      if (!qualities.some(q => String(q.quality_name||q.display_name||'').toUpperCase() === cl)) {
+        alert(`Calidad ${r.class_name} no está en catálogos.`);
+        return false;
+      }
+    }
     const t = getMatrixTotals();
     const received = t.received || 0;
     const acc = t.accounted || 0;
-    if (Math.abs(received - acc) > 3) {
-      alert(`Diferencia ${ (received-acc).toFixed(1) } kg. Confirma merma manualmente antes de validar.`);
+    const diff = Math.abs(received - acc);
+    // Block 08: no % >100 or negative (already clamped), explicit diff handling
+    if (diff > 0.5 && (!mermaCausa || mermaCausa.trim()==='')) {
+      alert(`Diferencia ${diff.toFixed(1)} kg. Registre causa de merma o diferencia explícita antes de validar.`);
       return false;
     }
     setCorridaEstado('VALIDADO');
@@ -492,6 +542,13 @@ export default function ProductionPage() {
     }
     const ok = await validateSelection();
     if (!ok) return;
+    const t = getMatrixTotals();
+    const diff = t.diff || 0;
+    // Block 08: no finalizar con kilos sin explicar (merma_causa requerida si diff > tolerancia)
+    if (diff > 3 && (!mermaCausa || mermaCausa.trim()==='')) {
+      alert('No se permite confirmar corrida con kilos sin explicar. Capture causa de merma/diferencia autorizada.');
+      return;
+    }
     setLoading(true);
     try {
       const matrix = selectionRows.map(r => ({
@@ -518,7 +575,10 @@ export default function ProductionPage() {
           turno
         })
       });
-      if (!res.ok) throw new Error('Error al confirmar');
+      if (!res.ok) {
+        const err = await res.json().catch(()=>({}));
+        throw new Error(err.error || 'Error al confirmar');
+      }
       setCorridaEstado('CONFIRMADO');
       setIsDraft(false);
       alert('Corrida confirmada. Registros guardados en production_selection_details.');
@@ -529,7 +589,7 @@ export default function ProductionPage() {
       setSelectedLot(null);
       setSelectionRows([]);
     } catch (e) {
-      alert('Error al confirmar corrida');
+      alert('Error al confirmar corrida: ' + (e.message || ''));
     } finally { setLoading(false); }
   };
 
@@ -871,6 +931,17 @@ export default function ProductionPage() {
           {activeTab === 'Tarimas y salida a Inventarios' && (
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
               <h2 className="font-bold mb-4">Tarimas y salida a Inventarios</h2>
+              {/* Block 08: Capacidades configurables como ejemplos (nunca universales); tarimas con folio único solo al confirmar paletizado; cajas parciales permitidas */}
+              <p className="text-sm text-slate-600 mb-2">
+                Las tarimas reales se generan con identificadores únicos (folio_tarima) al confirmar el paletizado / "Registrar salida a inventarios". 
+                La producción en cajas NO equivale automáticamente a tarima completa. Se permiten cajas parciales.
+              </p>
+              <div className="text-xs text-amber-700 mb-3">
+                Capacidades de tarima (configurables en Configuración de Tarimas - ejemplos solamente): 
+                {palletConfigs.length > 0 
+                  ? palletConfigs.map((pc,i) => ` ${pc.pallet_name || pc.pallet_type} (${pc.boxes_capacity||'?'} cajas / ${pc.total_weight_kg||'?'} kg)`).join(' • ')
+                  : ' 10kg×104 (~1040kg), 10kg×96 (~960kg), 6kg×156 (~936kg) — ver /pallet-configuration'}
+              </div>
               <p>Lista de pallet_output_summary (fuente única). Asignación a slots actualiza inventario y producción.</p>
               {/* reuse pallet list logic */}
               {pallets.length > 0 && <div className="text-xs mt-2">{pallets.length} tarimas en sistema.</div>}

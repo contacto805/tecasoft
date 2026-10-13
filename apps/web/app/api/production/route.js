@@ -107,7 +107,10 @@ export async function GET(request) {
       pct_merma: parseFloat(pctMerm.toFixed(2)),
       pct_pendiente: parseFloat(pctPend.toFixed(2)),
       balance_total: parseFloat(balance.toFixed(2)),
-      formula_note: '% sobre ingreso + %proceso + %desecho + %merma + %pendiente = 100% (peso>0)'
+      formula_note: '% sobre ingreso + %proceso + %desecho + %merma + %pendiente = 100% (peso>0)',
+      // Block 08: explicit balance flag + tolerance reference (no silent close)
+      balance_ok: Math.abs(balance - 100) <= 0.5 || received === 0,
+      tolerance_note: 'Diferencias > tolerancia física configurada deben registrarse explícitamente (merma o autorización)'
     } : {
       message: 'Sin ingreso confirmado / No calculable',
       kg_netos_recibidos: 0
@@ -125,6 +128,7 @@ export async function GET(request) {
 }
 
 // POST - Create production batch (updated for unique physical formulas, granel, independent proceso/desecho/merma)
+// Block 08: strict physical validations, configurable tolerance, explicit differences, no silent adjustments, pallet capacities configurable only
 export async function POST(request) {
   try {
     const body = await request.json();
@@ -155,6 +159,66 @@ export async function POST(request) {
     const { getCanonicalReceivedKg } = await import('@/app/api/utils/recalculate');
     const totalKgReceived = await getCanonicalReceivedKg(lot_id);
 
+    // === BLOCK 08: LOAD CONFIGURABLE TOLERANCE (system_settings or default 5kg) ===
+    let toleranceKg = 5;
+    try {
+      const [tolRow] = await sql`SELECT value FROM system_settings WHERE key = 'SELECTION_PHYSICAL_TOLERANCE_KG' LIMIT 1`;
+      if (tolRow && tolRow.value) toleranceKg = parseFloat(tolRow.value) || 5;
+    } catch(_) {}
+
+    // === BLOCK 08: STRICT INPUT VALIDATIONS (cajas enteras >=0, kg>=0, finitos, catálogos existentes) ===
+    const validCalibersRes = await sql`SELECT caliber_code, caliber_name, display_name FROM caliber_definitions WHERE COALESCE(is_active, true) = true`;
+    const validCaliberSet = new Set();
+    validCalibersRes.forEach(c => {
+      if (c.caliber_code) validCaliberSet.add(String(c.caliber_code).toUpperCase());
+      if (c.caliber_name) validCaliberSet.add(String(c.caliber_name).toUpperCase());
+      if (c.display_name) validCaliberSet.add(String(c.display_name).toUpperCase());
+    });
+
+    const validQualitiesRes = await sql`SELECT quality_name, display_name FROM quality_options WHERE COALESCE(is_active, true) = true`;
+    const validQualitySet = new Set();
+    validQualitiesRes.forEach(q => {
+      if (q.quality_name) validQualitySet.add(String(q.quality_name).toUpperCase());
+      if (q.display_name) validQualitySet.add(String(q.display_name).toUpperCase());
+    });
+
+    for (const item of caliber_data) {
+      const b10 = parseInt(item.boxes_10kg);
+      const b6 = parseInt(item.boxes_6kg);
+      const gr = parseFloat(item.additional_granel_kg || 0);
+      const pKg = parseFloat(item.process_kg || 0);
+      const wKg = parseFloat(item.waste_kg || 0);
+
+      if (!Number.isFinite(b10) || b10 < 0 || b10 !== parseFloat(item.boxes_10kg)) {
+        return NextResponse.json({ error: 'Cajas 10kg deben ser enteras no negativas' }, { status: 400 });
+      }
+      if (!Number.isFinite(b6) || b6 < 0 || b6 !== parseFloat(item.boxes_6kg)) {
+        return NextResponse.json({ error: 'Cajas 6kg deben ser enteras no negativas' }, { status: 400 });
+      }
+      if (!Number.isFinite(gr) || gr < 0) {
+        return NextResponse.json({ error: 'Kg adicionales a granel deben ser no negativos' }, { status: 400 });
+      }
+      if (!Number.isFinite(pKg) || pKg < 0 || !Number.isFinite(wKg) || wKg < 0) {
+        return NextResponse.json({ error: 'Cantidades de proceso/desecho deben ser finitas no negativas' }, { status: 400 });
+      }
+
+      const calU = String(item.caliber || '').toUpperCase().trim();
+      if (calU && validCaliberSet.size > 0 && !validCaliberSet.has(calU)) {
+        return NextResponse.json({ error: `Calibre '${item.caliber}' no existe en catálogos activos de Configuración` }, { status: 400 });
+      }
+      const clsU = String(item.class_name || 'A').toUpperCase().trim();
+      if (clsU && validQualitySet.size > 0 && !validQualitySet.has(clsU)) {
+        return NextResponse.json({ error: `Calidad '${item.class_name}' no existe en catálogos activos de Configuración` }, { status: 400 });
+      }
+    }
+
+    const proc = Number(process_kg) || 0;
+    const des = Number(waste_kg) || 0;
+    const merm = Number(merma_kg) || 0;
+    if (!Number.isFinite(proc) || proc < 0 || !Number.isFinite(des) || des < 0 || !Number.isFinite(merm) || merm < 0) {
+      return NextResponse.json({ error: 'Proceso, Desecho y Merma deben ser no negativos y finitos' }, { status: 400 });
+    }
+
     // Compute using backend formulas for each row (dynamic weights)
     const p10 = 10; // will override with catalog below
     const p6 = 6;
@@ -183,16 +247,35 @@ export async function POST(request) {
       totalWasteFromRows += Number(item.waste_kg || 0);
     }
 
-    const proc = Number(process_kg) || 0;
-    const des = Number(waste_kg) || 0;
-    const merm = Number(merma_kg) || 0;
     const totalOutput = totalPacked + proc + des + merm;
 
-    if (totalKgReceived > 0 && totalOutput > totalKgReceived + 0.5) {
-      return NextResponse.json(
-        { error: `Total (${totalOutput.toFixed(2)}) excede recibidos canónicos (${totalKgReceived.toFixed(2)})` },
-        { status: 400 }
-      );
+    // === BLOCK 08: NO EXCEDER PESO GLOBAL + TOLERANCIA CONFIGURABLE (bloquea explícitamente, sin ajuste silencioso) ===
+    if (totalKgReceived > 0) {
+      const over = totalOutput - totalKgReceived;
+      if (over > toleranceKg) {
+        return NextResponse.json(
+          { 
+            error: `KG_DISTRIBUIDOS (${totalOutput.toFixed(3)}) excede recibidos (${totalKgReceived.toFixed(3)}) por encima de tolerancia física configurada (${toleranceKg} kg). Diferencia: ${over.toFixed(3)} kg. Registre merma/causa o ajuste autorizado explícitamente.`,
+            diff: parseFloat(over.toFixed(3)),
+            tolerance: toleranceKg,
+            received: totalKgReceived,
+            distributed: totalOutput
+          },
+          { status: 400 }
+        );
+      }
+    }
+
+    // === BLOCK 08: NO PERMITIR FINALIZAR CON KILOS SIN EXPLICAR (para CONFIRMADO) ===
+    const kgDistribuidosCheck = totalPacked + proc + des + merm;
+    const kgPendientesCheck = Math.max(0, totalKgReceived - kgDistribuidosCheck);
+    if ((status || '').toUpperCase() === 'CONFIRMADO' && totalKgReceived > 0) {
+      if (kgPendientesCheck > toleranceKg && (!merma_causa || String(merma_causa).trim() === '')) {
+        return NextResponse.json(
+          { error: `Lote no puede confirmarse con ${kgPendientesCheck.toFixed(2)} kg pendientes sin causa de merma/diferencia autorizada registrada. Una corrida parcial requiere explicación explícita para cerrar.` },
+          { status: 400 }
+        );
+      }
     }
 
     // Create or update batch with meta + formulas fields
@@ -266,7 +349,7 @@ export async function POST(request) {
     const { recalculateLot } = await import('@/app/api/utils/recalculate');
     await recalculateLot(lot_id);
 
-    return NextResponse.json({ success: true, batch: batchRow });
+    return NextResponse.json({ success: true, batch: batchRow, tolerance_applied: toleranceKg });
   } catch (error) {
     console.error("Error in POST /api/production:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
