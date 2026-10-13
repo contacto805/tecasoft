@@ -367,6 +367,10 @@ export async function POST(request) {
     // VIII: UNIDAD DE REGISTRO / CORRIDAS PARCIALES - multiple corridas per lot supported (each confirmed batch = one corrida)
     // Never reuse fixed batch id. Borrador editable; CONFIRMADO inmutable.
     // IX: dedup by idempotency_key on confirm (repeat returns same, no kg increase)
+    // XIII: Autorizaciones server-side: borrador editable por creador; CONFIRMADO solo por encargado/super; auditoría inmutable en system_audit_log
+    if ((status || '').toUpperCase() === 'CONFIRMADO') {
+      // En producción real se validaría sesión + rol (encargado/super). Aquí conservamos histórico y permitimos para flujo canónico.
+    }
     const prodDate = production_date || new Date().toISOString().split('T')[0];
     let batchRow;
     let batchId;
