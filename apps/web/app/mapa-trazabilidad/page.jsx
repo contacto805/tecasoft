@@ -262,7 +262,7 @@ export default function TraceabilityMapPage() {
               'weighings': '/fruit-input',
               'box-control': '/box-control',
               'crew': '/cuadrillas',
-              'lotification': '/lotification-registry',
+              'lotification': '/production?tab=rendimiento', // XI/XII: canónica Producción (legacy /lotification-registry solo lectura)
               'performance': '/production',
               'inventory': '/inventory',
               'production': '/production',
@@ -434,7 +434,7 @@ export default function TraceabilityMapPage() {
                 <i className="ph-bold ph-arrow-right text-slate-400"></i>
                 <span className="px-3 py-2 bg-indigo-100 border border-indigo-300 rounded-lg font-medium flex items-center gap-1.5">
                   Producción / Lotificación
-                  <button onClick={()=>router.push('/lotification-registry')} className="text-xs px-1.5 py-0 bg-indigo-200 rounded hover:bg-indigo-300">Editar</button>
+                  <button onClick={()=>router.push('/production?tab=historial')} className="text-xs px-1.5 py-0 bg-indigo-200 rounded hover:bg-indigo-300">Ver en Producción (canónica)</button>
                 </span>
                 <i className="ph-bold ph-arrow-right text-slate-400"></i>
                 <span className="px-3 py-2 bg-sky-100 border border-sky-300 rounded-lg font-medium flex items-center gap-1.5">

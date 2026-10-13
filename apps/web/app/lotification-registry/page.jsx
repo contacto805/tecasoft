@@ -320,6 +320,12 @@ function LotificationRegistryPageContent() {
     }
     setError('');
     
+    // XI BLOQUE 12: Escritura deshabilitada en legacy. Informar y bloquear.
+    const msg = 'Módulo legacy en modo solo lectura (BLOQUE 12). Registra corridas en /production (fuente canónica). Este formulario no guarda nuevos datos.';
+    setError(msg);
+    alert('⚠️ ' + msg);
+    return; // Bloqueo efectivo de submit
+
     // Validación 1: Lote seleccionado
     if (!selectedLot) {
       const errorMsg = 'Por favor selecciona un lote de la lista';
@@ -1451,7 +1457,13 @@ Precio Real: ${price.toFixed(2)}/kg`);
 export default function LotificationRegistryPage() {
   return (
     <Suspense fallback={null}>
-      <div className="p-4 bg-amber-100 text-amber-900 text-sm border-b">MÓDULO LOTE REGISTRO DESCONTINUADO (FASE 02). La selección física se registra una sola vez en el módulo PRODUCCIÓN como fuente canónica. Datos históricos preservados. <a href="/production" className="underline font-semibold">Ir a Producción →</a></div>
+      <div className="p-3 bg-amber-200 text-amber-900 text-sm border-b font-medium">
+        ⚠️ MÓDULO LEGACY «Lote Registro» (XI BLOQUE 12) — SOLO LECTURA / CONSULTA HISTÓRICA. 
+        Fuente CANÓNICA: /production (corridas confirmadas + batches + yield). 
+        No se aceptan nuevos registros ni ediciones aquí para evitar duplicados. 
+        Datos históricos preservados para auditoría/conciliación. 
+        <a href="/production?tab=seleccion" className="underline font-semibold ml-2">Ir a Producción (Nueva corrida / Selección) →</a>
+      </div>
       <LotificationRegistryPageContent />
     </Suspense>
   );

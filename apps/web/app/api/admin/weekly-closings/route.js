@@ -80,6 +80,11 @@ export async function POST(request) {
 }
 
 // GET - Obtener cierres semanales (solo para administración)
+// XII: Usa RECEPCIONES CONFIRMADAS (fruit_input_weighings), PRODUCCIÓN CONFIRMADA (batches status CONFIRMADO),
+//      MOVIMIENTOS inventario (pallet_output_summary), EMBARQUES CONFIRMADOS (load_history).
+// Por fecha real de cada módulo. No replica registros. Diferencias por traspaso: no embarcado = inventario (no merma).
+// Corte por rango (dateFrom/dateTo). Per-lot: recibido, producido A/B, Proceso/Desecho/Merma, transferido, embarcado, saldo.
+// Costos de corte/fletes vienen de Cuadrillas/Fletes (no se recalculan aquí).
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -87,6 +92,8 @@ export async function GET(request) {
     const dateFrom = searchParams.get('dateFrom');
     const dateTo = searchParams.get('dateTo');
     const id = searchParams.get('id');
+    const perLot = searchParams.get('perLot') === 'true';
+    const lotIdFilter = searchParams.get('lotId');
 
     // Si se solicita un cierre específico
     if (id) {
@@ -129,7 +136,53 @@ export async function GET(request) {
       }
     }
 
-    return NextResponse.json({ closings, comparatives });
+    // XII: Datos confirmados por fuente real (solo lectura, sin side effects)
+    let lotYieldSummary = [];
+    if (perLot || lotIdFilter) {
+      const lotWhere = lotIdFilter ? sql`AND l.id = ${parseInt(lotIdFilter)}` : sql``;
+      lotYieldSummary = await sql`
+        SELECT 
+          l.id as lot_id,
+          l.lot_number,
+          l.producer,
+          COALESCE(fiw.total_kg_weighed, 0) as recibido_kg,
+          COALESCE(SUM(CASE WHEN pb.status = 'CONFIRMADO' THEN psd.total_kg ELSE 0 END), 0) as producido_kg,
+          COALESCE(SUM(CASE WHEN pb.status = 'CONFIRMADO' AND psd.class_name IN ('A','SUPER','EXTRA','PRIMERA') THEN psd.total_kg ELSE 0 END), 0) as producido_clase_a,
+          COALESCE(SUM(CASE WHEN pb.status = 'CONFIRMADO' AND psd.class_name = 'B' THEN psd.total_kg ELSE 0 END), 0) as producido_clase_b,
+          COALESCE(SUM(CASE WHEN pb.status = 'CONFIRMADO' THEN pb.process_kg ELSE 0 END), 0) as proceso_kg,
+          COALESCE(SUM(CASE WHEN pb.status = 'CONFIRMADO' THEN pb.desecho_kg ELSE 0 END), 0) as desecho_kg,
+          COALESCE(SUM(CASE WHEN pb.status = 'CONFIRMADO' THEN pb.merma_kg ELSE 0 END), 0) as merma_kg,
+          COALESCE(SUM(CASE WHEN pb.status = 'CONFIRMADO' THEN 1 ELSE 0 END), 0) as corridas_confirmadas,
+          COALESCE((
+            SELECT SUM(total_kg) FROM pallet_output_summary pos 
+            WHERE pos.lot_id = l.id AND (pos.embarque_id IS NULL OR pos.estado != 'embarcado')
+          ), 0) as en_inventario_kg,
+          COALESCE((
+            SELECT SUM(ld.total_kg) FROM load_details ld 
+            JOIN load_history lh2 ON lh2.id = ld.load_id 
+            WHERE ld.lot_id = l.id 
+          ), 0) as embarcado_kg,
+          (COALESCE(fiw.total_kg_weighed, 0) 
+           - COALESCE(SUM(CASE WHEN pb.status = 'CONFIRMADO' THEN psd.total_kg ELSE 0 END), 0)
+           - COALESCE((
+               SELECT SUM(ld.total_kg) FROM load_details ld 
+               JOIN load_history lh2 ON lh2.id = ld.load_id 
+               WHERE ld.lot_id = l.id 
+             ), 0)
+          ) as saldo_estimado,
+          MAX(pb.updated_at) as ultima_actualizacion
+        FROM lots l
+        LEFT JOIN fruit_input_weighings fiw ON fiw.lot_id = l.id
+        LEFT JOIN production_batches pb ON pb.lot_id = l.id
+        LEFT JOIN production_selection_details psd ON psd.production_batch_id = pb.id
+        WHERE 1=1 ${lotWhere}
+        GROUP BY l.id, l.lot_number, l.producer, fiw.total_kg_weighed
+        ORDER BY l.lot_number DESC
+        LIMIT 50
+      `;
+    }
+
+    return NextResponse.json({ closings, comparatives, lotYieldSummary });
   } catch (error) {
     console.error('Error fetching weekly closings:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });

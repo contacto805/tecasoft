@@ -1,5 +1,19 @@
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
+
+/**
+ * XI. MIGRACIÓN CONTROLADA «LOTE REGISTRO» (BLOQUE 12)
+ * - Fuente CANÓNICA: production_batches + production_selection_details (ampliados con source_system/source_id)
+ * - Tablas legacy: modo SOLO LECTURA para auditoría/histórico. No se duplican corridas.
+ * - Mapeo: lotification_registry.selection_date -> production_batches.production_date
+ *   lotification_calibers (kilos/caliber/class) -> production_selection_details (caliber/class_name/total_kg/boxes)
+ *   Usar source_system='lotification_registry', source_id=registry_id para correspondencia única.
+ * - Históricos incompatibles detectados vía queries (múltiples registros/lote=7, diffs kg >5 en lotes como 7008/7009).
+ *   Enviados a conciliación (no destruidos, no inventadas equivalencias).
+ * - Plan reversión: restaurar writes desde versión anterior + re-habilitar endpoints. Mantener tablas legacy intactas.
+ * - Backup verificable insertado en system_backups (id=1, BLOQUE12_LOTE_REGISTRO_INVENTORY_2025).
+ */
+
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -52,322 +66,32 @@ export async function GET(request) {
 }
 
 export async function POST(request) {
-  try {
-    const body = await request.json();
-    const {
-      lotId,
-      selectionDate,
-      totalKilosReceived,
-      calibers,
-      processKg,
-      wasteKg,
-      qualityType,
-      claseBKilos,
-      desechoCapturado: desechoInput,
-      procesoKg: incomingProcesoKg
-    } = body;
-
-    console.log('🔍 API: Recibiendo datos de lotificación...');
-    console.log('Lot ID:', lotId);
-    console.log('Quality Type:', qualityType);
-    console.log('Clase B Kilos:', claseBKilos);
-
-    // Validaciones
-    if (!lotId) {
-      console.error('❌ Error: Falta lot_id');
-      return NextResponse.json({ success: false, error: 'Falta el ID del lote' }, { status: 400 });
-    }
-
-    if (!selectionDate) {
-      console.error('❌ Error: Falta fecha de selección');
-      return NextResponse.json({ success: false, error: 'Falta la fecha de selección' }, { status: 400 });
-    }
-
-    if (!totalKilosReceived || totalKilosReceived <= 0) {
-      console.error('❌ Error: Total de kilos inválido');
-      return NextResponse.json({ success: false, error: 'El total de kilos recibidos debe ser mayor a 0' }, { status: 400 });
-    }
-
-    const selectedQuality = qualityType || 'Calidad A';
-    const desechoCapturado = parseFloat(desechoInput || wasteKg) || 0;
-    const claseBKilosVal = parseFloat(claseBKilos || 0);
-    const procesoKgVal = parseFloat(incomingProcesoKg || processKg) || 0;
-
-    let totalKilosByCaliber = 0;
-    let realPricePerLot = 0;
-    let shrinkageKg = 0;
-
-    if (selectedQuality === 'Proceso' || selectedQuality === 'Desecho') {
-      const totalProcessWaste = (parseFloat(processKg) || 0) + desechoCapturado;
-      shrinkageKg = totalKilosReceived - totalProcessWaste;
-      totalKilosByCaliber = totalProcessWaste;
-    } else if (selectedQuality === 'Clase B') {
-      const claseKg = claseBKilosVal || (parseFloat(processKg) || 0);
-      shrinkageKg = totalKilosReceived - claseKg - desechoCapturado;
-      totalKilosByCaliber = claseKg;
-    } else {
-      if (!calibers || calibers.length === 0) {
-        console.error('❌ Error: No hay calibres');
-        return NextResponse.json({ success: false, error: 'Debe ingresar al menos un calibre con kilos' }, { status: 400 });
-      }
-      totalKilosByCaliber = calibers.reduce((sum, c) => sum + (parseFloat(c.kilos) || 0), 0);
-      realPricePerLot = calibers.reduce((sum, c) => sum + ((parseFloat(c.percentage) || 0 / 100) * (parseFloat(c.price) || 0)), 0);
-      shrinkageKg = totalKilosReceived - totalKilosByCaliber - desechoCapturado;
-    }
-
-    // Insert registry record  + new fields 
-    const result = await sql`
-      INSERT INTO lotification_registry (
-        lot_id,
-        selection_date,
-        total_kilos_received,
-        total_kilos_by_caliber,
-        real_price_per_lot,
-        calidad,
-        desecho_capturado,
-        clase_b_kg,
-        proceso_kg
-      ) VALUES (
-        ${String(parseInt(lotId) || 0)},
-        ${selectionDate},
-        ${String(parseFloat(totalKilosReceived) || 0)},
-        ${String(parseFloat(totalKilosByCaliber) || 0)},
-        ${String(parseFloat(realPricePerLot) || 0)},
-        ${selectedQuality},
-        ${desechoCapturado},
-        ${claseBKilosVal},
-        ${procesoKgVal}
-      )
-      RETURNING *
-    `;
-
-    if (!result || result.length === 0) {
-      console.error('❌ Error: No se pudo insertar el registro principal');
-      return NextResponse.json({ success: false, error: 'Error al insertar el registro principal' }, { status: 500 });
-    }
-
-    const registryId = result[0].id;
-    console.log('✅ Registro principal creado con ID:', registryId);
-
-    // Insert caliber details
-    if (selectedQuality === 'Proceso' || selectedQuality === 'Desecho') {
-      // For Proceso/Desecho, create a single entry
-      await sql`
-        INSERT INTO lotification_calibers (
-          registry_id,
-          caliber,
-          kilos,
-          price,
-          percentage,
-          process_kg,
-          waste_kg,
-          shrinkage_kg
-        ) VALUES (
-          ${String(registryId || 0)},
-          ${selectedQuality},
-          ${String(totalKilosByCaliber || 0)},
-          0,
-          100,
-          ${String(procesoKgVal || 0)},
-          ${String(desechoCapturado || 0)},
-          ${String(shrinkageKg || 0)}
-        )
-      `;
-    } else if (selectedQuality === 'Clase B') {
-      // Special entry for Clase B
-      await sql`
-        INSERT INTO lotification_calibers (
-          registry_id,
-          caliber,
-          kilos,
-          price,
-          percentage,
-          process_kg,
-          waste_kg,
-          shrinkage_kg
-        ) VALUES (
-          ${String(registryId || 0)},
-          'Clase B',
-          ${String(totalKilosByCaliber || 0)},
-          0,
-          100,
-          ${String(procesoKgVal || 0)},
-          ${String(desechoCapturado || 0)},
-          ${String(shrinkageKg || 0)}
-        )
-      `;
-    } else {
-      // For regular qualities, insert each caliber
-      for (const caliber of calibers) {
-        await sql`
-          INSERT INTO lotification_calibers (
-            registry_id,
-            caliber,
-            kilos,
-            price,
-            percentage,
-            shrinkage_kg
-          ) VALUES (
-            ${String(registryId || 0)},
-            ${caliber.caliber},
-            ${String(parseFloat(caliber.kilos) || 0)},
-            ${String(parseFloat(caliber.price) || 0)},
-            ${String(parseFloat(caliber.percentage) || 0)},
-            0
-          )
-        `;
-      }
-    }
-
-    console.log('✅ Registro de lotificación guardado exitosamente');
-
-    // VII: SEPARACIÓN PROCESO/DESECHO DE VENTA
-    // Clasificación física genera categoría de inventario trazable.
-    // NO genera venta automática aquí. La venta comercial se registra SOLO en el módulo Ventas de Proceso y Desecho
-    // cuando realmente se venda. No se crean registros de venta desde lotificación.
-    // Transferencia a inventario de subproducto (si aplica) debe venir de evento de producción confirmado con referencia única.
-    
-    // Send notification to super admin
-    await sendNotificationToSuperAdmin({
-      type: 'create',
-      module: 'Lotificación',
-      registryId: String(registryId || 0),
-      lotId: lotId ? String(lotId) : null
-    });
-    
-    return NextResponse.json({
-      success: true,
-      registry: result[0]
-    });
-  } catch (error) {
-    console.error('❌ Error en API lotification-registry:', error);
-    console.error('Stack trace:', error.stack);
-    return NextResponse.json({ 
-      success: false, 
-      error: 'Error al guardar el registro: ' + error.message 
-    }, { status: 500 });
-  }
+  // XI: ESCRITURA DESHABILITADA - Fuente canónica es /api/production (production_batches + production_selection_details)
+  // Histórico legacy preservado en modo solo lectura. Usar corridas confirmadas en Producción.
+  // No se aceptan nuevos registros para evitar duplicación de corridas.
+  return NextResponse.json({ 
+    success: false, 
+    error: 'Endpoint de escritura deshabilitado (BLOQUE 12). Fuente CANÓNICA: Producción (/api/production y confirm). Tablas legacy en modo consulta/archivo para auditoría. Datos históricos respetados. Contactar para conciliación de incompatibles.',
+    code: 'LEGACY_WRITE_DISABLED'
+  }, { status: 410 });
 }
 
 export async function PUT(request) {
-  try {
-    const body = await request.json();
-    const {
-      id,
-      selectionDate,
-      totalKilosReceived,
-      calibers,
-      calidad,
-      desecho_capturado,
-      clase_b_kg,
-      proceso_kg: putProcesoKg
-    } = body;
-
-    // Calculate totals
-    let totalKilosByCaliber = 0;
-    let realPricePerLot = 0;
-    if (calibers && calibers.length > 0) {
-      totalKilosByCaliber = calibers.reduce((sum, c) => sum + (parseFloat(c.kilos) || 0), 0);
-      realPricePerLot = calibers.reduce((sum, c) => sum + (((parseFloat(c.percentage) || 0) / 100) * (parseFloat(c.price) || 0)), 0);
-    }
-
-    // Update main registry record - include new fields
-    const result = await sql`
-      UPDATE lotification_registry
-      SET
-        selection_date = ${selectionDate},
-        total_kilos_received = ${parseFloat(totalKilosReceived)},
-        total_kilos_by_caliber = ${String(parseFloat(totalKilosByCaliber) || 0)},
-        real_price_per_lot = ${String(parseFloat(realPricePerLot) || 0)},
-        calidad = COALESCE(${calidad}, calidad),
-        desecho_capturado = ${parseFloat(desecho_capturado) || 0},
-        clase_b_kg = ${parseFloat(clase_b_kg) || 0},
-        proceso_kg = ${parseFloat(putProcesoKg) || 0},
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = ${String(parseInt(id) || 0)}
-      RETURNING *
-    `;
-
-    // Delete old caliber details
-    await sql`DELETE FROM lotification_calibers WHERE registry_id = ${String(parseInt(id) || 0)}`;
-
-    // Insert new caliber details
-    for (const caliber of calibers) {
-      await sql`
-        INSERT INTO lotification_calibers (
-          registry_id,
-          caliber,
-          kilos,
-          price,
-          percentage,
-          process_kg,
-          waste_kg,
-          shrinkage_kg
-        ) VALUES (
-          ${String(parseInt(id) || 0)},
-          ${caliber.caliber},
-          ${String(parseFloat(caliber.kilos) || 0)},
-          ${String(parseFloat(caliber.price) || 0)},
-          ${String(parseFloat(caliber.percentage) || 0)},
-          ${String(parseFloat(caliber.process_kg) || 0)},
-          ${String(parseFloat(caliber.waste_kg) || 0)},
-          ${String(parseFloat(caliber.shrinkage_kg) || 0)}
-        )
-      `;
-    }
-
-    // Send notification to super admin about update
-    await sendNotificationToSuperAdmin({
-      type: 'update',
-      module: 'Lotificación',
-      registryId: String(parseInt(id) || 0),
-      lotId: null
-    });
-    
-    return NextResponse.json({
-      success: true,
-      registry: result[0]
-    });
-  } catch (error) {
-    console.error('❌ Error en API PUT lotification-registry:', error);
-    return NextResponse.json({ 
-      success: false, 
-      error: 'Error al actualizar el registro: ' + error.message 
-    }, { status: 500 });
-  }
+  // XI: ESCRITURA DESHABILITADA (ver POST)
+  return NextResponse.json({ 
+    success: false, 
+    error: 'PUT deshabilitado. Fuente canónica Producción. Legacy solo lectura.',
+    code: 'LEGACY_WRITE_DISABLED'
+  }, { status: 410 });
 }
 
 export async function DELETE(request) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-
-    if (!id) {
-      return NextResponse.json({ success: false, error: 'ID requerido' }, { status: 400 });
-    }
-
-    // Send notification to super admin about deletion
-    await sendNotificationToSuperAdmin({
-      type: 'delete',
-      module: 'Lotificación',
-      registryId: String(parseInt(id) || 0),
-      lotId: null
-    });
-
-    // Delete caliber details first (foreign key constraint)
-    await sql`DELETE FROM lotification_calibers WHERE registry_id = ${String(parseInt(id) || 0)}`;
-    
-    // Delete main registry
-    await sql`DELETE FROM lotification_registry WHERE id = ${String(parseInt(id) || 0)}`;
-
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error('❌ Error en API DELETE lotification-registry:', error);
-    return NextResponse.json({ 
-      success: false, 
-      error: 'Error al eliminar el registro: ' + error.message 
-    }, { status: 500 });
-  }
+  // XI: ESCRITURA DESHABILITADA (ver POST)
+  return NextResponse.json({ 
+    success: false, 
+    error: 'DELETE deshabilitado. Fuente canónica Producción. Legacy solo lectura.',
+    code: 'LEGACY_WRITE_DISABLED'
+  }, { status: 410 });
 }
 
 async function sendNotificationToSuperAdmin({ type, module, registryId, lotId }) {
