@@ -45,20 +45,51 @@ export async function POST(request) {
       closing = inserted[0];
     }
 
-    // Increment kg + dinero + store detail
-    const newKg = (parseFloat(closing.total_cargas_kg || 0) + parseFloat(total_kg || 0));
-    const newDin = (parseFloat(closing.total_cargas_dinero || 0) + parseFloat(total_amount || 0));
+    // PROTECCIÓN CONTRA DOBLE CONTEO (requisito bloque 13): 
+    // - Reutilizar entrada existente por folio estable (factura_folio) o ref
+    // - No modificar cierres ya autorizados (respeta snapshots y cálculos aprobados)
+    const currentStatus = (closing.status || '').toLowerCase();
+    if (currentStatus.includes('aprob')) {
+      return NextResponse.json({ 
+        success: true, 
+        note: 'Cierre autorizado - no se modifica para evitar reescritura retrospectiva. Reconciliación sin doble asiento.',
+        week_label: weekLabel 
+      });
+    }
 
     let newDetalle = [];
     try { 
       newDetalle = Array.isArray(closing.cargas_detalle) ? closing.cargas_detalle : JSON.parse(closing.cargas_detalle || "[]"); 
     } catch(e){ newDetalle = []; }
+
+    // Clave de idempotencia estable por operación de embarque
+    const stableRef = factura_folio || `${load_date || ''}|${customer_name || ''}|${parseFloat(total_kg||0)}`;
+    const yaProcesado = newDetalle.some(d => 
+      (d.folio && d.folio === factura_folio) || 
+      (d._stable_ref && d._stable_ref === stableRef)
+    );
+    if (yaProcesado) {
+      return NextResponse.json({ 
+        success: true, 
+        note: 'Carga ya registrada en cierre semanal (idempotencia). Sin doble conteo.',
+        week_label: weekLabel 
+      });
+    }
+
+    // Incrementar solo si es nuevo
+    const newKg = (parseFloat(closing.total_cargas_kg || 0) + parseFloat(total_kg || 0));
+    const newDin = (parseFloat(closing.total_cargas_dinero || 0) + parseFloat(total_amount || 0));
+
     newDetalle.push({ 
       fecha: load_date || new Date().toISOString().slice(0,10),
       folio: factura_folio || 'sin-folio',
       total_kg: parseFloat(total_kg||0),
       total_amount: parseFloat(total_amount||0),
-      customer: customer_name || ''
+      customer: customer_name || '',
+      origen: 'embarque',
+      estado: 'confirmado',
+      fuente: 'loads/complete o sync-android',
+      _stable_ref: stableRef
     });
 
     await sql`
@@ -72,7 +103,7 @@ export async function POST(request) {
       WHERE id = ${closing.id}
     `;
 
-    return NextResponse.json({ success: true, week_label: weekLabel, updated_kg: newKg, updated_dinero: newDin });
+    return NextResponse.json({ success: true, week_label: weekLabel, updated_kg: newKg, updated_dinero: newDin, origen: 'embarque', estado: 'actualizado' });
   } catch (error) {
     console.error("Error POST weekly-closings carga sync:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -119,11 +150,24 @@ export async function GET(request) {
       LIMIT 100
     `;
 
+    // Enriquecer con metadatos de actualización y estado (sin reescribir históricos)
+    const closingsEnriquecidos = closings.map(c => {
+      const st = (c.status || 'pendiente').toLowerCase();
+      let estadoDisplay = st.includes('aprob') ? 'aprobado' : (st.includes('pend') ? 'pendiente' : st);
+      return {
+        ...c,
+        ultima_actualizacion: c.updated_at || c.created_at,
+        origen: c.updated_from_embarque ? 'embarque_sync' : 'sistema',
+        estado: estadoDisplay,
+        fuente: 'weekly_closings (snapshot + ajustes posteriores conservados)'
+      };
+    });
+
     // Calcular comparativos
     const comparatives = [];
-    for (let i = 0; i < Math.min(closings.length, 10); i++) {
-      const current = closings[i];
-      const previous = closings[i + 1];
+    for (let i = 0; i < Math.min(closingsEnriquecidos.length, 10); i++) {
+      const current = closingsEnriquecidos[i];
+      const previous = closingsEnriquecidos[i + 1];
       
       if (previous) {
         comparatives.push({
@@ -182,7 +226,26 @@ export async function GET(request) {
       `;
     }
 
-    return NextResponse.json({ closings, comparatives, lotYieldSummary });
+    // Reconciliación automática por lote: marca explícitamente "Pendiente" / "Estimado" cuando no hay confirmación total
+    const lotYieldSummaryEnriquecido = lotYieldSummary.map(row => ({
+      ...row,
+      saldo_estado: row.saldo_estimado > 0 ? 'Estimado (no embarcado completo)' : (row.embarcado_kg > 0 ? 'Conciliado' : 'Pendiente'),
+      origen_dato: 'fruit_input_weighings + production_batches(CONFIRMADO) + load_history + pallet_output_summary',
+      ultima_actualizacion: row.ultima_actualizacion || new Date().toISOString(),
+      fuente: 'reconciliacion_automatica_sin_doble_asiento'
+    }));
+
+    return NextResponse.json({ 
+      closings: closingsEnriquecidos, 
+      comparatives, 
+      lotYieldSummary: lotYieldSummaryEnriquecido,
+      meta: {
+        ultima_actualizacion: new Date().toISOString(),
+        origen: 'consultas_confirmadas',
+        estado: 'datos_actualizados_con_estado_y_origen',
+        nota: 'Cierres autorizados no son reescritos. Saldos estimados marcados como Pendiente/Estimado.'
+      }
+    });
   } catch (error) {
     console.error('Error fetching weekly closings:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });

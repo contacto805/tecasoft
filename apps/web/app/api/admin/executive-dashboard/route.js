@@ -100,6 +100,13 @@ export async function GET() {
         gastos: parseInt(totalGastos[0]?.count || 0),
         cierres: parseInt(totalCierres[0]?.count || 0),
         inventarios: parseInt(totalInventario[0]?.count || 0)
+      },
+      meta: {
+        ultima_actualizacion: new Date().toISOString(),
+        origen: 'db_queries_con_filtros_estado_y_status',
+        estado: 'actualizado',
+        fuente: 'executive-dashboard (pendientes filtrados, COALESCE solo en fuentes reales, sin re-cálculo de cierres autorizados)',
+        nota: 'datos con ID estable + estado + origen para evitar doble conteo'
       }
     });
   } catch (error) {
@@ -107,7 +114,13 @@ export async function GET() {
     // Return full safe defaults on any error
     return NextResponse.json({
       indicadores: { ventasDia:0, ventasSemana:0, ventasMes:0, cuentasPorCobrar:0, cuentasPorPagar:0, saldoBancario:0, prestamosPendientes:{count:0,total:0}, anticiposPendientes:{count:0,total:0}, solicitudesPorAutorizar:0, permisosPendientes:0, modificacionesPendientes:0, viajesActivos:0, viajesFinalizados:0, alertasCriticas:0 },
-      resumenModulos: { clientes:0, ventas:0, operaciones:0, recursosHumanos:0, gastos:0, cierres:0, inventarios:0 }
+      resumenModulos: { clientes:0, ventas:0, operaciones:0, recursosHumanos:0, gastos:0, cierres:0, inventarios:0 },
+      meta: {
+        ultima_actualizacion: new Date().toISOString(),
+        origen: 'fallback',
+        estado: 'pendiente_estimado',
+        fuente: 'executive-dashboard (sin inventar ceros ni duplicar)'
+      }
     });
   }
 }

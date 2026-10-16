@@ -4,15 +4,17 @@ import { getMexicoCityTime } from "@/app/api/utils/mexico-time";
 
 // GET - Obtener indicadores del dashboard ejecutivo
 export async function GET(request) {
+  let period = 'today';
+  let startDate = new Date().toISOString().split('T')[0];
   try {
     const { searchParams } = new URL(request.url);
-    const period = searchParams.get('period') || 'today'; // today, week, month
+    period = searchParams.get('period') || 'today'; // today, week, month
 
-    const { date: today } = getMexicoCityTime();
+    const { date: todayVal } = getMexicoCityTime();
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-    let startDate = today;
+    startDate = todayVal;
     if (period === 'week') startDate = weekAgo;
     if (period === 'month') startDate = monthAgo;
 
@@ -182,6 +184,13 @@ export async function GET(request) {
       },
       lots: {
         active: parseInt(activeLots.total || 0)
+      },
+      meta: {
+        ultima_actualizacion: new Date().toISOString(),
+        origen: 'db_queries_con_filtros_estado',
+        estado: 'actualizado',
+        fuente: 'admin/dashboard (usa estados: pendiente/confirmado/aprobado)',
+        nota: 'sin doble conteo - filtros por estado y COALESCE solo en consultas reales'
       }
     });
   } catch (error) {
@@ -199,7 +208,13 @@ export async function GET(request) {
       payroll: { total: 0, periods: 0 },
       closings: { pending: 0 },
       inventory: { totalKg: 0 },
-      lots: { active: 0 }
+      lots: { active: 0 },
+      meta: {
+        ultima_actualizacion: new Date().toISOString(),
+        origen: 'fallback_seguro',
+        estado: 'pendiente_estimado',
+        fuente: 'admin/dashboard (sin datos inventados)'
+      }
     });
   }
 }
