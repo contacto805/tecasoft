@@ -141,17 +141,17 @@ export default function PreciosFrutaPage() {
     });
     const presupuesto = Math.max(0, ingresoProy - (costosNoFruta * kgAComprar) - (utilidadObjetivo * kgAComprar));
     const precioMaxMedioCampo = kgAComprar > 0 ? presupuesto / kgAComprar : 0;
-    return { presupuesto: Number(presupuesto.toFixed(2)), precioMaxCampo: Number(precioMaxMedioCampo.toFixed(2)), kgProyTotal: Number(kgProyTotal.toFixed(0)) };
+    return { presupuesto: parseFloat(presupuesto.toFixed(2)), precioMaxCampo: parseFloat(precioMaxMedioCampo.toFixed(2)), kgProyTotal: parseFloat(kgProyTotal.toFixed(0)) };
   }
 
   function calcularPuedoMejorarOferta() {
     const pb = calcularPresupuestoDisponible();
     const precioMax = pb.precioMaxCampo;
     const solicitado = Number(precioSolicitadoProductor) || 0;
-    const diff = Number((precioMax - solicitado).toFixed(2));
+    const diff = parseFloat((precioMax - solicitado).toFixed(2));
     // Margen real = (recomendado - solicitado) / recomendado   (o usando fórmula 15% sobre venta)
-    const margenReal = precioMax > 0 ? Number(((precioMax - solicitado) / precioMax).toFixed(4)) : 0;
-    const precioRecomendadoSegunMargen = solicitado > 0 ? Number((solicitado / (1 - margenMinimo)).toFixed(2)) : precioMax; // P = C / (1-m) invertido para oferta
+    const margenReal = precioMax > 0 ? parseFloat(((precioMax - solicitado) / precioMax).toFixed(4)) : 0;
+    const precioRecomendadoSegunMargen = solicitado > 0 ? parseFloat((solicitado / (1 - margenMinimo)).toFixed(2)) : precioMax; // P = C / (1-m) invertido para oferta
     const requiereAutorizacion = margenReal < margenMinimo;
     return {
       presupuesto: pb.presupuesto,
@@ -159,7 +159,7 @@ export default function PreciosFrutaPage() {
       precioSolicitado: solicitado,
       diferencia: diff,
       margenReal,
-      precioRecomendado: Number((Math.max(precioMax, precioRecomendadoSegunMargen)).toFixed(2)),
+      precioRecomendado: parseFloat((Math.max(precioMax, precioRecomendadoSegunMargen)).toFixed(2)),
       requiereAutorizacion,
       mensaje: requiereAutorizacion ? 'Margen bajo mínimo. Requiere autorización Superadministrador.' : 'Oferta viable dentro de política.'
     };
@@ -170,13 +170,13 @@ export default function PreciosFrutaPage() {
     const costoBase = Number(liveCampoResults?.costoUnitario || sumCostosDetalle || 12);
     const gastosAdic = Number(costosNoFruta) || 0;
     const costoTotal = costoBase + gastosAdic;
-    const precioEquilibrio = Number(costoTotal.toFixed(2));
+    const precioEquilibrio = parseFloat(costoTotal.toFixed(2));
     // recomendado con margen 15% sobre venta: Pventa = Costo / (1-0.15)
-    const precioRecomendado = Number((costoTotal / (1 - margenMinimo)).toFixed(2));
-    const porCaja6 = Number((precioRecomendado * 6).toFixed(2));
-    const porCaja10 = Number((precioRecomendado * 10).toFixed(2));
-    const porTarima = Number((precioRecomendado * 156 * 6 / 1000 * 1000).toFixed(2)); // ref 936kg approx
-    return { precioEquilibrio, precioRecomendado, porCaja6, porCaja10, porTarima: Number(porTarima.toFixed(0)) };
+    const precioRecomendado = parseFloat((costoTotal / (1 - margenMinimo)).toFixed(2));
+    const porCaja6 = parseFloat((precioRecomendado * 6).toFixed(2));
+    const porCaja10 = parseFloat((precioRecomendado * 10).toFixed(2));
+    const porTarima = parseFloat((precioRecomendado * 156 * 6 / 1000 * 1000).toFixed(2)); // ref 936kg approx
+    return { precioEquilibrio, precioRecomendado, porCaja6, porCaja10, porTarima: parseFloat(porTarima.toFixed(0)) };
   }
 
   async function solicitarAutorizacionMargen() {
@@ -223,8 +223,8 @@ export default function PreciosFrutaPage() {
         lotId: lotIdInput,
         pactadoHistorico: pactado,
         realLotif: realPonderado,
-        proyeccionActual: Number(proy.toFixed(2)),
-        diferencia: Number((proy - realPonderado).toFixed(2)),
+        proyeccionActual: parseFloat(proy.toFixed(2)),
+        diferencia: parseFloat((proy - realPonderado).toFixed(2)),
         nota: 'Comparación solo informativa. Negociación histórica NO alterada.'
       });
     } catch(e) { setProyeccionVsReal({ error: 'Datos limitados o lote sin lotificación confirmada.' }); }
@@ -446,10 +446,10 @@ export default function PreciosFrutaPage() {
         const nr = {...r, [col]: val};
         if (col === 'precio_kilo') {
           const pv = Number(val);
-          nr.precio_kilo = Number.isFinite(pv) ? Number(pv.toFixed(4)) : (Number(val)||0);
+          nr.precio_kilo = Number.isFinite(pv) ? parseFloat(pv.toFixed(4)) : (Number(val)||0);
         } else if (baseKg > 0) {
           const unit = nr.precio_mxn || nr.precio_usd || 0;
-          nr.precio_kilo = Number(((nr.cantidad * unit) / baseKg).toFixed(4));
+          nr.precio_kilo = parseFloat(((nr.cantidad * unit) / baseKg).toFixed(4));
         }
         return nr;
       }
@@ -607,9 +607,9 @@ export default function PreciosFrutaPage() {
     let result = {};
     const keys = ['super_extra','extra','primera','mediano','tercera','cuarta','proceso','canica','desecho'];
     if (modo === 'venta_a_compra') {
-      keys.forEach(k => { const v = Number(preciosVenta[k]||0); result[k] = Math.max(0, Number((v - sumCostos).toFixed(2))); });
+      keys.forEach(k => { const v = Number(preciosVenta[k]||0); result[k] = Math.max(0, parseFloat((v - sumCostos).toFixed(2))); });
     } else {
-      keys.forEach(k => { const v = Number(preciosCompra[k]||0); result[k] = Number((v + sumCostos + 3).toFixed(2)); });
+      keys.forEach(k => { const v = Number(preciosCompra[k]||0); result[k] = parseFloat((v + sumCostos + 3).toFixed(2)); });
     }
     return result;
   }
@@ -639,50 +639,50 @@ export default function PreciosFrutaPage() {
       const manual = rw.precio_kilo != null ? Number(rw.precio_kilo) : null;
       const calc = (gVal * eVal) / (Number(d8)||1);
       const costo = manual != null ? manual : calc;
-      return { ...rw, costoCalculated: Number(costo.toFixed(4)) };
+      return { ...rw, costoCalculated: parseFloat(costo.toFixed(4)) };
     });
     const sumaUnit = filasCalc.reduce((acc,f)=> acc + (f.costoCalculated||0),0);
 
-    const costoUnitario = Number(sumaUnit.toFixed(4));
-    const diffMargen = Number((k14 - h25).toFixed(2));
-    const precioUnit = Number((t14 / r12).toFixed(2));
-    const esc6 = Number((r14 * kg6).toFixed(2));
-    const esc10 = Number((r14 * kg10).toFixed(2));
-    const ajuste = Number((o14 + e7).toFixed(2));
+    const costoUnitario = parseFloat(sumaUnit.toFixed(4));
+    const diffMargen = parseFloat((k14 - h25).toFixed(2));
+    const precioUnit = parseFloat((t14 / r12).toFixed(2));
+    const esc6 = parseFloat((r14 * kg6).toFixed(2));
+    const esc10 = parseFloat((r14 * kg10).toFixed(2));
+    const ajuste = parseFloat((o14 + e7).toFixed(2));
 
-    const precioCompraBase = Math.max(0, Number((preciosVenta.extra || 38) - sumaUnit).toFixed(2));
+    const precioCompraBase = Math.max(0, parseFloat(((Number(preciosVenta.extra) || 38) - Number(sumaUnit)).toFixed(2)));
     const precioCampoFinal = (precioCompraOverride != null && !isNaN(Number(precioCompraOverride)))
       ? Number(precioCompraOverride)
       : precioCompraBase;
 
-    const vSugerido = Number((precioCampoFinal + sumaUnit + 3).toFixed(2));
-    const utilidad = Number((vSugerido - sumaUnit).toFixed(2));
+    const vSugerido = parseFloat((precioCampoFinal + sumaUnit + 3).toFixed(2));
+    const utilidad = parseFloat((vSugerido - sumaUnit).toFixed(2));
 
-    const p100 = Number((precioCompraBase + b100).toFixed(2));
-    const p150 = Number((precioCompraBase + b150).toFixed(2));
-    const p180 = Number((precioCompraBase + b180).toFixed(2));
-    const pelaPalo = Number((precioCompraBase + bPela).toFixed(2));
+    const p100 = parseFloat((precioCompraBase + b100).toFixed(2));
+    const p150 = parseFloat((precioCompraBase + b150).toFixed(2));
+    const p180 = parseFloat((precioCompraBase + b180).toFixed(2));
+    const pelaPalo = parseFloat((precioCompraBase + bPela).toFixed(2));
 
     const baseExtra = precioCompraBase;
     const calibersBoard = {
-      super_extra: Math.max(0, Number((preciosVenta.super_extra || 45) - (sumaUnit * 0.97)).toFixed(2)),
+      super_extra: Math.max(0, parseFloat(((Number(preciosVenta.super_extra) || 45) - (Number(sumaUnit) * 0.97)).toFixed(2))),
       extra: baseExtra,
-      primera: Math.max(0, Number((preciosVenta.primera || 39) - sumaUnit - 1.5).toFixed(2)),
-      mediano: Math.max(0, Number((preciosVenta.mediano || 36) - sumaUnit - 2).toFixed(2)),
-      tercera: Math.max(0, Number((preciosVenta.tercera || 33) - sumaUnit - 3).toFixed(2)),
-      cuarta: Math.max(0, Number((preciosVenta.cuarta || 16) - sumaUnit).toFixed(2)),
-      proceso: Math.max(0, Number((preciosVenta.proceso || 17) - sumaUnit).toFixed(2)),
-      canica: Math.max(0, Number((preciosVenta.canica || 16) - sumaUnit - 1).toFixed(2)),
-      desecho: Math.max(0, Number((preciosVenta.desecho || 16) - sumaUnit - 3).toFixed(2))
+      primera: Math.max(0, parseFloat(((Number(preciosVenta.primera) || 39) - Number(sumaUnit) - 1.5).toFixed(2))),
+      mediano: Math.max(0, parseFloat(((Number(preciosVenta.mediano) || 36) - Number(sumaUnit) - 2).toFixed(2))),
+      tercera: Math.max(0, parseFloat(((Number(preciosVenta.tercera) || 33) - Number(sumaUnit) - 3).toFixed(2))),
+      cuarta: Math.max(0, parseFloat(((Number(preciosVenta.cuarta) || 16) - Number(sumaUnit)).toFixed(2))),
+      proceso: Math.max(0, parseFloat(((Number(preciosVenta.proceso) || 17) - Number(sumaUnit)).toFixed(2))),
+      canica: Math.max(0, parseFloat(((Number(preciosVenta.canica) || 16) - Number(sumaUnit) - 1).toFixed(2))),
+      desecho: Math.max(0, parseFloat(((Number(preciosVenta.desecho) || 16) - Number(sumaUnit) - 3).toFixed(2)))
     };
 
-    const c6 = Number(((calibersBoard.extra * kg6) + (sumaUnit * kg6) * 0.6).toFixed(2));
-    const c6mxn = Number(c6.toFixed(2));
-    const c6usd = Number((c6 / tc).toFixed(2));
+    const c6 = parseFloat(((calibersBoard.extra * kg6) + (sumaUnit * kg6) * 0.6).toFixed(2));
+    const c6mxn = parseFloat(c6.toFixed(2));
+    const c6usd = parseFloat((c6 / tc).toFixed(2));
 
-    const c10 = Number(((calibersBoard.extra * kg10) + (sumaUnit * kg10) * 0.6).toFixed(2));
-    const c10mxn = Number(c10.toFixed(2));
-    const c10usd = Number((c10 / tc).toFixed(2));
+    const c10 = parseFloat(((calibersBoard.extra * kg10) + (sumaUnit * kg10) * 0.6).toFixed(2));
+    const c10mxn = parseFloat(c10.toFixed(2));
+    const c10usd = parseFloat((c10 / tc).toFixed(2));
 
     const resObj = {
       costoUnitario, sumaGastosUnitarios: sumaUnit, diferenciaMargen: diffMargen,
@@ -775,7 +775,7 @@ export default function PreciosFrutaPage() {
     try {
       const imgUrl = await generateAndUploadImage();
       const pay = {
-        semana: parseInt(semana), fecha_inicio: fechaInicio, fecha_fin: fechaFin,
+        semana: parseInt(String(semana)), fecha_inicio: fechaInicio, fecha_fin: fechaFin,
         tipo_calculo: modo==='venta_a_compra'?'compra':'venta',
         super_extra: livePreciosCalculados.super_extra || 0, extra: livePreciosCalculados.extra || 0,
         primera: livePreciosCalculados.primera || 0, mediano: livePreciosCalculados.mediano || 0,
@@ -794,7 +794,7 @@ export default function PreciosFrutaPage() {
     const r = liveCampoResults || calcularMotorExcel();
     if (!r) { alert('Motor debe calcular primero'); return; }
     const payload = {
-      semana: parseInt(semana),
+      semana: parseInt(String(semana)),
       fecha_actualizacion: fechaInicio,
       calibre_precios_compra: 'EXTRA',
       precio_de_venta: preciosVenta?.extra || 42,
