@@ -2111,10 +2111,10 @@ Notas comerciales" className="w-full border px-2 py-1 rounded text-sm h-14" />
               </div>
               <button onClick={async () => {
                 const cfg = {
-                  welcome: document.getElementById('portal-welcome')?.value || '',
-                  btnDownload: document.getElementById('portal-btn-download')?.value || 'Descargar PDF',
-                  btnRefresh: document.getElementById('portal-btn-refresh')?.value || 'Actualizar',
-                  extraFields: (document.getElementById('portal-extra-fields')?.value || '').split('\n').filter(Boolean),
+                  welcome: document.getElementById('portal-welcome')?.['value'] || '',
+                  btnDownload: document.getElementById('portal-btn-download')?.['value'] || 'Descargar PDF',
+                  btnRefresh: document.getElementById('portal-btn-refresh')?.['value'] || 'Actualizar',
+                  extraFields: (document.getElementById('portal-extra-fields')?.['value'] || '').split('\n').filter(Boolean),
                   showViajes: true, showPagos: true, showEstado: true
                 };
                 await fetch('/api/client-portal/admin/access', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ customerId: 0, action: 'save-portal-config', config: cfg }) });
