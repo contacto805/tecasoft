@@ -55,7 +55,8 @@ export async function POST(request, { params }) {
     const lotId = tokenData.lot_id;
 
     if (action === 'send') {
-      // Enviar / Iniciar proceso DocuSign - en producción crearía envelope DS
+      // DocuSign: usa el servicio conectado SOLO cuando exista config y credenciales reales (block 16).
+      // Actualmente placeholder local. Requiere conexión externa DocuSign para envelope real.
       const [existing] = await sql`
         SELECT id FROM lot_contract_signatures 
         WHERE lot_id = ${lotId} ORDER BY created_at DESC LIMIT 1

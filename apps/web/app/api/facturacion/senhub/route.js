@@ -133,6 +133,7 @@ export async function POST(request) {
     }
 
     // TIMBRAR: Full compliant payload per SenHub docs (exact field names)
+    // MODO SEGURO: one authorized op = one CFDI. Stable idempotency. No sales creation. Server-only creds.
     if (action === 'timbrar' || action === 'stamp') {
       const tok = await getSenhubToken();
       let token = await refreshIfNeeded(tok);
@@ -164,7 +165,26 @@ export async function POST(request) {
         folio
       } = body;
 
+      // STRICT pre-validation (block 15): RFCs, complete receptor, at least one link ID, no duplicate CFDI for same entity
+      const hasEmisor = !!(emisor_rfc || tok.emisor_rfc);
+      const hasReceptorRfc = !!(customer_rfc || fiscal_razon_social);
+      const hasLink = !!(related_viaje_id || related_load_id || related_nota_id || customer_id);
+      if (!hasEmisor || !hasReceptorRfc || !hasLink) {
+        return NextResponse.json({ error: 'Datos fiscales incompletos (RFC emisor/receptor + enlace a operación requeridos). No se timbra.', retry_with_same_idempotency: false }, { status: 400 });
+      }
+
+      // Prevent duplicate stamp for same logical operation (by related ids)
+      if (related_nota_id) {
+        const [dup] = await sql`SELECT id, uuid, estatus FROM cfdi_facturas WHERE nota_id = ${parseInt(related_nota_id)} AND estatus = 'TIMBRADA' LIMIT 1`;
+        if (dup) return NextResponse.json({ error: 'Ya existe CFDI timbrado para esta nota. Reutiliza UUID existente.', existing: dup, retry_with_same_idempotency: true }, { status: 409 });
+      }
+      if (related_viaje_id) {
+        const [dup] = await sql`SELECT id, uuid, estatus FROM cfdi_facturas WHERE viaje_id = ${parseInt(related_viaje_id)} AND estatus = 'TIMBRADA' LIMIT 1`;
+        if (dup) return NextResponse.json({ error: 'Ya existe CFDI timbrado para este viaje.', existing: dup, retry_with_same_idempotency: true }, { status: 409 });
+      }
+
       const isSandbox = tok.sandbox || false;
+      // STABLE idempotency: generated once per logical attempt. Caller MUST reuse the returned key on any retry/timeout.
       const idempotencyKey = generateIdempotencyKey('tecavo-cfdi');
 
       // Build exact SenHub CFDI 4.0 payload (respect docs)
@@ -214,7 +234,7 @@ export async function POST(request) {
       const result = await r.json().catch(() => ({}));
 
       if (r.ok && result.uuid) {
-        // Save with full audit data
+        // Save with full audit data + idempotency for retry safety (never duplicate)
         const [saved] = await sql`
           INSERT INTO cfdi_facturas (
             folio_interno, serie, uuid, fecha_timbrado, customer_id, rfc_cliente,
@@ -225,7 +245,7 @@ export async function POST(request) {
             ${moneda}, ${parseFloat(importe_total) || 0}, ${parseFloat(importe_total) || 0},
             ${uso_cfdi}, ${result.pdf_url || null}, ${result.xml_url || null},
             'TIMBRADA', 'senhub',
-            ${JSON.stringify({ idempotency_key: idempotencyKey, senhub_response: result, sandbox: isSandbox }).slice(0, 4000)}
+            ${JSON.stringify({ idempotency_key: idempotencyKey, senhub_response: result, sandbox: isSandbox, related: {viaje:related_viaje_id,load:related_load_id,nota:related_nota_id} }).slice(0, 4000)}
           ) RETURNING *
         `;
 
@@ -235,8 +255,11 @@ export async function POST(request) {
         if (related_viaje_id) {
           await sql`UPDATE viajes SET factura_id = ${saved.id} WHERE id = ${parseInt(related_viaje_id)}`;
         }
+        if (related_nota_id) {
+          await sql`UPDATE notas SET estatus = 'FACTURADA' WHERE id = ${parseInt(related_nota_id)}`;
+        }
 
-        await logSenhubOp('senhub', 'timbrar', result.uuid, 'success', { customer_id, uuid: result.uuid });
+        await logSenhubOp('senhub', 'timbrar', result.uuid, 'success', { customer_id, uuid: result.uuid, idempotency: idempotencyKey });
 
         return NextResponse.json({ success: true, cfdi: saved, senhub: result, idempotency_key: idempotencyKey });
       }

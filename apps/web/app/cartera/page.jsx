@@ -77,17 +77,32 @@ export default function CarteraClientes() {
   }
 
   // Real Senhub timbrado (full flow with confirmation + proper data)
+  // MODO SEGURO: NO crea ventas ni ingresos. Solo timbra operación autorizada existente (viaje/nota/carga). Requiere configuración Senhub.
   async function timbrarConSenhub() {
     if (!facturaForm.customer_id) return alert('Selecciona cliente');
 
     const cliente = clientes.find(c => String(c.id) === String(facturaForm.customer_id));
     if (!cliente) return alert('Cliente no encontrado');
 
-    if (!cliente.fiscal_ok && !cliente.datos_fiscales_completos) {
-      if (!confirm('Los datos fiscales del cliente están incompletos. ¿Continuar de todos modos?')) return;
+    // Guard: fiscal data completeness (block 15)
+    const hasFiscal = cliente.fiscal_rfc || cliente.rfc;
+    if (!hasFiscal) {
+      alert('El cliente no tiene RFC fiscal configurado. Ve a Clientes y completa datos fiscales antes de timbrar.');
+      return;
     }
 
-    // Build rich payload from existing viaje / customer fiscal data
+    // Confirmation dialog (required by spec)
+    const resumen = `CLIENTE: ${cliente.customer_name}
+RFC: ${cliente.fiscal_rfc || cliente.rfc}
+IMPORTE: $${facturaForm.importe_usd || 0}
+USO: ${cliente.fiscal_uso_cfdi || 'G03'}
+
+¿CONFIRMAR Y TIMBRAR CFDI REAL CON SENHUB?
+
+NOTA: Requiere credenciales Senhub configuradas (solo Superadmin). Una operación = un CFDI.`;
+    if (!confirm(resumen)) return;
+
+    // Build rich payload from existing data only (no sale creation)
     const payload = {
       action: 'timbrar',
       customer_id: facturaForm.customer_id,
@@ -102,7 +117,6 @@ export default function CarteraClientes() {
       importe_total: facturaForm.importe_usd || 0,
       moneda: 'USD',
       uso_factura: facturaForm.uso_factura,
-      // basic default concepto for now (user can expand later)
       conceptos: [{
         clave_prod_serv: '01010101',
         cantidad: 1,
@@ -114,10 +128,6 @@ export default function CarteraClientes() {
       }]
     };
 
-    // Confirmation dialog (required by spec)
-    const resumen = `CLIENTE: ${cliente.customer_name}\nRFC: ${payload.customer_rfc}\nIMPORTE: $${payload.importe_total}\nUSO: ${payload.uso_cfdi}\n\n¿CONFIRMAR Y TIMBRAR CFDI?`;
-    if (!confirm(resumen)) return;
-
     const res = await fetch('/api/cfdi-facturas', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -126,7 +136,7 @@ export default function CarteraClientes() {
     const data = await res.json();
 
     if (data.success || data.cfdi) {
-      alert('✅ CFDI TIMBRADO\nUUID: ' + (data.cfdi?.uuid || data.senhub?.uuid) + '\n\nDescarga PDF/XML desde el historial o SenHub.');
+      alert('✅ CFDI TIMBRADO\nUUID: ' + (data.cfdi?.uuid || data.senhub?.uuid) + '\n\nDescarga PDF/XML desde el historial o SenHub. No se crearon ventas nuevas.');
       setFacturaForm({ customer_id: '', uso_factura: 'SOLO TIMBRADA PARA DEPÓSITO', importe_usd: '', uuid: '' });
       await loadAll();
     } else {

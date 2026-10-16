@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
 
+// WHATSAPP: diferenciar "Compartir con WhatsApp" (wa.me abre app con contenido) vs envío automatizado por API oficial Meta (requiere credenciales + plantillas + consentimiento).
+// Este endpoint es SOLO API automatizada. Nunca usa números personales incrustados. Guarda messageId. No afirma "entregado" al iniciar solicitud.
+
 export async function POST(request) {
   try {
     const { phone, message, template, templateParams } = await request.json();
