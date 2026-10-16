@@ -61,6 +61,11 @@ export async function POST(request) {
       );
     }
 
+    // BLOCK 04: Production declares with source + version. Inventory receives/locates. Embarques confirms salida. Reprint = version++ only.
+    const sourceSystem = 'production';
+    const versionRegistro = 1;
+    const folioTarima = `TAR-${new Date().getFullYear()}-${String(Date.now()).slice(-8)}`;
+
     const result = await sql`
       INSERT INTO pallet_output_summary (
         production_batch_id,
@@ -71,7 +76,11 @@ export async function POST(request) {
         pallet_count,
         total_kg,
         packing_date,
-        cold_date
+        cold_date,
+        source_system,
+        version_registro,
+        folio_tarima,
+        estado
       ) VALUES (
         ${parseInt(production_batch_id)},
         ${parseInt(lot_id)},
@@ -81,7 +90,11 @@ export async function POST(request) {
         ${parseInt(pallet_count)},
         ${total_kg || 0},
         ${packing_date},
-        ${cold_date}
+        ${cold_date},
+        ${sourceSystem},
+        ${versionRegistro},
+        ${folioTarima},
+        'PENDIENTE_UBICACION'
       )
       RETURNING *
     `;

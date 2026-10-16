@@ -96,6 +96,11 @@ export async function POST(request) {
       }
     }
 
+    // BLOCK 04: Physical traceability - Production declares pallets with canonical source + version (reprint increments version, NEVER new tarima)
+    const sourceSystem = 'production';
+    const versionRegistro = 1;
+    const folioTarima = `TAR-${new Date().getFullYear()}-${String(Date.now()).slice(-8)}`;
+
     const result = await sql`
       INSERT INTO pallet_output_summary (
         production_batch_id,
@@ -107,7 +112,12 @@ export async function POST(request) {
         total_kg,
         packing_date,
         cold_date,
-        master_batch_id
+        master_batch_id,
+        source_system,
+        version_registro,
+        folio_tarima,
+        estado,
+        ubicacion_actual
       )
       VALUES (
         ${production_batch_id || null},
@@ -119,7 +129,12 @@ export async function POST(request) {
         ${parseFloat(total_kg)},
         ${packing_date || null},
         ${cold_date || null},
-        ${batchId || null}
+        ${batchId || null},
+        ${sourceSystem},
+        ${versionRegistro},
+        ${folioTarima},
+        'PENDIENTE_UBICACION',
+        null
       )
       RETURNING *
     `;
@@ -196,6 +211,92 @@ export async function POST(request) {
     console.error("Error creating pallet output:", error);
     return NextResponse.json(
       { error: error.message },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PUT(request) {
+  try {
+    const {
+      id,
+      pallet_count,
+      total_kg,
+      cold_date,
+      action,
+      new_ubicacion,
+      embarque_id
+    } = await request.json();
+
+    if (!id) {
+      return NextResponse.json(
+        { error: 'Pallet output ID required' },
+        { status: 400 }
+      );
+    }
+
+    if (action === 'reprint') {
+      // BLOCK 04: Reprint does NOT create new tarima. Increment version only. Inventory/Embarques use same folio + version.
+      const [current] = await sql`SELECT * FROM pallet_output_summary WHERE id = ${id} LIMIT 1`;
+      if (!current) return NextResponse.json({ error: 'Tarima no encontrada' }, { status: 404 });
+
+      const newVersion = (parseInt(current.version_registro || 1) || 1) + 1;
+      const [updated] = await sql`
+        UPDATE pallet_output_summary
+        SET version_registro = ${newVersion}, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ${id}
+        RETURNING *
+      `;
+      // Log print without new record
+      await sql`
+        INSERT INTO print_history (template_id, lot_id, printer_id, label_data, quantity_printed, printed_by, printed_at)
+        VALUES (null, ${current.lot_id}, null, ${JSON.stringify({reprint: true, pallet_id: id, version: newVersion})}, 1, 'sistema', CURRENT_TIMESTAMP)
+      `;
+      return NextResponse.json({ ...updated, reprinted: true, new_version: newVersion });
+    }
+
+    if (action === 'locate') {
+      const [updated] = await sql`
+        UPDATE pallet_output_summary
+        SET 
+          ubicacion_actual = ${new_ubicacion || null},
+          estado = 'UBICADA',
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ${id}
+        RETURNING *
+      `;
+      return NextResponse.json(updated);
+    }
+
+    if (action === 'ship') {
+      const [updated] = await sql`
+        UPDATE pallet_output_summary
+        SET 
+          embarque_id = ${embarque_id || null},
+          estado = 'EMBARCADA',
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ${id}
+        RETURNING *
+      `;
+      return NextResponse.json(updated);
+    }
+
+    const result = await sql`
+      UPDATE pallet_output_summary
+      SET 
+        pallet_count = COALESCE(${pallet_count}, pallet_count),
+        total_kg = COALESCE(${total_kg}, total_kg),
+        cold_date = COALESCE(${cold_date}::date, cold_date),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ${id}
+      RETURNING *
+    `;
+
+    return NextResponse.json(result[0]);
+  } catch (error) {
+    console.error('Error updating pallet output:', error);
+    return NextResponse.json(
+      { error: 'Error updating pallet output' },
       { status: 500 }
     );
   }

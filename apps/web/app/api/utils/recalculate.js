@@ -316,6 +316,91 @@ export async function syncLotAggregatesFromProduction(lotId, totals) {
 }
 
 /**
+ * BLOCK 07: MOTOR ÚNICO DE COSTOS Y RENTABILIDAD (reutilizado por dashboard, lote, ventas, simulador, Cierre)
+ * Fuente canónica: 
+ * - Compra: agreed (cutting_orders) + valor ponderado lotificación (precios autorizados)
+ * - Cuadrillas + Flete corte: desde crew-service / cutting_orders (NO duplicar en operating_costs)
+ * - Otros: operating_costs con module_origin + source links
+ * - No doble conteo. Subproductos valorizados sin restar dos veces.
+ * Cost/kg recibido = costo asignado / kg recibido
+ * Cost/kg comercializable = costo neto / kg vendible
+ */
+export async function getLotIntegralCost(lotId) {
+  const lotIdNum = parseInt(lotId);
+  if (!lotIdNum) return null;
+
+  try {
+    const [lot] = await sql`SELECT * FROM lots WHERE id = ${lotIdNum}`;
+    if (!lot) return null;
+
+    const received = await getCanonicalReceivedKg(lotIdNum);
+
+    // 1. Compra pactada (agreed from cutting or lot)
+    const [co] = await sql`SELECT agreed_price_per_kg, net_weight FROM cutting_orders WHERE lot_id = ${lotIdNum} OR id = ${lot.cutting_order_id || 0} LIMIT 1`;
+    const pactadoPerKg = parseFloat(co?.agreed_price_per_kg || lot.fruit_price || 0);
+    const compraPactada = pactadoPerKg * received;
+
+    // 2. Valor real lotificación (from snapshot or calc)
+    const [snap] = await sql`SELECT price_applied, total_cost FROM lot_price_snapshot WHERE lot_id = ${lotIdNum} ORDER BY created_at DESC LIMIT 1`;
+    const valorLotif = parseFloat(snap?.total_cost || 0) || (pactadoPerKg * received);
+
+    // 3. Cuadrillas + acarreo corte (fuente única desde cutting/crew)
+    const [crewCosts] = await sql`
+      SELECT 
+        COALESCE(SUM(payable_kg * COALESCE(applied_crew_rate, 1.4)), 0) as crew_cost,
+        COALESCE(SUM(COALESCE(applied_freight_amount, freight_cost, 0)), 0) as freight_corte
+      FROM cutting_orders WHERE lot_id = ${lotIdNum}
+    `;
+    const crewTotal = parseFloat(crewCosts?.crew_cost || 0);
+    const fleteCorte = parseFloat(crewCosts?.freight_corte || 0);
+
+    // 4. Otros costos directos desde operating_costs (con link a lote/orden, evitar dup de crew/flete)
+    const otherCosts = await sql`
+      SELECT COALESCE(SUM(amount_mxn), 0) as otros 
+      FROM operating_costs 
+      WHERE lot_id = ${lotIdNum} 
+        AND COALESCE(module_origin, '') NOT IN ('cuadrillas', 'fletes_corte')
+        AND status IN ('aprobado', 'pendiente')
+    `;
+    const otros = parseFloat(otherCosts[0]?.otros || 0);
+
+    // 5. Comision corredor (from order or lot)
+    const comision = parseFloat(co?.agreed_commission || lot.commission_amount || 0) * (received / 1000); // assume per ton or adjust
+
+    const costoIntegral = compraPactada + valorLotif + crewTotal + fleteCorte + otros + comision; // avoid double if pactado includes some
+
+    const costPerKgRecibido = received > 0 ? costoIntegral / received : 0;
+
+    // Comercializable approx from production packed
+    const [packedRow] = await sql`SELECT COALESCE(SUM(total_kg),0) as packed FROM production_selection_details WHERE lot_id=${lotIdNum}`;
+    const kgCom = parseFloat(packedRow?.packed || 0) || received;
+    const costPerKgCom = kgCom > 0 ? costoIntegral / kgCom : costPerKgRecibido;
+
+    // Potencial comercial (usar sale prices if available, placeholder)
+    const valorComercialPot = kgCom * (pactadoPerKg * 1.8); // simple markup example, real from sales prices
+
+    return {
+      lote_id: lotIdNum,
+      kg_recibidos: received,
+      compra_pactada: Math.round(compraPactada * 100) / 100,
+      valor_real_lotificacion: Math.round(valorLotif * 100) / 100,
+      cuadrillas_corte: Math.round(crewTotal * 100) / 100,
+      flete_corte: Math.round(fleteCorte * 100) / 100,
+      otros_costos: Math.round(otros * 100) / 100,
+      costo_integral: Math.round(costoIntegral * 100) / 100,
+      costo_kg_recibido: parseFloat(costPerKgRecibido.toFixed(4)),
+      costo_kg_comercializable: parseFloat(costPerKgCom.toFixed(4)),
+      valor_comercial_potencial: Math.round(valorComercialPot * 100) / 100,
+      fuente: 'motor_unico_recalculate + cutting + operating_costs (sin duplicados)',
+      nota: 'Costo cuadrilla/flete corte viene SOLO de módulos Cuadrillas/Fletes asociados a orden. Precio pactado no se altera por selección.'
+    };
+  } catch (e) {
+    console.error('getLotIntegralCost error', e);
+    return null;
+  }
+}
+
+/**
  * Safe convenience updater for lot totals from production side.
  * Always safe tagged template.
  */

@@ -479,6 +479,37 @@ export async function POST(request) {
     const { recalculateLot } = await import('@/app/api/utils/recalculate');
     await recalculateLot(lot_id);
 
+    // BLOCK 05: Snapshot precio real ponderado al confirmar (histórico inmutable). Usa precios autorizados de compra.
+    if ((status || '').toUpperCase() === 'CONFIRMADO') {
+      try {
+        const authorizedPrices = await loadAuthorizedPurchasePrices();
+        const receivedForSnap = await (await import('@/app/api/utils/recalculate')).getCanonicalReceivedKg(lot_id);
+        let valor = 0;
+        // recompute from just inserted for this batch
+        const batchDetails = await sql`SELECT caliber, class_name, boxes_10kg, boxes_6kg, additional_granel_kg, total_kg FROM production_selection_details WHERE production_batch_id = ${batchId}`;
+        let p10s=10, p6s=6;
+        try {
+          const [pp10] = await sql`SELECT kilograms FROM packaging_presentations WHERE (kilograms=10 OR nombre ILIKE '%10%') AND COALESCE(activo,true) LIMIT 1`;
+          const [pp6] = await sql`SELECT kilograms FROM packaging_presentations WHERE (kilograms=6 OR nombre ILIKE '%6%') AND COALESCE(activo,true) LIMIT 1`;
+          p10s = pp10 ? parseFloat(pp10.kilograms) : 10; p6s = pp6 ? parseFloat(pp6.kilograms) : 6;
+        } catch(_) {}
+        batchDetails.forEach(d => {
+          const kg = (parseInt(d.boxes_10kg)||0)*p10s + (parseInt(d.boxes_6kg)||0)*p6s + (parseFloat(d.additional_granel_kg)||0);
+          const pr = getAuthorizedPriceForCaliber(authorizedPrices, d.caliber);
+          valor += kg * pr;
+        });
+        const procSnap = Number(proc) || 0;
+        const desSnap = Number(des) || 0;
+        valor += (procSnap * (authorizedPrices.PROCESO || 0)) + (desSnap * (authorizedPrices.DESECHO || 0));
+        const precioPond = receivedForSnap > 0 ? valor / receivedForSnap : 0;
+
+        await sql`
+          INSERT INTO lot_price_snapshot (lot_id, price_applied, price_type, category, kg_received, total_cost, created_at)
+          VALUES (${lot_id}, ${parseFloat(precioPond.toFixed(4))}, 'ponderado_lotificacion', 'compra_autorizada', ${receivedForSnap}, ${Math.round(valor*100)/100}, CURRENT_TIMESTAMP)
+        `;
+      } catch (snapErr) { console.error('price snapshot non blocking', snapErr); }
+    }
+
     return NextResponse.json({ success: true, batch: batchRow, tolerance_applied: toleranceKg, corrida_id: batchId });
   } catch (error) {
     console.error("Error in POST /api/production:", error);

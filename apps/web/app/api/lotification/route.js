@@ -8,9 +8,14 @@ export async function GET(request) {
     lotId = searchParams.get('lotId');
 
     if (lotId) {
-      // RECONCILIATION (BLOQUE 04): lotification_records / lotification_registry / lot_selection_results / lot_performance are legacy.
-      // Canonical yield/selection is ONLY from production_selection_details + fruit_input_weighings (Ingreso de Fruta reception confirmed).
-      // NEVER sum multiple sources as if they were additional productions. This is read-only view.
+      // BLOCK 03/04 AUDIT INVENTORY (Conservar/Unificar/Reemplazar/Retirar):
+      // CONSERVAR: production_selection_details + production_batches (por turno) + fruit_input_weighings + cutting_orders (ingreso físico) + pallet_output_summary (tarimas con version) + traceability_log
+      // UNIFICAR: /api/production + recalculate (fuente única kg y lotificación confirmada). Costos via getLotIntegralCost + cuadrillas/crew-service.
+      // REEMPLAZAR: Capturas paralelas en UI legacy (lotification-registry, old lot-selection) -> redirigir a /production.
+      // RETIRAR (tras equivalencia): writes nuevos a lotification_records / lotification_registry / lot_selection_results (histórico solo).
+      // Precios: price_week_items + precios_fruta_publicados canónicos para ponderado compra; snapshots para histórico.
+      // Fletes: cut_freights/crew_freights (corte) vs viajes/foreign (comercial). No duplicar en cierre.
+      // Rentabilidad: motor_unico en recalculate.getLotIntegralCost (sin fórmulas contradictorias).
       const [lot] = await sql`SELECT * FROM lots WHERE id = ${parseInt(lotId)}`;
       const prod = await sql`
         SELECT 
@@ -30,7 +35,7 @@ export async function GET(request) {
         lot, 
         canonical_from_production: prod, 
         received_kg: fiw?.received_kg || 0,
-        note: 'Use /production as single canonical source for Producción. Legacy structures preserved for history only. No parallel captures.'
+        note: 'Use /production as single canonical source for Producción. Legacy structures preserved for history only. No parallel captures. Ver BLOCK 03 inventario en comentarios.'
       });
     }
 

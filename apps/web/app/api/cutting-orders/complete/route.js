@@ -188,7 +188,7 @@ export async function POST(request) {
       } catch (_) {}
     }
 
-    // Auto penalizaciones por cajas faltantes / no retornadas (trazabilidad a payroll)
+    // Auto penalizaciones por cajas faltantes / no retornadas + daños (BLOCK 04 trazabilidad física sanciones autorizadas)
     const missing = parseInt(missing_boxes || 0) + (parseInt(order.boxes_count || 0) - parseInt(returned_boxes || order.boxes_count || 0));
     if (missing > 0 && order.lot_id) {
       const penalty = missing * 100;
@@ -205,6 +205,17 @@ export async function POST(request) {
           VALUES ('cutting_order', ${order_id}, ${order.lot_id}, 'PENALIZACION_CAJAS', ${order.boxes_count||0}, ${missing}, ${missing}, 'cajas', 'caja-campo', ${order.folio}, ${'Penalización auto $100 x caja - ' + missing + ' cajas'})
         `;
       } catch (_) {}
+    }
+
+    // Registrar daños explícitos si se proveen (sanciones)
+    if (body.damaged_boxes && parseInt(body.damaged_boxes) > 0) {
+      try {
+        const dmg = parseInt(body.damaged_boxes);
+        await sql`
+          INSERT INTO box_control_incidents (cutting_order_id, lot_id, incident_type, severity, boxes_expected, boxes_received, boxes_difference, status, penalty_amount, penalty_applied, title, description)
+          VALUES (${order_id}, ${order.lot_id}, 'DAÑO', 'media', ${order.boxes_count||0}, ${returned_boxes||0}, ${dmg}, 'open', ${dmg*50}, true, 'Daño en recepción', ${'Daños reportados en completado orden ' + order.folio})
+        `;
+      } catch(_) {}
     }
 
     // Ensure box_control also reflects final return state
