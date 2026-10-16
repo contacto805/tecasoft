@@ -472,7 +472,7 @@ export default function CuttingOrdersPage() {
             <div>
               <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Órdenes de Corte</h1>
               <p className="text-slate-500 mt-1">Crea y gestiona las órdenes de corte con folio automático. (Sección de la pestaña Cortes)</p>
-              <p className="text-[10px] text-emerald-700 mt-0.5">REGLA FASE 03 B02: >5.000 kg = pago por kg; ≤5.000 kg = por día. Excepciones requieren autorización Superadministrador. Costos corte/flete fuente única (no duplicar en cierre).</p>
+              <p className="text-[10px] text-emerald-700 mt-0.5">REGLA FASE 03 B02: {'>'}5.000 kg = pago por kg; ≤5.000 kg = por día. Excepciones requieren autorización Superadministrador. Costos corte/flete fuente única (no duplicar en cierre).</p>
             </div>
             <button
               onClick={() => router.push('/mobile-apps')}

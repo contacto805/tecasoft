@@ -417,7 +417,7 @@ export default function CuadrillasPage() {
         <div className="mb-6">
           <h1 className="text-3xl font-bold tracking-tight">Cuadrillas</h1>
           <p className="text-slate-500 mt-1">Control de corte, cuadrillas, fletes y costos de campo. Fuente maestra: Órdenes de Corte + kg reales.</p>
-          <p className="text-[10px] text-emerald-700 mt-0.5">REGLA FASE 03 B02: >5.000 kg cortados = por kg; ≤5.000 kg = por día. Excepciones (corredor/acuerdo) requieren autorización Super. Costo corte/flete registrado en fuente jamás duplicado en cierre semanal. Bonificaciones daño/maduración = movimientos separados (no alteran precio base).</p>
+          <p className="text-[10px] text-emerald-700 mt-0.5">REGLA FASE 03 B02: {'>'}5.000 kg cortados = por kg; ≤5.000 kg = por día. Excepciones (corredor/acuerdo) requieren autorización Super. Costo corte/flete registrado en fuente jamás duplicado en cierre semanal. Bonificaciones daño/maduración = movimientos separados (no alteran precio base).</p>
         </div>
 
         {/* Indicadores */}
