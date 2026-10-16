@@ -999,56 +999,18 @@ export default function SuperadministradorPage() {
       const r = await fetch(`/api/superadmin/apps/download?appId=${app.id}`, { credentials: 'include' });
       const txt = await r.text();
       const info = txt ? JSON.parse(txt) : {};
-      if (info.allowed) {
-        if (info.download_url) {
-          const link = document.createElement('a');
-          link.href = info.download_url;
-          link.download = info.filename || app.apk_filename || (app.nombre + '.apk');
-          document.body.appendChild(link);
-          link.click();
-          link.remove();
-          return;
-        }
-        // Always working placeholder with proper headers
-        const name = info.filename || app.apk_filename || (app.nombre.replace(/\\s+/g, '-') + '.apk');
-        const content = `APK PLACEHOLDER (descarga exitosa)
-${app.nombre}
-Versión: ${app.version || '1.0'}
-Ruta: ${app.ruta || ''}
-Generada: ${app.fecha_generacion || new Date().toISOString().slice(0,10)}
-
-Distribución lista para Android. Contacte Superadministrador para build real.`;
-        const blob = new Blob([content], { type: 'application/vnd.android.package-archive' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = name;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
+      if (info.allowed && info.download_url) {
+        const link = document.createElement('a');
+        link.href = info.download_url;
+        link.download = info.filename || app.apk_filename || (app.nombre + '.apk');
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
         return;
-      } else {
-        alert(info.error || 'Sin autorización para esta descarga.');
       }
+      alert(info.error || 'APK real verificado no disponible. Compila APK Android firmado externamente y súbelo con URL real en Superadministrador. Este servicio requiere conexión externa.');
     } catch (e) {
-      // Always provide working download on any error
-      const name = app.apk_filename || (app.nombre.replace(/\\s+/g, '-') + '.apk');
-      const content = `APK PLACEHOLDER
-${app.nombre}
-Versión: ${app.version || '1.0'}
-Ruta: ${app.ruta || ''}
-
-Archivo listo. Error de red manejado - descarga funcional.`;
-      const blob = new Blob([content], { type: 'application/vnd.android.package-archive' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = name;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      alert('APK real no disponible. Solo archivos con URL verificada (apk_url) son permitidos.');
     }
   };
 

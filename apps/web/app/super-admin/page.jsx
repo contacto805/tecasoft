@@ -80,37 +80,26 @@ export default function SuperAdminPage() {
   };
 
   const handleApkDownload = async (apk) => {
-    if (!apk?.id) { const n=(apk.nombre||'app')+'.apk'; const b=new Blob(['APK OK'],{type:'application/vnd.android.package-archive'}); const u=URL.createObjectURL(b); const a=document.createElement('a');a.href=u;a.download=n;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(u); return; }
+    if (!apk?.id) {
+      alert('APK real no disponible. Compila APK Android firmado y súbelo con URL verificada. Requiere conexión externa.');
+      return;
+    }
     try {
       const r = await fetch(`/api/superadmin/apps/download?appId=${apk.id}`);
       const d = await r.json();
-      if (d.allowed) {
-        if (d.download_url) {
-          const link = document.createElement('a');
-          link.href = d.download_url;
-          link.download = d.filename || `${apk.nombre}.apk`;
-          document.body.appendChild(link);
-          link.click();
-          link.remove();
-          return;
-        }
-        const name = d.filename || apk.apk_filename || `${apk.nombre}.apk`;
-        const txt = `APK PLACEHOLDER\
-${apk.nombre}\
-Versión: ${apk.version || '1.0'}`;
-        const blob = new Blob([txt], { type: 'application/vnd.android.package-archive' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = name;
-        document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      if (d.allowed && d.download_url) {
+        const link = document.createElement('a');
+        link.href = d.download_url;
+        link.download = d.filename || `${apk.nombre}.apk`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
         return;
       }
-    } catch {}
-    // always working
-    const name = apk.apk_filename || `${apk.nombre}.apk`;
-    const blob = new Blob(['APK PLACEHOLDER - working'], { type: 'application/vnd.android.package-archive' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      alert(d.error || 'APK real verificado no disponible. Solo archivos con apk_url real son permitidos. Usa Superadministrador para subir build real.');
+    } catch {
+      alert('APK real no disponible. Solo descargas verificadas permitidas.');
+    }
   };
 
   const startCamera = async () => {

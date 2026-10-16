@@ -1,7 +1,30 @@
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 
-export async function GET() {
+// Server-side auth guard for critical config (never expose to browser)
+async function requireAuth() {
+  const cookieStore = await cookies();
+  const token = cookieStore.get("tecavo_session_token")?.value || cookieStore.get("better-auth.session_token")?.value;
+  if (!token) return { ok: false };
+  try {
+    const sessions = await sql`SELECT s."userId" FROM session s WHERE s.token = ${token} AND s."expiresAt" > NOW() LIMIT 1`;
+    if (sessions.length > 0) return { ok: true, userId: sessions[0].userId };
+    const decoded = Buffer.from(token, "base64").toString();
+    const data = JSON.parse(decoded);
+    if (data.userId) {
+      const u = await sql`SELECT id FROM "user" WHERE id = ${data.userId} LIMIT 1`;
+      if (u.length) return { ok: true, userId: data.userId };
+    }
+  } catch (_) {}
+  return { ok: false };
+}
+
+export async function GET(request) {
+  const auth = await requireAuth();
+  if (!auth.ok) {
+    return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+  }
   try {
     const settings = await sql`SELECT DISTINCT ON (key) key, value FROM system_settings ORDER BY key, id DESC`;
     

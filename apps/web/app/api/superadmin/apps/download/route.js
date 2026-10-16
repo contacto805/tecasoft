@@ -98,10 +98,25 @@ export async function GET(request) {
     const explicit = auths[0]?.authorized === true;
 
     if (explicit) {
+      if (!hasRealUrl) {
+        return NextResponse.json({ 
+          allowed: false, 
+          error: "APK real no disponible. Compila APK Android firmado (usa build-apks.sh / EAS) y súbelo con URL verificada en Superadministrador. Este servicio requiere conexión externa y build real.",
+          needsRealApk: true
+        }, { status: 409 });
+      }
+      // Log successful authorized download (immutable audit)
+      try {
+        await sql`
+          INSERT INTO system_audit_log (user_id, user_name, module, action, entity_type, entity_id, status, description, timestamp)
+          VALUES (${userId}, ${userId}, 'mobile-apps', 'download', 'apk', ${parseInt(appId)}, 'exitoso', ${JSON.stringify({app: app.nombre, filename: app.apk_filename}).slice(0,500)}, CURRENT_TIMESTAMP)
+        `;
+      } catch (_) {}
+
       return NextResponse.json({ 
         allowed: true, 
-        download_url: hasRealUrl ? app.apk_url : null,
-        use_placeholder: !hasRealUrl,
+        download_url: app.apk_url,
+        use_placeholder: false,
         filename: app.apk_filename || (app.nombre + '.apk'),
         appName: app.nombre 
       });
@@ -110,8 +125,7 @@ export async function GET(request) {
     return NextResponse.json({ allowed: false, error: "No tienes autorización para descargar esta APK. Contacta al superadministrador." }, { status: 403 });
   } catch (e) {
     console.error("Download check error", e);
-    // Always allow fallback working download on server errors
-    return NextResponse.json({ allowed: true, download_url: null, use_placeholder: true, filename: 'app.apk', appName: 'App' });
+    return NextResponse.json({ allowed: false, error: "Error de verificación. Solo APKs reales con URL verificada son permitidos." }, { status: 500 });
   }
 }
 
