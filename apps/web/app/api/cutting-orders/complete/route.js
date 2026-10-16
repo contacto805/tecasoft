@@ -70,22 +70,26 @@ export async function POST(request) {
     }
     
     // 4. Calcular el pago de la cuadrilla usando servicio de dominio (congela tarifa)
+    // FASE 03 BLOQUE 02: aplica regla de volumen (5000kg) - fuente única cutting_orders
     const defaultRate = await CrewService.getDefaultCrewRate();
     const appliedRate = parseFloat(order.applied_crew_rate || defaultRate);
+    // Enforce volume rule for new/updated (historical preserved)
+    const enforcedMethod = CrewService.getCrewPaymentMethodByVolume ? CrewService.getCrewPaymentMethodByVolume(net_weight) : (order.crew_payment_method || 'kilos');
     const paymentAmount = CrewService.calculateCrewPay({
       kg: net_weight,
       workers: order.crew_workers_count,
       rate: appliedRate,
-      method: order.crew_payment_method
+      method: enforcedMethod
     });
 
-    // Congelar tarifa y kg en la orden (single source)
+    // Congelar tarifa y kg en la orden (single source) + método por regla
     await sql`
       UPDATE cutting_orders 
       SET 
         applied_crew_rate = ${appliedRate},
         kg_original = COALESCE(kg_original, net_weight),
         payable_kg = ${net_weight},
+        crew_payment_method = ${enforcedMethod},
         applied_freight_amount = COALESCE(applied_freight_amount, freight_cost),
         updated_at = NOW()
       WHERE id = ${order_id}

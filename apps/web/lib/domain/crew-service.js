@@ -180,6 +180,16 @@ export async function calculateCutCost(cut) {
   };
 }
 
+// FASE 03 BLOQUE 02: Regla obligatoria cuadrillas (sin descuentos ilegales)
+// > 5000 kg cortados => paga por kilogramo; <= 5000 kg => paga por día.
+// Excepciones por corredor/acuerdo requieren autorización de Superadministrador.
+// Costo de corte/flete NUNCA se genera dos veces (usa fuente cutting_orders).
+export function getCrewPaymentMethodByVolume(kg) {
+  const k = parseFloat(kg) || 0;
+  if (k > 5000) return 'kilos';
+  return 'dia';
+}
+
 export async function getTarifario() {
   return await sql`
     SELECT fr.*, vt.nombre as vehicle_type_name 
