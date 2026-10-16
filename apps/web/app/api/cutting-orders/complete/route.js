@@ -5,7 +5,7 @@ import * as CrewService from "@/lib/domain/crew-service";
 
 export async function POST(request) {
   try {
-    const { order_id, net_weight, returned_boxes, missing_boxes } = await request.json();
+    const { order_id, net_weight, returned_boxes, missing_boxes, damaged_boxes } = await request.json();
     
     if (!order_id || !net_weight) {
       return NextResponse.json({ error: 'Faltan datos requeridos' }, { status: 400 });
@@ -77,9 +77,7 @@ export async function POST(request) {
     const enforcedMethod = CrewService.getCrewPaymentMethodByVolume ? CrewService.getCrewPaymentMethodByVolume(net_weight) : (order.crew_payment_method || 'kilos');
     const paymentAmount = CrewService.calculateCrewPay({
       kg: net_weight,
-      workers: order.crew_workers_count,
-      rate: appliedRate,
-      method: enforcedMethod
+      rate: appliedRate
     });
 
     // Congelar tarifa y kg en la orden (single source) + método por regla
@@ -208,9 +206,9 @@ export async function POST(request) {
     }
 
     // Registrar daños explícitos si se proveen (sanciones)
-    if (body.damaged_boxes && parseInt(body.damaged_boxes) > 0) {
+    if (damaged_boxes && parseInt(damaged_boxes) > 0) {
       try {
-        const dmg = parseInt(body.damaged_boxes);
+        const dmg = parseInt(damaged_boxes);
         await sql`
           INSERT INTO box_control_incidents (cutting_order_id, lot_id, incident_type, severity, boxes_expected, boxes_received, boxes_difference, status, penalty_amount, penalty_applied, title, description)
           VALUES (${order_id}, ${order.lot_id}, 'DAÑO', 'media', ${order.boxes_count||0}, ${returned_boxes||0}, ${dmg}, 'open', ${dmg*50}, true, 'Daño en recepción', ${'Daños reportados en completado orden ' + order.folio})
