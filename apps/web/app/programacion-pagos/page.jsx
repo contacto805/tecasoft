@@ -231,7 +231,7 @@ export default function PaymentSchedulePage() {
       payment_days: Number(payment.payment_days) || 22,
       priority: payment.priority || 'normal',
       observations: payment.observations || '',
-      cutting_order_id: payment.cutting_order_id || ''
+      cutting_order_id: payment.cutting_order_id ? String(payment.cutting_order_id) : ''
     });
     setShowModal(true);
   };
@@ -358,7 +358,7 @@ export default function PaymentSchedulePage() {
     let due = null;
     try { due = payment.due_date ? new Date(payment.due_date) : null; } catch(e){}
     if (!due || isNaN(due.getTime())) return 'scheduled';
-    const daysUntilDue = Math.floor((due - today) / (1000 * 3600 * 24));
+    const daysUntilDue = Math.floor((due.getTime() - today.getTime()) / (1000 * 3600 * 24));
     if (daysUntilDue < 0) return 'overdue';
     if (daysUntilDue <= 13) return 'urgent';
     return 'scheduled';
@@ -455,7 +455,9 @@ export default function PaymentSchedulePage() {
               <tbody>
                 {frutaProxima.length === 0 && <tr><td colSpan={10} className="px-4 py-6 text-center text-gray-400">Sin fruta próxima a vencer (13 días o menos)</td></tr>}
                 {frutaProxima.map((f, i) => {
-                  const daysLeft = Math.floor((new Date(f.fecha_vencimiento).getTime() - new Date().getTime()) / 86400000);
+                  const d1 = new Date(f.fecha_vencimiento).getTime();
+                  const d2 = new Date().getTime();
+                  const daysLeft = Math.floor((d1 - d2) / 86400000);
                   return (
                     <tr key={i} className="border-t hover:bg-amber-50">
                       <td className="px-4 py-2.5 font-medium">{f.producer}</td>
@@ -648,7 +650,7 @@ export default function PaymentSchedulePage() {
                 <input type="number" value={form.payment_days} onChange={e=>setForm({...form,payment_days:parseInt(e.target.value)||22})} className="w-20 border px-2 py-1.5 rounded" />
               </div>
             </div>
-            <div><label className="text-xs block mb-0.5">ID Orden de Corte (enlace único)</label><input type="number" placeholder="Opcional - ID de cutting_orders" value={form.cutting_order_id} onChange={e=>setForm({...form,cutting_order_id:e.target.value})} className="w-full border px-3 py-1.5 rounded" /></div>
+            <div><label className="text-xs block mb-0.5">ID Orden de Corte (enlace único)</label><input type="number" placeholder="Opcional - ID de cutting_orders" value={String(form.cutting_order_id || '')} onChange={e=>setForm({...form,cutting_order_id:e.target.value})} className="w-full border px-3 py-1.5 rounded" /></div>
             <div><label className="text-xs block mb-0.5">Banco</label><input value={form.bank_name} onChange={e=>setForm({...form,bank_name:e.target.value})} className="w-full border px-3 py-1.5 rounded" /></div>
             <div><label className="text-xs block mb-0.5">CLABE / Cuenta</label><div className="flex gap-1.5"><input value={form.clabe} onChange={e=>setForm({...form,clabe:e.target.value})} placeholder="CLABE" className="flex-1 border px-3 py-1.5 rounded"/><input value={form.account_number} onChange={e=>setForm({...form,account_number:e.target.value})} placeholder="Cuenta" className="flex-1 border px-3 py-1.5 rounded" /></div></div>
             <div><label className="text-xs block mb-0.5">Prioridad</label><select value={form.priority} onChange={e=>setForm({...form,priority:e.target.value})} className="w-full border px-3 py-1.5 rounded"><option value="normal">Normal</option><option value="urgent">Urgente</option></select></div>

@@ -7,20 +7,15 @@ export async function GET(request) {
     const year = searchParams.get("year");
     const activeOnly = searchParams.get("active") !== "false";
 
-    let where = sql``;
-    if (year && activeOnly) {
-      where = sql`WHERE year = ${parseInt(year)} AND is_active = true`;
-    } else if (year) {
-      where = sql`WHERE year = ${parseInt(year)}`;
-    } else if (activeOnly) {
-      where = sql`WHERE is_active = true`;
+    const all = await sql`SELECT * FROM corporate_holidays ORDER BY holiday_date ASC`;
+    let holidays = all;
+    if (year) {
+      const y = parseInt(year);
+      holidays = holidays.filter(h => h.year === y);
     }
-
-    const holidays = await sql`
-      SELECT * FROM corporate_holidays 
-      ${where}
-      ORDER BY holiday_date ASC
-    `;
+    if (activeOnly) {
+      holidays = holidays.filter(h => h.is_active);
+    }
     return NextResponse.json(holidays);
   } catch (error) {
     console.error("Error fetching holidays:", error);
