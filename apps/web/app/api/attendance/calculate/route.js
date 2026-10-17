@@ -26,7 +26,7 @@ export async function calculateDayAttendance(employee, date, recordsForDay, sala
     }
     if (!schedule) {
       const defs = await sql`SELECT * FROM attendance_schedules WHERE is_active = true ORDER BY id LIMIT 1`;
-      schedule = defs[0] || { schedule_type: 'fijo', jornada_type: 'completa', scheduled_entry: '09:00', scheduled_exit: '18:00', unpaid_meal_minutes: 60, required_effective_hours: 8 };
+      schedule = defs[0] || { schedule_type: 'fijo', jornada_type: 'completa', scheduled_entry: '09:00', scheduled_exit: '18:00', unpaid_meal_minutes: 60, required_effective_hours: 8, tolerance_entry_min: 15, tolerance_exit_min: 10, retardo_threshold_min: 15, early_exit_threshold_min: 10 };
     }
   }
 
@@ -94,10 +94,10 @@ export async function calculateDayAttendance(employee, date, recordsForDay, sala
   if (schedType === 'fijo') {
     const schedIn = schedule.scheduled_entry || '09:00';
     const schedOut = schedule.scheduled_exit || '18:00';
-    const tolIn = parseInt(schedule.tolerance_entry_min || 10);
+    const tolIn = parseInt(schedule.tolerance_entry_min || 15);
     const thrRet = parseInt(schedule.retardo_threshold_min || 15);
     const tolOut = parseInt(schedule.tolerance_exit_min || 10);
-    const thrEarly = parseInt(schedule.early_exit_threshold_min || 15);
+    const thrEarly = parseInt(schedule.early_exit_threshold_min || 10);
 
     if (firstIn && schedIn) {
       const [sh, sm] = schedIn.split(':').map(Number);

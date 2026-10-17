@@ -190,9 +190,11 @@ export async function GET(request) {
     });
   } catch (error) {
     console.error('Error fetching dashboard:', error);
+    const p = 'today';
+    const d = new Date().toISOString().split('T')[0];
     return NextResponse.json({
-      period: 'today',
-      startDate: new Date().toISOString().split('T')[0],
+      period: p,
+      startDate: d,
       sales: { totalSales: 0, totalLoads: 0 },
       accounts: { receivable: 0, payable: 0 },
       expenses: { total: 0 },

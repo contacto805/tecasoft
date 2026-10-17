@@ -33,10 +33,10 @@ export async function POST(request) {
       meal_start,
       meal_end,
       unpaid_meal_minutes = 60,
-      tolerance_entry_min = 10,
+      tolerance_entry_min = 15,
       retardo_threshold_min = 15,
       tolerance_exit_min = 10,
-      early_exit_threshold_min = 15,
+      early_exit_threshold_min = 10,
       required_effective_hours = 8,
       min_entry_time,
       max_exit_time,
@@ -61,8 +61,8 @@ export async function POST(request) {
         round_minutes, work_days, rest_day, is_active
       ) VALUES (
         ${name}, ${schedule_type}, ${jornada_type}, ${scheduled_entry || null}, ${scheduled_exit || null},
-        ${meal_start || null}, ${meal_end || null}, ${parseInt(unpaid_meal_minutes)||0}, ${parseInt(tolerance_entry_min)||10}, ${parseInt(retardo_threshold_min)||15},
-        ${parseInt(tolerance_exit_min)||10}, ${parseInt(early_exit_threshold_min)||15}, ${parseFloat(required_effective_hours)||8},
+        ${meal_start || null}, ${meal_end || null}, ${parseInt(unpaid_meal_minutes)||0}, ${parseInt(tolerance_entry_min)||15}, ${parseInt(retardo_threshold_min)||15},
+        ${parseInt(tolerance_exit_min)||10}, ${parseInt(early_exit_threshold_min)||10}, ${parseFloat(required_effective_hours)||8},
         ${min_entry_time || null}, ${max_exit_time || null}, ${parseInt(max_meal_minutes)||60}, ${!!allow_multiple_entries},
         ${parseInt(round_minutes)||1}, ${JSON.stringify(work_days)}, ${rest_day || null}, ${!!is_active}
       ) RETURNING *
