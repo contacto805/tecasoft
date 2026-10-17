@@ -97,7 +97,7 @@ export default function PaymentSchedulePage() {
         }
         if (p.status !== 'paid') {
           pendingP.add(p.producer_name);
-          if (sp && Math.floor((sp - now) / 86400000) < 0) overdueA += amt;
+          if (sp && Math.floor((sp.getTime() - now.getTime()) / 86400000) < 0) overdueA += amt;
         }
       });
       const cal = Object.values(calMap);
@@ -228,7 +228,7 @@ export default function PaymentSchedulePage() {
       concept: payment.concept || '',
       amount: payment.amount || '',
       fruit_reception_date: payment.fruit_reception_date ? payment.fruit_reception_date.split('T')[0] : new Date().toISOString().split('T')[0],
-      payment_days: payment.payment_days || 22,
+      payment_days: Number(payment.payment_days) || 22,
       priority: payment.priority || 'normal',
       observations: payment.observations || '',
       cutting_order_id: payment.cutting_order_id || ''
@@ -455,7 +455,7 @@ export default function PaymentSchedulePage() {
               <tbody>
                 {frutaProxima.length === 0 && <tr><td colSpan={10} className="px-4 py-6 text-center text-gray-400">Sin fruta próxima a vencer (13 días o menos)</td></tr>}
                 {frutaProxima.map((f, i) => {
-                  const daysLeft = Math.floor((new Date(f.fecha_vencimiento) - new Date()) / 86400000);
+                  const daysLeft = Math.floor((new Date(f.fecha_vencimiento).getTime() - new Date().getTime()) / 86400000);
                   return (
                     <tr key={i} className="border-t hover:bg-amber-50">
                       <td className="px-4 py-2.5 font-medium">{f.producer}</td>

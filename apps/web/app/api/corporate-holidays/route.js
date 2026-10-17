@@ -8,11 +8,12 @@ export async function GET(request) {
     const activeOnly = searchParams.get("active") !== "false";
 
     let where = sql``;
-    if (year) {
+    if (year && activeOnly) {
+      where = sql`WHERE year = ${parseInt(year)} AND is_active = true`;
+    } else if (year) {
       where = sql`WHERE year = ${parseInt(year)}`;
-    }
-    if (activeOnly) {
-      where = where.sql ? sql`${where} AND is_active = true` : sql`WHERE is_active = true`;
+    } else if (activeOnly) {
+      where = sql`WHERE is_active = true`;
     }
 
     const holidays = await sql`
