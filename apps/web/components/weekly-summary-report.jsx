@@ -10,7 +10,7 @@ export default function WeeklySummaryReport() {
   useEffect(() => {
     fetchReports();
     
-    // Auto-generate weekly report every Monday at 8:00 AM
+    // Auto-generate weekly report every Thursday at 17:00 (V3 - after linking Corte/Cuadrillas/Fletes/Nómina/Comisiones/Admin)
     if (autoGenEnabled) {
       checkAndGenerateWeeklyReport();
       const interval = setInterval(checkAndGenerateWeeklyReport, 3600000); // Check every hour
@@ -32,11 +32,11 @@ export default function WeeklySummaryReport() {
 
   const checkAndGenerateWeeklyReport = async () => {
     const now = new Date();
-    const dayOfWeek = now.getDay(); // 0 = Sunday, 1 = Monday
+    const dayOfWeek = now.getDay(); // 0 = Sunday, 4 = Thursday
     const hour = now.getHours();
 
-    // Generate on Monday at 8 AM
-    if (dayOfWeek === 1 && hour === 8) {
+    // V3 Thursday 17:00
+    if (dayOfWeek === 4 && hour === 17) {
       await generateWeeklyReport();
     }
   };
@@ -125,7 +125,7 @@ export default function WeeklySummaryReport() {
       <div className="flex justify-between items-center mb-6">
         <div>
           <h3 className="text-lg font-semibold text-slate-900">Reportes Semanales Automáticos</h3>
-          <p className="text-sm text-slate-500 mt-1">Se generan automáticamente cada lunes</p>
+          <p className="text-sm text-slate-500 mt-1">Se generan automáticamente cada jueves 17:00 (V3 - pagos productores + gastos operativos semanales)</p>
         </div>
         <div className="flex gap-3 items-center">
           <label className="flex items-center gap-2 text-sm">
