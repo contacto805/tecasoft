@@ -19,6 +19,8 @@ export async function GET() {
       logo_url: settings.logo_url || brandingScheme.logo_url || null,
       font_family: settings.font_family || 'Inter, system-ui, sans-serif',
       company_name: settings.company_name || 'TECAVO FRUITS',
+      heading_font_family: settings.heading_font_family || settings.font_family || 'sans-serif',
+      body_font_family: settings.body_font_family || settings.font_family || 'sans-serif',
     });
   } catch (e) {
     return NextResponse.json({
@@ -30,5 +32,40 @@ export async function GET() {
       font_family: 'sans-serif',
       company_name: 'TECAVO FRUITS',
     });
+  }
+}
+
+export async function POST(request) {
+  try {
+    const body = await request.json();
+    const { primary_color, secondary_color, accent_color, font_family, heading_font_family, body_font_family, logo_url } = body || {};
+
+    // Update system_settings for core branding
+    if (primary_color) await sql`INSERT INTO system_settings (key, value) VALUES ('primary_color', ${primary_color}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`;
+    if (secondary_color) await sql`INSERT INTO system_settings (key, value) VALUES ('secondary_color', ${secondary_color}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`;
+    if (accent_color) await sql`INSERT INTO system_settings (key, value) VALUES ('accent_color', ${accent_color}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`;
+    if (font_family) await sql`INSERT INTO system_settings (key, value) VALUES ('font_family', ${font_family}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`;
+    if (heading_font_family) await sql`INSERT INTO system_settings (key, value) VALUES ('heading_font_family', ${heading_font_family}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`;
+    if (body_font_family) await sql`INSERT INTO system_settings (key, value) VALUES ('body_font_family', ${body_font_family}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`;
+    if (logo_url) await sql`INSERT INTO system_settings (key, value) VALUES ('logo_url', ${logo_url}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`;
+
+    // Also upsert color_schemes for branding module
+    await sql`
+      INSERT INTO color_schemes (module_name, primary_color, secondary_color, accent_color, updated_at)
+      VALUES ('branding', ${primary_color || '#0E4A22'}, ${secondary_color || '#963821'}, ${accent_color || '#E0DA62'}, NOW())
+      ON CONFLICT (module_name) DO UPDATE SET 
+        primary_color = COALESCE(${primary_color}, primary_color),
+        secondary_color = COALESCE(${secondary_color}, secondary_color),
+        accent_color = COALESCE(${accent_color}, accent_color),
+        updated_at = NOW()
+    `;
+
+    // Audit
+    await sql`INSERT INTO system_audit_log (user_id, user_name, module, action, entity_type, description, timestamp) 
+      VALUES ('super', 'Superadministrador', 'branding', 'update', 'global_styles', 'Actualización de paleta corporativa, fuentes e imagen institucional', NOW())`;
+
+    return NextResponse.json({ success: true });
+  } catch (e) {
+    return NextResponse.json({ error: e.message }, { status: 500 });
   }
 }

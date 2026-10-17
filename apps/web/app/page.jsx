@@ -27,7 +27,7 @@ export default function LandingPage() {
 
   useEffect(() => {
     fetch('/api/auth/check', { credentials: 'include' })
-      .then(r => r.json())
+      .then(r => r.json().catch(() => ({})))
       .then(d => setIsAuthenticated(!!d.authenticated))
       .catch(() => setIsAuthenticated(false));
   }, []);
@@ -35,9 +35,9 @@ export default function LandingPage() {
   const refreshMenu = async () => {
     try {
       const userRes = await fetch('/api/auth/user', { credentials: 'include' });
-      const user = userRes.ok ? await userRes.json() : null;
+      const user = userRes.ok ? await userRes.json().catch(() => null) : null;
       const supRes = await fetch('/api/auth/check-super-admin', { credentials: 'include' });
-      const sup = supRes.ok ? await supRes.json() : {isSuperAdmin: false};
+      const sup = supRes.ok ? await supRes.json().catch(() => ({isSuperAdmin: false})) : {isSuperAdmin: false};
       const sIsSuper = !!(sup?.isSuperAdmin || user?.is_super_admin);
       setCurrentUser(user);
       setIsSuper(sIsSuper);
@@ -46,7 +46,7 @@ export default function LandingPage() {
       const cred = sIsSuper ? null : (uName.includes('oper') ? 'operaciones' : (uName.includes('acop') || uName.includes('campo') ? 'accopio' : 'administracion_general'));
       const menuUrl = (cred && !sIsSuper) ? `/api/menu?credential=${cred}` : '/api/menu';
       const mRes = await fetch(menuUrl, { credentials: 'include' });
-      const menu = mRes.ok ? await mRes.json() : [];
+      const menu = mRes.ok ? await mRes.json().catch(() => []) : [];
       setMenuGroups(Array.isArray(menu) ? menu : []);
     } catch {
       // keep previous
@@ -157,7 +157,7 @@ export default function LandingPage() {
         body: JSON.stringify({ email: credEmail.trim().toLowerCase(), pin: credPin }),
         credentials: 'include'
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok && data.success) {
         const k = selectedCredential.key;
         const loggedUser = data.user || {};
@@ -170,7 +170,7 @@ export default function LandingPage() {
 
         const credential = credentialByGroup[k] || k;
         const mRes = await fetch(`/api/menu?credential=${credential}`, { credentials: 'include' });
-        const groups = mRes.ok ? await mRes.json() : [];
+        const groups = mRes.ok ? await mRes.json().catch(() => []) : [];
         const mods = Array.isArray(groups) ? groups.flatMap(g => (g.modules || []).filter(mm => mm.is_active !== false)) : [];
 
         if (k !== 'superadministrador' && mods.length === 0) {

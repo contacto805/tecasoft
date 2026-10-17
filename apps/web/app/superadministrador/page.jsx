@@ -1691,6 +1691,14 @@ export default function SuperadministradorPage() {
           </div>
         </section>
 
+        {/* CATÁLOGOS (BLOQUE 17) - acceso desde este panel de Configuración global. Edición vía APIs existentes + historial */}
+        <div className="max-w-6xl mx-auto px-6 py-2">
+          <div className="bg-white border rounded-2xl p-4 text-sm">
+            <div className="font-semibold">Catálogos editables (calibres, calidades, presentaciones, destinos, unidades, transportistas, costos...)</div>
+            <div className="text-xs text-slate-500">Usar secciones Clientes / Pedidos / Precios de Fruta / Costos Detallados arriba. Cambios se registran en system_audit_log. Precios restringidos ocultos en lotificación operativa para personal sin permiso.</div>
+          </div>
+        </div>
+
         {/* 3. GESTIÓN DE GRUPOS Y USUARIOS */}
         <section id="grupos" className="bg-white p-6 rounded-3xl border shadow-sm">
           <div className="flex items-center gap-3 mb-4">

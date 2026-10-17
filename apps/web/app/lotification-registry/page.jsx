@@ -1091,8 +1091,8 @@ Proceso: ${parseFloat(processKilos)||0} kg | Desecho: ${parseFloat(desechoCaptur
                             </div>
                             <div className="p-4 bg-brand-50 rounded-lg border border-brand-200">
                               <div className="text-xs text-brand-600 uppercase font-semibold">Precio Real por Lote</div>
-                              <div className="text-2xl font-bold text-brand-900 mt-2">${realPrice.toFixed(2)}/kg</div>
-                              <div className="text-xs mt-1 text-slate-600">(Promedio ponderado)</div>
+                              <div className="text-2xl font-bold text-brand-900 mt-2">{isSuper ? `$${realPrice.toFixed(2)}/kg` : '— (restringido)'}</div>
+                              <div className="text-xs mt-1 text-slate-600">{isSuper ? '(Promedio ponderado)' : 'Solo Superadministrador ve valores de precio'}</div>
                             </div>
                             <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
                               <div className="text-xs uppercase font-semibold text-blue-700">Proceso</div>
@@ -1268,7 +1268,7 @@ Proceso: ${parseFloat(processKilos)||0} kg | Desecho: ${parseFloat(desechoCaptur
                               </div>
                               <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
                                 <div className="text-xs text-slate-600 font-medium">Precio Real por Lote</div>
-                                <div className="text-3xl font-bold text-slate-800 mt-1">${parseFloat(selectedHistoryDetail.precio_real || 0).toFixed(2)}</div>
+                                <div className="text-3xl font-bold text-slate-800 mt-1">{isSuper ? `$${parseFloat(selectedHistoryDetail.precio_real || 0).toFixed(2)}` : '— (restringido a Super)'}</div>
                               </div>
                             </div>
 

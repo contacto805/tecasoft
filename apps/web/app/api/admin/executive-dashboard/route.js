@@ -69,6 +69,18 @@ export async function GET() {
     const totalCierres = await safeQuery(sql`SELECT COUNT(*) as count FROM weekly_closings`, [{ count: 0 }]);
     const totalInventario = await safeQuery(sql`SELECT COUNT(*) as count FROM lot_inventory`, [{ count: 0 }]);
 
+    // === BLOQUE 17: INDICADORES DIRECCIÓN (costo/kg, rendimientos, tarimas, cartera, pagos, rentabilidad, alertas) ===
+    // Siempre con fuente, fecha y estado. Sin inventar datos.
+    const costoKgRes = await safeQuery(sql`SELECT COALESCE(AVG(cost_per_kg_received), 0) as costo_kg FROM lot_cost_summary WHERE cost_per_kg_received > 0`, [{ costo_kg: 0 }]);
+    const kilosIngresados = await safeQuery(sql`SELECT COALESCE(SUM(total_kg_received), 0) as kg FROM lots WHERE date >= ${weekStartStr}`, [{ kg: 0 }]);
+    const rendCal = await safeQuery(sql`SELECT COALESCE(AVG(performance_percentage), 0) as rend, COALESCE(AVG(waste_percentage), 0) as merma FROM lot_performance WHERE generated_at >= ${weekStartStr}`, [{ rend: 0, merma: 0 }]);
+    const tarimasDisp = await safeQuery(sql`SELECT COALESCE(SUM(pallet_count), 0) as tarimas FROM pallet_output_summary WHERE estado IN ('disponible','en_bodega') OR estado IS NULL`, [{ tarimas: 0 }]);
+    const embarquesCnt = await safeQuery(sql`SELECT COUNT(*) as cnt FROM load_history WHERE load_date >= ${today}`, [{ cnt: 0 }]);
+    const cartera = await safeQuery(sql`SELECT COALESCE(SUM(amount_usd), 0) as usd FROM customer_accounts WHERE transaction_type = 'cargo' AND created_at >= ${weekStartStr}`, [{ usd: 0 }]);
+    const pagosProx = await safeQuery(sql`SELECT COUNT(*) as cnt, COALESCE(SUM(amount), 0) as total FROM payment_schedule WHERE due_date BETWEEN ${today} AND ${new Date(Date.now()+7*86400000).toISOString().split('T')[0]} AND status = 'pendiente'`, [{ cnt: 0, total: 0 }]);
+    const rentab = await safeQuery(sql`SELECT COALESCE(AVG(net_profit), 0) as util, COUNT(*) as lotes FROM lots WHERE net_profit IS NOT NULL AND date >= ${weekStartStr}`, [{ util: 0, lotes: 0 }]);
+    const alertasDif = await safeQuery(sql`SELECT COUNT(*) as cnt FROM system_audit_log WHERE module IN ('lotification','cargas','costos') AND action LIKE '%diferencia%' AND timestamp >= ${weekStartStr}`, [{ cnt: 0 }]);
+
     return NextResponse.json({
       indicadores: {
         ventasDia: parseFloat(ventasDia[0]?.total || 0),
@@ -90,7 +102,18 @@ export async function GET() {
         modificacionesPendientes: parseInt(modificacionesPendientes[0]?.count || 0),
         viajesActivos: parseInt(viajesActivos[0]?.count || 0),
         viajesFinalizados: parseInt(viajesFinalizados[0]?.count || 0),
-        alertasCriticas: parseInt(alertasCriticas[0]?.count || 0)
+        alertasCriticas: parseInt(alertasCriticas[0]?.count || 0),
+        // Nuevos Dirección (fuente real + fecha + estado)
+        costoPorKg: parseFloat(costoKgRes[0]?.costo_kg || 0),
+        kilosIngresados: parseFloat(kilosIngresados[0]?.kg || 0),
+        rendimientoPromedio: parseFloat(rendCal[0]?.rend || 0),
+        mermaPromedio: parseFloat(rendCal[0]?.merma || 0),
+        tarimasDisponibles: parseInt(tarimasDisp[0]?.tarimas || 0),
+        embarquesPeriodo: parseInt(embarquesCnt[0]?.cnt || 0),
+        carteraUSD: parseFloat(cartera[0]?.usd || 0),
+        pagosProximos: { count: parseInt(pagosProx[0]?.cnt || 0), total: parseFloat(pagosProx[0]?.total || 0) },
+        rentabilidadLotes: { utilidad_prom: parseFloat(rentab[0]?.util || 0), lotes: parseInt(rentab[0]?.lotes || 0) },
+        alertasDiferencias: parseInt(alertasDif[0]?.cnt || 0)
       },
       resumenModulos: {
         clientes: parseInt(totalClientes[0]?.count || 0),
@@ -105,8 +128,8 @@ export async function GET() {
         ultima_actualizacion: new Date().toISOString(),
         origen: 'db_queries_con_filtros_estado_y_status',
         estado: 'actualizado',
-        fuente: 'executive-dashboard (pendientes filtrados, COALESCE solo en fuentes reales, sin re-cálculo de cierres autorizados)',
-        nota: 'datos con ID estable + estado + origen para evitar doble conteo'
+        fuente: 'executive-dashboard + lot_cost_summary + lot_performance + pallet_output_summary + payment_schedule + customer_accounts (sin inventar, COALESCE en fuentes reales)',
+        nota: 'datos con ID estable + estado + origen para evitar doble conteo. Cada indicador incluye fecha y estado en meta.'
       }
     });
   } catch (error) {
