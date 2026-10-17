@@ -14,8 +14,9 @@ export default function PaymentSchedulePage() {
   const [form, setForm] = useState({
     producer_name: '', beneficiary_name: '', bank_name: '', account_number: '', clabe: '',
     concept: '', amount: '', fruit_reception_date: new Date().toISOString().split('T')[0],
-    payment_days: 7, priority: 'normal', observations: ''
+    payment_days: 22, priority: 'normal', observations: '', cutting_order_id: ''
   });
+  const [datePreview, setDatePreview] = useState(null);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
 
   // AI document extraction state
@@ -31,12 +32,18 @@ export default function PaymentSchedulePage() {
   // Fruta próxima a pagar from integration
   const [frutaProxima, setFrutaProxima] = useState([]);
 
+  // Holiday catalog (Superadmin administrable)
+  const [holidays, setHolidays] = useState([]);
+  const [showHolidays, setShowHolidays] = useState(false);
+  const [newHoliday, setNewHoliday] = useState({ year: new Date().getFullYear(), holiday_date: '', description: '' });
+
   useEffect(() => {
     fetchPayments();
     fetchStats();
     checkAdmin();
     fetchFrutaAlerts();
-  }, [filter]);
+    if (isSuperAdmin) fetchHolidays();
+  }, [filter, isSuperAdmin]);
 
   const checkAdmin = async () => {
     try {
@@ -66,14 +73,44 @@ export default function PaymentSchedulePage() {
     }
   };
 
+  // Derivar stats localmente desde payments (sin dependencia de /stats faltante)
   const fetchStats = async () => {
     try {
-      const today = new Date();
-      const res = await fetch(`/api/payment-schedule/stats?month=${calendarMonth}&year=${calendarYear}`);
-      const data = await res.json();
-      if (data && !data.error) setStats(data);
+      const res = await fetch('/api/payment-schedule');
+      const list = await res.json();
+      const arr = Array.isArray(list) ? list : [];
+      const now = new Date();
+      const month = calendarMonth;
+      const yr = calendarYear;
+      let weekly = 0, monthly = 0, overdueA = 0, pendingP = new Set();
+      const calMap = {};
+      arr.forEach(p => {
+        const amt = parseFloat(p.amount || 0);
+        const sp = p.scheduled_payment_date ? new Date(p.scheduled_payment_date) : null;
+        if (sp && sp.getMonth() + 1 === month && sp.getFullYear() === yr) {
+          monthly += amt;
+          const key = p.scheduled_payment_date;
+          if (!calMap[key]) calMap[key] = { scheduled_payment_date: key, payment_count: 0, total_amount: 0, producers: [] };
+          calMap[key].payment_count++;
+          calMap[key].total_amount += amt;
+          if (p.producer_name && !calMap[key].producers.includes(p.producer_name)) calMap[key].producers.push(p.producer_name);
+        }
+        if (p.status !== 'paid') {
+          pendingP.add(p.producer_name);
+          if (sp && Math.floor((sp - now) / 86400000) < 0) overdueA += amt;
+        }
+      });
+      const cal = Object.values(calMap);
+      setStats({
+        weekly_scheduled: weekly,
+        monthly_scheduled: monthly,
+        pending_producers: pendingP.size,
+        total_liabilities: arr.filter(p => p.status !== 'paid').reduce((s, p) => s + parseFloat(p.amount || 0), 0),
+        overdue_amount: overdueA,
+        calendar_data: cal.slice(0, 8)
+      });
     } catch (error) {
-      console.error('Error fetching stats:', error);
+      console.error('Error deriving stats:', error);
     }
   };
 
@@ -121,13 +158,54 @@ export default function PaymentSchedulePage() {
     }
   };
 
+  const fetchHolidays = async () => {
+    try {
+      const res = await fetch('/api/corporate-holidays?active=true');
+      const data = await res.json();
+      setHolidays(Array.isArray(data) ? data : []);
+    } catch { setHolidays([]); }
+  };
+
+  const addHoliday = async () => {
+    if (!newHoliday.holiday_date) return;
+    try {
+      await fetch('/api/corporate-holidays', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...newHoliday, created_by: 'super-admin' })
+      });
+      setNewHoliday({ year: new Date().getFullYear(), holiday_date: '', description: '' });
+      fetchHolidays();
+    } catch {}
+  };
+
+  const toggleHoliday = async (h) => {
+    try {
+      await fetch('/api/corporate-holidays', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: h.id, is_active: !h.is_active })
+      });
+      fetchHolidays();
+    } catch {}
+  };
+
+  const removeHoliday = async (id) => {
+    if (!confirm('Eliminar festivo?')) return;
+    try {
+      await fetch(`/api/corporate-holidays?id=${id}`, { method: 'DELETE' });
+      fetchHolidays();
+    } catch {}
+  };
+
   const resetForm = () => {
     setForm({
       producer_name: '', beneficiary_name: '', bank_name: '', account_number: '', clabe: '',
       concept: '', amount: '', fruit_reception_date: new Date().toISOString().split('T')[0],
-      payment_days: 7, priority: 'normal', observations: ''
+      payment_days: 22, priority: 'normal', observations: '', cutting_order_id: ''
     });
     setEditingPayment(null);
+    setDatePreview(null);
   };
 
   const openNew = () => {
@@ -150,9 +228,10 @@ export default function PaymentSchedulePage() {
       concept: payment.concept || '',
       amount: payment.amount || '',
       fruit_reception_date: payment.fruit_reception_date ? payment.fruit_reception_date.split('T')[0] : new Date().toISOString().split('T')[0],
-      payment_days: payment.payment_days || 7,
+      payment_days: payment.payment_days || 22,
       priority: payment.priority || 'normal',
-      observations: payment.observations || ''
+      observations: payment.observations || '',
+      cutting_order_id: payment.cutting_order_id || ''
     });
     setShowModal(true);
   };
@@ -217,8 +296,7 @@ export default function PaymentSchedulePage() {
       return;
     }
     try {
-      const payload = { ...form, amount: parseFloat(form.amount) };
-      // Force scheduled on Friday logic (already handled server side, we can still massage client side)
+      const payload = { ...form, amount: parseFloat(form.amount), cutting_order_id: form.cutting_order_id ? parseInt(form.cutting_order_id) : null };
       let res;
       if (editingPayment) {
         res = await fetch('/api/payment-schedule', {
@@ -372,7 +450,7 @@ export default function PaymentSchedulePage() {
           <div className="overflow-x-auto">
             <table className="min-w-full text-xs">
               <thead><tr className="bg-gray-50">
-                <th className="px-4 py-2 text-left">Productor</th><th className="px-4 py-2">Huerta</th><th className="px-4 py-2">Lote</th><th className="px-4 py-2">Ingreso</th><th className="px-4 py-2">Días pactados</th><th className="px-4 py-2">Vencimiento</th><th className="px-4 py-2">Pago Viernes</th><th className="px-4 py-2">Kg</th><th className="px-4 py-2">Monto est.</th><th className="px-4 py-2">Semáforo</th>
+                <th className="px-4 py-2 text-left">Productor</th><th className="px-4 py-2">Huerta</th><th className="px-4 py-2">Lote</th><th className="px-4 py-2">Ingreso</th><th className="px-4 py-2">Días pactados</th><th className="px-4 py-2">Vencimiento Contractual</th><th className="px-4 py-2">Programado Viernes</th><th className="px-4 py-2">Kg</th><th className="px-4 py-2">Monto est.</th><th className="px-4 py-2">Semáforo</th>
               </tr></thead>
               <tbody>
                 {frutaProxima.length === 0 && <tr><td colSpan={10} className="px-4 py-6 text-center text-gray-400">Sin fruta próxima a vencer (13 días o menos)</td></tr>}
@@ -429,6 +507,38 @@ export default function PaymentSchedulePage() {
           )}
         </div>
 
+        {/* CATÁLOGO DE FESTIVOS - Administrable por Superadministrador (Bloque 19) */}
+        {isSuperAdmin && (
+          <div className="mb-6 bg-white rounded-2xl border p-4">
+            <button onClick={() => setShowHolidays(!showHolidays)} className="text-sm font-semibold flex items-center gap-2 mb-2">
+              📅 Calendario de Festivos Corporativos (para ajuste de viernes) {showHolidays ? '−' : '+'}
+            </button>
+            {showHolidays && (
+              <div className="text-xs">
+                <div className="flex gap-2 mb-2">
+                  <input type="number" value={newHoliday.year} onChange={e=>setNewHoliday({...newHoliday, year: parseInt(e.target.value)||new Date().getFullYear()})} className="border px-2 py-1 w-20 rounded" />
+                  <input type="date" value={newHoliday.holiday_date} onChange={e=>setNewHoliday({...newHoliday, holiday_date: e.target.value})} className="border px-2 py-1 rounded" />
+                  <input placeholder="Descripción (ej. Viernes Santo)" value={newHoliday.description} onChange={e=>setNewHoliday({...newHoliday, description: e.target.value})} className="border px-2 py-1 flex-1 rounded" />
+                  <button onClick={addHoliday} className="px-3 bg-emerald-600 text-white rounded">Agregar</button>
+                </div>
+                <div className="max-h-28 overflow-auto border rounded p-2 bg-gray-50">
+                  {holidays.length === 0 && <span className="text-gray-400">Sin festivos registrados. Agregue fechas para que el algoritmo las respete.</span>}
+                  {holidays.map(h => (
+                    <div key={h.id} className="flex items-center justify-between py-0.5">
+                      <span>{h.holiday_date} — {h.description || 'Festivo'} ({h.year})</span>
+                      <span className="flex gap-1">
+                        <button onClick={() => toggleHoliday(h)} className="text-[10px] underline">{h.is_active ? 'Desactivar' : 'Activar'}</button>
+                        <button onClick={() => removeHoliday(h.id)} className="text-red-600">×</button>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <div className="text-[10px] text-gray-500 mt-1">Los viernes calculados que caigan en festivo se mueven al siguiente viernes no festivo. Zona America/Mexico_City.</div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Filters */}
         <div className="bg-white rounded-xl border shadow-sm p-4 mb-6 flex flex-col lg:flex-row gap-3 items-center">
           <div className="flex-1 relative">
@@ -450,8 +560,8 @@ export default function PaymentSchedulePage() {
               <th className="p-4 text-left">Folio</th>
               <th className="p-4 text-left">Productor / Beneficiario</th>
               <th className="p-4 text-left">Banco / CLABE</th>
-              <th className="p-4">Vencimiento</th>
-              <th className="p-4">Programado (Viernes)</th>
+              <th className="p-4">Vencimiento Contractual</th>
+              <th className="p-4">Programado Viernes (efectivo)</th>
               <th className="p-4 text-right">Monto</th>
               <th className="p-4">Estado</th>
               <th className="p-4 w-28">Acciones</th>
@@ -468,8 +578,15 @@ export default function PaymentSchedulePage() {
                     <div className="text-[10px] text-gray-500 truncate max-w-[220px]">{p.concept}</div>
                   </td>
                   <td className="p-4 text-xs">{p.bank_name}<br />{p.clabe}</td>
-                  <td className="p-4 text-xs text-gray-600">{p.due_date ? new Date(p.due_date).toLocaleDateString('es-MX') : '—'}</td>
-                  <td className="p-4"><span className="font-semibold text-emerald-700">{p.scheduled_payment_date ? new Date(p.scheduled_payment_date).toLocaleDateString('es-MX', {weekday:'short'}) : ''}</span><br /><span className="text-xs">{p.scheduled_payment_date ? new Date(p.scheduled_payment_date).toLocaleDateString('es-MX') : '—'}</span></td>
+                  <td className="p-4 text-xs">
+                    {p.contractual_due_date || p.due_date ? new Date(p.contractual_due_date || p.due_date).toLocaleDateString('es-MX') : '—'}
+                    {p.adjustment_reason && <div className="text-[10px] text-amber-600">{p.adjustment_reason}</div>}
+                  </td>
+                  <td className="p-4">
+                    <span className="font-semibold text-emerald-700">{p.scheduled_payment_date ? new Date(p.scheduled_payment_date).toLocaleDateString('es-MX', {weekday:'short'}) : ''}</span><br />
+                    <span className="text-xs">{p.scheduled_payment_date ? new Date(p.scheduled_payment_date).toLocaleDateString('es-MX') : '—'}</span>
+                    {(p.original_friday && p.original_friday !== p.scheduled_payment_date) && <div className="text-[10px] text-amber-600">orig: {new Date(p.original_friday).toLocaleDateString('es-MX')}</div>}
+                  </td>
                   <td className="p-4 text-right font-medium">${parseFloat(p.amount || 0).toLocaleString('es-MX', {minimumFractionDigits: 2})}</td>
                   <td className="p-4">{getStatusBadge(p)}</td>
                   <td className="p-4">
@@ -498,7 +615,7 @@ export default function PaymentSchedulePage() {
               </div>
             ))}
           </div>
-          <div className="text-[10px] text-slate-500 mt-3">Los pagos vencidos automáticamente se desfasa al viernes más cercano para su liberación.</div>
+          <div className="text-[10px] text-slate-500 mt-3">Los pagos vencidos automáticamente se desfasa al viernes más cercano para su liberación. La programación administrativa del viernes NO sustituye la obligación contractual original (fecha de corte + plazo pactado en días naturales). Cuando difieran, se muestran ambos campos para evaluación legal/financiera.</div>
         </div>
 
         {/* FINALES DE MODAL + AYUDA PERMISOS */}
@@ -517,8 +634,21 @@ export default function PaymentSchedulePage() {
             <div><label className="text-xs block mb-0.5">Beneficiario *</label><input value={form.beneficiary_name} onChange={e=>setForm({...form,beneficiary_name:e.target.value})} className="w-full border px-3 py-1.5 rounded" /></div>
             <div className="md:col-span-2"><label className="text-xs block mb-0.5">Concepto *</label><input value={form.concept} onChange={e=>setForm({...form,concept:e.target.value})} className="w-full border px-3 py-1.5 rounded" /></div>
             <div><label className="text-xs block mb-0.5">Monto *</label><input type="number" value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})} className="w-full border px-3 py-1.5 rounded" /></div>
-            <div><label className="text-xs block mb-0.5">Fecha recepción fruta *</label><input type="date" value={form.fruit_reception_date} onChange={e=>setForm({...form,fruit_reception_date:e.target.value})} className="w-full border px-3 py-1.5 rounded" /></div>
-            <div><label className="text-xs block mb-0.5">Días pactados (7,15,21,30)</label><input type="number" value={form.payment_days} onChange={e=>setForm({...form,payment_days:parseInt(e.target.value)||7})} className="w-full border px-3 py-1.5 rounded" /></div>
+            <div><label className="text-xs block mb-0.5">Fecha recepción / corte fruta *</label><input type="date" value={form.fruit_reception_date} onChange={e=>setForm({...form,fruit_reception_date:e.target.value})} className="w-full border px-3 py-1.5 rounded" /></div>
+            <div>
+              <label className="text-xs block mb-0.5">Plazo pactado (días NATURALES) — default contrato 22/28</label>
+              <div className="flex gap-2">
+                <select value={form.payment_days} onChange={e=>setForm({...form, payment_days: parseInt(e.target.value)})} className="border px-2 py-1.5 rounded flex-1">
+                  <option value={22}>22 días naturales</option>
+                  <option value={28}>28 días naturales</option>
+                  <option value={7}>7 (prueba)</option>
+                  <option value={15}>15</option>
+                  <option value={30}>30</option>
+                </select>
+                <input type="number" value={form.payment_days} onChange={e=>setForm({...form,payment_days:parseInt(e.target.value)||22})} className="w-20 border px-2 py-1.5 rounded" />
+              </div>
+            </div>
+            <div><label className="text-xs block mb-0.5">ID Orden de Corte (enlace único)</label><input type="number" placeholder="Opcional - ID de cutting_orders" value={form.cutting_order_id} onChange={e=>setForm({...form,cutting_order_id:e.target.value})} className="w-full border px-3 py-1.5 rounded" /></div>
             <div><label className="text-xs block mb-0.5">Banco</label><input value={form.bank_name} onChange={e=>setForm({...form,bank_name:e.target.value})} className="w-full border px-3 py-1.5 rounded" /></div>
             <div><label className="text-xs block mb-0.5">CLABE / Cuenta</label><div className="flex gap-1.5"><input value={form.clabe} onChange={e=>setForm({...form,clabe:e.target.value})} placeholder="CLABE" className="flex-1 border px-3 py-1.5 rounded"/><input value={form.account_number} onChange={e=>setForm({...form,account_number:e.target.value})} placeholder="Cuenta" className="flex-1 border px-3 py-1.5 rounded" /></div></div>
             <div><label className="text-xs block mb-0.5">Prioridad</label><select value={form.priority} onChange={e=>setForm({...form,priority:e.target.value})} className="w-full border px-3 py-1.5 rounded"><option value="normal">Normal</option><option value="urgent">Urgente</option></select></div>
@@ -526,12 +656,16 @@ export default function PaymentSchedulePage() {
               <label className="text-xs block mb-0.5">Observaciones</label>
               <textarea className="w-full border px-3 py-1.5 rounded" rows={2} value={form.observations} onChange={e=>setForm({...form,observations:e.target.value})} />
             </div>
+            <div className="md:col-span-2 text-[11px] bg-emerald-50 border border-emerald-100 rounded p-2">
+              Vista previa (se recalcula en servidor con festivos): <strong>Vencimiento Contractual</strong> = fecha corte + plazo natural. <strong>Programado Viernes</strong> según algoritmo A/B/C. Si difieren se advierte para evaluación.
+              {form.fruit_reception_date && form.payment_days && <span className="ml-2 text-emerald-700">(Usando {form.payment_days} días desde {form.fruit_reception_date})</span>}
+            </div>
           </div>
           <div className="px-6 py-4 border-t bg-gray-50 text-sm flex justify-end gap-3">
             <button className="px-4" onClick={closeModal}>Cancelar</button>
             <button onClick={savePayment} className="px-6 bg-emerald-700 text-white font-medium rounded py-1">Guardar (se moverá a viernes si corresponde)</button>
           </div>
-          <div className="px-6 py-1.5 text-xs bg-emerald-50 border-t">El sistema recalcula siempre la fecha al viernes más próximo según política de la empresa. Auditoría registrada.</div>
+          <div className="px-6 py-1.5 text-xs bg-emerald-50 border-t">Algoritmo V3: contractual = corte + plazo natural. Viernes según reglas A/B + festivos. Si captura tardía ya vencida, se muestra obligación vencida (no se mueve silenciosamente). Historial preservado.</div>
         </div>
       </div> }
     </div>

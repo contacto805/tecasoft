@@ -1,13 +1,104 @@
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
 
-// Helper function to calculate next Friday
-function getNextFriday(date) {
-  const d = new Date(date);
+// === ALGORITMO OBLIGATORIO VIERNES (Bloque 19) - America/Mexico_City natural days ===
+// contractual = fecha_corte + plazo NATURAL (días calendario)
+// A) Lun/Mar -> viernes MISMA semana
+// B) Mie-Dom -> viernes SEMANA SIGUIENTE
+// C) Si viernes calculado es festivo -> siguiente viernes no festivo (repetir)
+// D) Guardar: fecha_corte, plazo, vencimiento_contractual, viernes_original, viernes_efectivo, razon, version
+// E) NO mover silenciosamente órdenes ya vencidas al futuro
+
+function toDateOnly(d) {
+  if (!d) return null;
+  const dt = (d instanceof Date) ? d : new Date(d);
+  return dt.toISOString().split('T')[0];
+}
+
+function getWeekMonday(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00-06:00');
   const day = d.getDay();
-  const diff = day <= 5 ? 5 - day : 7 - day + 5;
+  const diff = (day === 0) ? -6 : (1 - day);
   d.setDate(d.getDate() + diff);
+  d.setHours(0, 0, 0, 0);
   return d;
+}
+
+async function loadActiveHolidays(year) {
+  try {
+    const rows = await sql`
+      SELECT holiday_date FROM corporate_holidays 
+      WHERE year = ${year} AND is_active = true
+    `;
+    return rows.map(r => toDateOnly(r.holiday_date));
+  } catch {
+    return [];
+  }
+}
+
+async function computePaymentSchedule(fruitReceptionDateStr, paymentDays, cuttingOrderId = null) {
+  if (!fruitReceptionDateStr) {
+    const today = new Date();
+    fruitReceptionDateStr = toDateOnly(today);
+  }
+  const reception = new Date(fruitReceptionDateStr + 'T12:00:00-06:00');
+  const plazo = parseInt(paymentDays) || 0;
+
+  // Vencimiento contractual (fecha_corte + plazo natural)
+  const contractual = new Date(reception);
+  contractual.setDate(contractual.getDate() + plazo);
+  const contractualStr = toDateOnly(contractual);
+
+  const dow = contractual.getDay(); // 0=Dom,1=Lun,...5=Vie,6=Sab
+  const weekMon = getWeekMonday(contractualStr);
+
+  let originalFriday;
+  if (dow === 1 || dow === 2) {
+    // A) viernes de la MISMA semana
+    originalFriday = new Date(weekMon);
+    originalFriday.setDate(originalFriday.getDate() + 4);
+  } else {
+    // B) viernes de la SEMANA SIGUIENTE
+    originalFriday = new Date(weekMon);
+    originalFriday.setDate(originalFriday.getDate() + 4 + 7);
+  }
+
+  const originalFridayStr = toDateOnly(originalFriday);
+  const year = originalFriday.getFullYear();
+  const holidayDates = await loadActiveHolidays(year);
+
+  // C) Ajuste por festivos (repetir hasta viernes no festivo)
+  let effective = new Date(originalFriday);
+  let reason = '';
+  let iter = 0;
+  const maxIter = 12;
+  while (iter < maxIter) {
+    const effStr = toDateOnly(effective);
+    if (!holidayDates.includes(effStr)) break;
+    effective.setDate(effective.getDate() + 7);
+    reason = 'Festivo según calendario corporativo vigente';
+    iter++;
+  }
+  if (iter >= maxIter) reason += ' (límite de ajustes)';
+
+  const effectiveStr = toDateOnly(effective);
+
+  // D) Si ya vencida al capturar, NO mover al futuro silenciosamente
+  const todayStr = toDateOnly(new Date());
+  const isOverdueCapture = contractualStr < todayStr;
+
+  return {
+    fruit_reception_date: fruitReceptionDateStr,
+    payment_days: plazo,
+    due_date: contractualStr,                 // contractual
+    contractual_due_date: contractualStr,
+    scheduled_payment_date: effectiveStr,
+    original_friday: originalFridayStr,
+    adjustment_reason: reason,
+    calendar_version: 'V3-2026',
+    cutting_order_id: cuttingOrderId || null,
+    is_overdue_capture: isOverdueCapture
+  };
 }
 
 export async function GET(request) {
@@ -88,16 +179,12 @@ export async function POST(request) {
       invoice_file_url,
       rfc,
       observations,
-      created_by
+      created_by,
+      cutting_order_id
     } = data;
 
-    // Calculate due date
-    const receptionDate = new Date(fruit_reception_date);
-    const dueDate = new Date(receptionDate);
-    dueDate.setDate(dueDate.getDate() + (payment_days || 0));
-
-    // Calculate next Friday for scheduled payment
-    const scheduledDate = getNextFriday(dueDate);
+    // NUEVO: usar algoritmo V3 contractual + viernes + festivos + Mexico City
+    const schedule = await computePaymentSchedule(fruit_reception_date, payment_days, cutting_order_id);
 
     // Generate folio
     const year = new Date().getFullYear();
@@ -137,7 +224,12 @@ export async function POST(request) {
         rfc,
         observations,
         status,
-        created_by
+        created_by,
+        cutting_order_id,
+        contractual_due_date,
+        original_friday,
+        adjustment_reason,
+        calendar_version
       ) VALUES (
         ${folio},
         ${producer_name},
@@ -147,17 +239,22 @@ export async function POST(request) {
         ${clabe || null},
         ${concept},
         ${amount},
-        ${dueDate.toISOString().split('T')[0]},
-        ${scheduledDate.toISOString().split('T')[0]},
-        ${payment_days || 0},
-        ${fruit_reception_date},
+        ${schedule.contractual_due_date},
+        ${schedule.scheduled_payment_date},
+        ${schedule.payment_days},
+        ${schedule.fruit_reception_date},
         ${priority || 'normal'},
         ${invoice_number || null},
         ${invoice_file_url || null},
         ${rfc || null},
         ${observations || null},
         'scheduled',
-        ${created_by || 'system'}
+        ${created_by || 'system'},
+        ${schedule.cutting_order_id},
+        ${schedule.contractual_due_date},
+        ${schedule.original_friday},
+        ${schedule.adjustment_reason},
+        ${schedule.calendar_version}
       )
       RETURNING *
     `;
@@ -231,15 +328,19 @@ export async function PUT(request) {
       return NextResponse.json(current[0]);
     }
 
-    // Recalculate scheduled_payment_date if payment_days or fruit_reception_date changed
+    // Recalculate ONLY if authorized data changed (payment_days o fecha_recepcion) - respeta histórico
     if (updateData.payment_days !== undefined || updateData.fruit_reception_date !== undefined) {
-      const receptionDate = new Date(updateData.fruit_reception_date || current[0].fruit_reception_date);
-      const dueDate = new Date(receptionDate);
-      dueDate.setDate(dueDate.getDate() + (updateData.payment_days || current[0].payment_days || 0));
-      const scheduledDate = getNextFriday(dueDate);
-      
-      updateData.due_date = dueDate.toISOString().split('T')[0];
-      updateData.scheduled_payment_date = scheduledDate.toISOString().split('T')[0];
+      const schedule = await computePaymentSchedule(
+        updateData.fruit_reception_date || current[0].fruit_reception_date,
+        updateData.payment_days !== undefined ? updateData.payment_days : current[0].payment_days,
+        updateData.cutting_order_id || current[0].cutting_order_id
+      );
+      updateData.due_date = schedule.contractual_due_date;
+      updateData.scheduled_payment_date = schedule.scheduled_payment_date;
+      updateData.contractual_due_date = schedule.contractual_due_date;
+      updateData.original_friday = schedule.original_friday;
+      updateData.adjustment_reason = schedule.adjustment_reason;
+      updateData.calendar_version = schedule.calendar_version;
     }
 
     const result = await sql`
@@ -264,6 +365,11 @@ export async function PUT(request) {
         observations = ${updateData.observations !== undefined ? updateData.observations : current[0].observations},
         paid_at = ${updateData.paid_at !== undefined ? updateData.paid_at : current[0].paid_at},
         paid_by = ${updateData.paid_by !== undefined ? updateData.paid_by : current[0].paid_by},
+        cutting_order_id = ${updateData.cutting_order_id !== undefined ? updateData.cutting_order_id : current[0].cutting_order_id},
+        contractual_due_date = ${updateData.contractual_due_date !== undefined ? updateData.contractual_due_date : current[0].contractual_due_date},
+        original_friday = ${updateData.original_friday !== undefined ? updateData.original_friday : current[0].original_friday},
+        adjustment_reason = ${updateData.adjustment_reason !== undefined ? updateData.adjustment_reason : current[0].adjustment_reason},
+        calendar_version = ${updateData.calendar_version !== undefined ? updateData.calendar_version : current[0].calendar_version},
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ${id}
       RETURNING *
