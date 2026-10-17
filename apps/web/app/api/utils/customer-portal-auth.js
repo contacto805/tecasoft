@@ -222,8 +222,14 @@ export async function requireProducerSession() {
   return { session: s };
 }
 
-export async function validateProducerPortalAccess(producerName, pin) {
-  const rows = await sql`SELECT * FROM producer_portal_access WHERE producer_name = ${producerName} AND is_enabled = true LIMIT 1`;
+export async function validateProducerPortalAccess(identifier, pin) {
+  // identifier can be producer_number (preferred) or producer_name for legacy
+  const rows = await sql`
+    SELECT * FROM producer_portal_access 
+    WHERE (producer_number = ${identifier} OR producer_name = ${identifier}) 
+    AND is_enabled = true 
+    LIMIT 1
+  `;
   if (!rows.length) return { ok: false, error: "Acceso no configurado" };
   const a = rows[0];
   if (a.locked_until && new Date(a.locked_until) > new Date()) return { ok: false, error: "Cuenta bloqueada temporalmente" };
@@ -235,19 +241,106 @@ export async function validateProducerPortalAccess(producerName, pin) {
     return { ok: false, error: "PIN incorrecto" };
   }
   await sql`UPDATE producer_portal_access SET failed_attempts=0, locked_until=NULL, last_login_at=NOW(), updated_at=NOW() WHERE id=${a.id}`;
-  return { ok: true };
+  return { ok: true, access: a };
 }
 
-export async function generateProducerPIN(producerName) {
+export async function generateProducerPIN(producerName, producerNumber = null, whatsappPhone = null) {
   const pin = String(Math.floor(100000 + Math.random()*900000));
   const h = await bcrypt.hash(pin, 10);
-  const ex = await sql`SELECT id FROM producer_portal_access WHERE producer_name=${producerName} LIMIT 1`;
+
+  // Use number if provided as immutable login key
+  const lookup = producerNumber ? producerNumber : producerName;
+  const ex = await sql`
+    SELECT id FROM producer_portal_access 
+    WHERE (producer_number = ${lookup} OR producer_name = ${producerName}) 
+    LIMIT 1
+  `;
+
   if (ex.length) {
-    await sql`UPDATE producer_portal_access SET pin_hash=${h}, is_enabled=true, failed_attempts=0, locked_until=NULL, pin_updated_at=NOW(), updated_at=NOW() WHERE producer_name=${producerName}`;
+    await sql`
+      UPDATE producer_portal_access 
+      SET pin_hash=${h}, 
+          is_enabled=true, 
+          failed_attempts=0, 
+          locked_until=NULL, 
+          pin_updated_at=NOW(), 
+          updated_at=NOW(),
+          producer_number = COALESCE(producer_number, ${producerNumber}),
+          whatsapp_phone = COALESCE(whatsapp_phone, ${whatsappPhone}),
+          producer_name = ${producerName}
+      WHERE id = ${ex[0].id}
+    `;
   } else {
-    await sql`INSERT INTO producer_portal_access (producer_name, pin_hash, is_enabled, pin_updated_at) VALUES (${producerName}, ${h}, true, NOW())`;
+    await sql`
+      INSERT INTO producer_portal_access 
+      (producer_number, producer_name, pin_hash, is_enabled, pin_updated_at, whatsapp_phone)
+      VALUES (${producerNumber || null}, ${producerName}, ${h}, true, NOW(), ${whatsappPhone || null})
+    `;
   }
   return pin;
+}
+
+export async function sendProducerPINToWhatsApp(identifier, phone, plainPin) {
+  // Log attempt always
+  try {
+    await sql`
+      INSERT INTO customer_portal_audit_log (customer_id, event_type, metadata)
+      VALUES (NULL, 'PRODUCER_PIN_WHATSAPP_ATTEMPT', ${JSON.stringify({ identifier, phone: phone ? 'set' : 'missing', ts: new Date().toISOString() })})
+    `;
+  } catch (_) {}
+
+  if (!phone) {
+    return { sent: false, reason: 'no-phone' };
+  }
+
+  const whatsappToken = process.env.WHATSAPP_BUSINESS_TOKEN;
+  const whatsappPhoneId = process.env.WHATSAPP_PHONE_ID;
+
+  if (!whatsappToken || !whatsappPhoneId) {
+    // Not configured: record failure but do not crash
+    try {
+      await sql`
+        INSERT INTO customer_portal_audit_log (customer_id, event_type, metadata)
+        VALUES (NULL, 'PRODUCER_PIN_WHATSAPP_NOT_CONFIGURED', ${JSON.stringify({ identifier, phone })})
+      `;
+    } catch (_) {}
+    return { sent: false, reason: 'not-configured' };
+  }
+
+  const formatted = String(phone).replace(/[^0-9]/g, '');
+  const message = `TECAVO - Tu PIN de acceso al Portal de Productores es: ${plainPin}. Número de productor: ${identifier}. No compartas este PIN.`;
+
+  try {
+    const resp = await fetch(`https://graph.facebook.com/v18.0/${whatsappPhoneId}/messages`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${whatsappToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to: formatted,
+        type: 'text',
+        text: { body: message }
+      })
+    });
+    const result = await resp.json().catch(() => ({}));
+    const ok = resp.ok && result.messages && result.messages[0];
+
+    await sql`
+      INSERT INTO customer_portal_audit_log (customer_id, event_type, metadata)
+      VALUES (NULL, ${ok ? 'PRODUCER_PIN_WHATSAPP_SENT' : 'PRODUCER_PIN_WHATSAPP_FAILED'}, ${JSON.stringify({ identifier, phone: formatted, result: result || {}, status: resp.status })})
+    `;
+    return { sent: !!ok, result };
+  } catch (e) {
+    try {
+      await sql`
+        INSERT INTO customer_portal_audit_log (customer_id, event_type, metadata)
+        VALUES (NULL, 'PRODUCER_PIN_WHATSAPP_ERROR', ${JSON.stringify({ identifier, error: String(e) })})
+      `;
+    } catch (_) {}
+    return { sent: false, reason: 'error' };
+  }
 }
 
 // transporter (driver / transportista name as identifier)

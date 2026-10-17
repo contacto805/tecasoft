@@ -21,6 +21,12 @@ export default function AdminGeneralPage() {
   const [clientes, setClientes] = useState([]);
   const [clientePrecios, setClientePrecios] = useState({}); // by customer id  {cid: [{caliber, price}] }
 
+  // 01 | Productor access (número inmutable + PIN + WhatsApp)
+  const [prodList, setProdList] = useState([]);
+  const [prodSearch, setProdSearch] = useState('');
+  const [prodPinShown, setProdPinShown] = useState('');
+  const [prodLoading, setProdLoading] = useState(false);
+
   // General admin: divide module sections + assign tasks with RBAC
   const [sectionAssignments, setSectionAssignments] = useState([]);
   const [adminUsersList, setAdminUsersList] = useState([]);
@@ -136,6 +142,7 @@ export default function AdminGeneralPage() {
   useEffect(() => {
     if (activeTab === "dashboard") {
       loadDashboard();
+      loadProducers(); // 01 Bloque - carga base consultable de productores
     } else if (activeTab === "autorizaciones") {
       loadAuthorizations();
     } else if (activeTab === "alertas") {
@@ -255,6 +262,62 @@ export default function AdminGeneralPage() {
       });
       await loadAssignments();
     } catch(e){}
+  };
+
+  // === 01 BLOQUE: Productores - base consultable con número inmutable ===
+  const loadProducers = async () => {
+    setProdLoading(true);
+    try {
+      const r = await fetch('/api/admin/producers');
+      const d = await r.json();
+      setProdList(d.producers || []);
+    } catch { setProdList([]); }
+    setProdLoading(false);
+  };
+
+  const searchProducers = async () => {
+    setProdLoading(true);
+    try {
+      const url = prodSearch ? `/api/admin/producers?q=${encodeURIComponent(prodSearch)}` : '/api/admin/producers';
+      const r = await fetch(url);
+      const d = await r.json();
+      setProdList(d.producers || []);
+    } catch { setProdList([]); }
+    setProdLoading(false);
+  };
+
+  const clearProdSearch = () => { setProdSearch(''); loadProducers(); setProdPinShown(''); };
+
+  const assignNumberTo = async (p) => {
+    const num = prompt('Número inmutable de productor (ej: PROD-0007):', p.producer_number || '');
+    if (!num) return;
+    try {
+      const res = await fetch('/api/admin/producers', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ action: 'assign-number', producerName: p.producer_name, producerNumber: num.trim(), whatsappPhone: p.whatsapp_phone, rfc: p.rfc })
+      });
+      if (res.ok) { alert('Número asignado'); loadProducers(); }
+    } catch { alert('Error asignando'); }
+  };
+
+  const generatePinFor = async (p) => {
+    if (!confirm('Generar nuevo PIN (se mostrará una sola vez) y enviar a WhatsApp si está registrado?')) return;
+    try {
+      const res = await fetch('/api/admin/producers', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ action: 'generate-pin', producerName: p.producer_name, producerNumber: p.producer_number, whatsappPhone: p.whatsapp_phone })
+      });
+      const d = await res.json();
+      if (d.pin) {
+        setProdPinShown(d.pin);
+        alert('PIN generado. ' + (d.whatsappSent ? 'Intento de envío WhatsApp registrado.' : 'WhatsApp no configurado o sin teléfono.'));
+      } else {
+        alert(d.error || 'Error');
+      }
+      loadProducers();
+    } catch { alert('Error generando PIN'); }
   };
 
   const removeAssignment = async (id) => {
@@ -574,6 +637,49 @@ export default function AdminGeneralPage() {
 
               <PagosDashboard />
             </div>
+          </div>
+        )}
+
+        {/* 01 | ACCESO DEL PRODUCTOR Y BASE CONSULTABLE (BLOQUE 01) - Super/Admin General full visibility */}
+        {activeTab === "dashboard" && !loading && (
+          <div className="mt-6 bg-white rounded-lg shadow-sm p-6">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="text-lg font-bold">Acceso de Productores (Nº Inmutable + PIN + WhatsApp)</h3>
+                <p className="text-xs text-gray-500">Buscador por número/nombre/RFC/teléfono • Generar/regenerar PIN (hash) • Envío a WhatsApp registrado • Solo Super y Admin General ven todo. Productor solo ve lo suyo.</p>
+              </div>
+              <button onClick={loadProducers} className="text-sm px-3 py-1 border rounded">Actualizar</button>
+            </div>
+
+            <div className="flex flex-wrap gap-2 mb-3">
+              <input value={prodSearch} onChange={e=>setProdSearch(e.target.value)} placeholder="Buscar número, nombre, RFC o WhatsApp" className="border px-3 py-1 rounded text-sm flex-1 min-w-[220px]" />
+              <button onClick={searchProducers} className="px-3 py-1 bg-emerald-700 text-white rounded text-sm">Buscar</button>
+              <button onClick={clearProdSearch} className="px-3 py-1 border rounded text-sm">Limpiar</button>
+            </div>
+
+            <div className="text-xs mb-2 text-gray-500">Resultados (visibilidad total para rol autorizado):</div>
+            <div className="max-h-48 overflow-auto border rounded divide-y text-sm">
+              {(prodList || []).length === 0 && <div className="p-2 text-gray-400">Sin registros de portal aún. Asigna números a productores existentes.</div>}
+              {(prodList || []).map((p, i) => (
+                <div key={i} className="p-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <div className="font-mono text-emerald-700">{p.producer_number || '—'}</div>
+                  <div className="font-medium">{p.producer_name}</div>
+                  <div className="text-xs text-gray-500">{p.whatsapp_phone || 'sin whatsapp'} {p.rfc ? '• RFC:'+p.rfc : ''}</div>
+                  <div className="ml-auto flex gap-1 text-xs">
+                    <button onClick={() => assignNumberTo(p)} className="px-2 py-0.5 border rounded">Asignar Nº</button>
+                    <button onClick={() => generatePinFor(p)} className="px-2 py-0.5 bg-emerald-700 text-white rounded">Generar PIN + WhatsApp</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {prodPinShown && (
+              <div className="mt-2 p-2 bg-emerald-50 border border-emerald-200 rounded text-sm">
+                PIN generado (muestra solo una vez): <span className="font-mono text-lg tracking-widest font-bold">{prodPinShown}</span>
+                <div className="text-[10px] text-emerald-700">Entregar al productor por canal seguro. El PIN queda como hash en BD. Intento de envío WhatsApp registrado.</div>
+              </div>
+            )}
+            <div className="text-[10px] mt-2 text-gray-500">El productor usa su Nº + PIN en /portal-productores. Solo ve sus datos (órdenes, pagos, programados). Superadmin autoriza ajustes de precio (bloques posteriores).</div>
           </div>
         )}
 

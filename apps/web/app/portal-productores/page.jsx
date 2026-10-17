@@ -37,22 +37,22 @@ export default function PortalProductores() {
   };
 
   const buscarOrden = async () => {
-    if (!folio.trim() || pin.length !== 6) { setError('Folio y PIN de 6 dígitos requeridos'); return; }
+    if (!folio.trim() || pin.length !== 6) { setError('Folio/Número y PIN de 6 dígitos requeridos'); return; }
     setLoading(true);
     setError('');
     setOrden(null);
     setPaymentInfo(null);
     setDocs([]);
     try {
-      // Validar con esquema PIN + identificador (productor) según función existente
+      // Usar producerNumber (inmutable) o folio/name como identificador según spec
       const loginRes = await fetch('/api/producer-portal/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ producerName: '', folio: folio.trim(), pin })
+        body: JSON.stringify({ producerNumber: folio.trim(), producerName: '', folio: folio.trim(), pin })
       });
       const loginData = await loginRes.json();
       if (!loginRes.ok || !loginData.success) {
-        setError(loginData.error || 'PIN o folio inválido');
+        setError(loginData.error || 'PIN o número/folio inválido');
         setLoading(false);
         return;
       }
