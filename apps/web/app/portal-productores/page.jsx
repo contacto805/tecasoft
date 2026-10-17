@@ -13,6 +13,7 @@ const REQUIRED_DOCS = [
 
 export default function PortalProductores() {
   const [folio, setFolio] = useState('');
+  const [pin, setPin] = useState('');
   const [orden, setOrden] = useState(null);
   const [paymentInfo, setPaymentInfo] = useState(null);
   const [docs, setDocs] = useState([]);
@@ -36,19 +37,31 @@ export default function PortalProductores() {
   };
 
   const buscarOrden = async () => {
-    if (!folio.trim()) return;
+    if (!folio.trim() || pin.length !== 6) { setError('Folio y PIN de 6 dígitos requeridos'); return; }
     setLoading(true);
     setError('');
     setOrden(null);
     setPaymentInfo(null);
     setDocs([]);
     try {
+      // Validar con esquema PIN + identificador (productor) según función existente
+      const loginRes = await fetch('/api/producer-portal/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ producerName: '', folio: folio.trim(), pin })
+      });
+      const loginData = await loginRes.json();
+      if (!loginRes.ok || !loginData.success) {
+        setError(loginData.error || 'PIN o folio inválido');
+        setLoading(false);
+        return;
+      }
       const res = await fetch(`/api/cutting-orders?folio=${encodeURIComponent(folio.trim())}`);
       const data = await res.json();
       const match = Array.isArray(data) ? data.find(o => (o.folio || '').toUpperCase() === folio.trim().toUpperCase()) : null;
       if (match) {
         setOrden(match);
-        // Cargar info de pago y documentos asociados
+        // Cargar info de pago y documentos asociados (por referencia, sin duplicar)
         try {
           const [psRes, pdRes] = await Promise.all([
             fetch(`/api/payment-schedule?producer=${encodeURIComponent(match.producer_name || '')}`),
@@ -160,15 +173,22 @@ export default function PortalProductores() {
               placeholder="FOLIO ORDEN DE CORTE (ej: COR-000123)"
               className="w-full border px-4 py-3 rounded-2xl text-center font-mono text-lg tracking-widest"
             />
+            <input
+              value={pin}
+              onChange={e => setPin(e.target.value.replace(/\D/g,'').slice(0,6))}
+              placeholder="PIN (6 dígitos) - acceso seguro"
+              className="w-full border px-4 py-3 mt-2 rounded-2xl text-center font-mono text-lg tracking-[6px]"
+              maxLength={6}
+            />
             <button
               onClick={buscarOrden}
-              disabled={loading || !folio.trim()}
+              disabled={loading || !folio.trim() || pin.length !== 6}
               className="mt-3 w-full py-3 bg-emerald-800 text-white rounded-2xl font-medium disabled:bg-slate-300"
             >
-              {loading ? 'Buscando...' : 'INGRESAR AL PORTAL'}
+              {loading ? 'Verificando...' : 'INGRESAR CON PIN SEGURO'}
             </button>
             {error && <div className="text-red-600 text-xs mt-2 text-center">{error}</div>}
-            <div className="text-[10px] text-center text-slate-400 mt-4">Tu información es privada. Solo ves lo relacionado a tu orden.</div>
+            <div className="text-[10px] text-center text-slate-400 mt-4">Acceso con PIN + folio según esquema seguro existente. Solo tus datos.</div>
           </div>
         )}
 

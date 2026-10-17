@@ -188,3 +188,122 @@ export async function getPortalAccessStatus(customerId) {
     lockedUntil: r.locked_until,
   };
 }
+
+// === PRODUCTOR / TRANSPORTISTA (reuse same secure PIN + lock logic, per existing function) ===
+const PRODUCER_COOKIE = "tecavo_producer_portal";
+const TRANSPORTER_COOKIE = "tecavo_transporter_portal";
+
+export async function createProducerSession(producerName) {
+  const token = generateSecureToken();
+  const tokenHash = await bcrypt.hash(token, 10);
+  const expiresAt = new Date(Date.now() + SESSION_DURATION_HOURS * 60 * 60 * 1000);
+  await sql`INSERT INTO producer_portal_sessions (producer_name, token_hash, expires_at) VALUES (${producerName}, ${tokenHash}, ${expiresAt}) ON CONFLICT (producer_name) DO UPDATE SET token_hash=${tokenHash}, expires_at=${expiresAt}`;
+  const cookieStore = await cookies();
+  cookieStore.set(PRODUCER_COOKIE, token, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", maxAge: SESSION_DURATION_HOURS * 60 * 60 });
+  return token;
+}
+
+export async function getProducerSession() {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(PRODUCER_COOKIE)?.value;
+  if (!token) return null;
+  const rows = await sql`SELECT * FROM producer_portal_sessions WHERE expires_at > NOW() LIMIT 1`;
+  if (!rows.length) return null;
+  const s = rows[0];
+  const ok = await bcrypt.compare(token, s.token_hash);
+  if (!ok) return null;
+  await sql`UPDATE producer_portal_sessions SET last_activity_at = NOW() WHERE producer_name = ${s.producer_name}`;
+  return { producerName: s.producer_name, expiresAt: s.expires_at };
+}
+
+export async function requireProducerSession() {
+  const s = await getProducerSession();
+  if (!s) return { error: "No autorizado", status: 401 };
+  return { session: s };
+}
+
+export async function validateProducerPortalAccess(producerName, pin) {
+  const rows = await sql`SELECT * FROM producer_portal_access WHERE producer_name = ${producerName} AND is_enabled = true LIMIT 1`;
+  if (!rows.length) return { ok: false, error: "Acceso no configurado" };
+  const a = rows[0];
+  if (a.locked_until && new Date(a.locked_until) > new Date()) return { ok: false, error: "Cuenta bloqueada temporalmente" };
+  const valid = await bcrypt.compare(String(pin).trim(), a.pin_hash);
+  if (!valid) {
+    const na = (a.failed_attempts || 0) + 1;
+    const lu = na >= 5 ? new Date(Date.now() + 15*60*1000) : null;
+    await sql`UPDATE producer_portal_access SET failed_attempts=${na}, locked_until=${lu}, updated_at=NOW() WHERE id=${a.id}`;
+    return { ok: false, error: "PIN incorrecto" };
+  }
+  await sql`UPDATE producer_portal_access SET failed_attempts=0, locked_until=NULL, last_login_at=NOW(), updated_at=NOW() WHERE id=${a.id}`;
+  return { ok: true };
+}
+
+export async function generateProducerPIN(producerName) {
+  const pin = String(Math.floor(100000 + Math.random()*900000));
+  const h = await bcrypt.hash(pin, 10);
+  const ex = await sql`SELECT id FROM producer_portal_access WHERE producer_name=${producerName} LIMIT 1`;
+  if (ex.length) {
+    await sql`UPDATE producer_portal_access SET pin_hash=${h}, is_enabled=true, failed_attempts=0, locked_until=NULL, pin_updated_at=NOW(), updated_at=NOW() WHERE producer_name=${producerName}`;
+  } else {
+    await sql`INSERT INTO producer_portal_access (producer_name, pin_hash, is_enabled, pin_updated_at) VALUES (${producerName}, ${h}, true, NOW())`;
+  }
+  return pin;
+}
+
+// transporter (driver / transportista name as identifier)
+export async function createTransporterSession(transporterName) {
+  const token = generateSecureToken();
+  const tokenHash = await bcrypt.hash(token, 10);
+  const expiresAt = new Date(Date.now() + SESSION_DURATION_HOURS * 60 * 60 * 1000);
+  await sql`INSERT INTO transporter_portal_sessions (transporter_name, token_hash, expires_at) VALUES (${transporterName}, ${tokenHash}, ${expiresAt}) ON CONFLICT (transporter_name) DO UPDATE SET token_hash=${tokenHash}, expires_at=${expiresAt}`;
+  const cookieStore = await cookies();
+  cookieStore.set(TRANSPORTER_COOKIE, token, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", maxAge: SESSION_DURATION_HOURS * 60 * 60 });
+  return token;
+}
+
+export async function getTransporterSession() {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(TRANSPORTER_COOKIE)?.value;
+  if (!token) return null;
+  const rows = await sql`SELECT * FROM transporter_portal_sessions WHERE expires_at > NOW() LIMIT 1`;
+  if (!rows.length) return null;
+  const s = rows[0];
+  const ok = await bcrypt.compare(token, s.token_hash);
+  if (!ok) return null;
+  await sql`UPDATE transporter_portal_sessions SET last_activity_at = NOW() WHERE transporter_name = ${s.transporter_name}`;
+  return { transporterName: s.transporter_name, expiresAt: s.expires_at };
+}
+
+export async function requireTransporterSession() {
+  const s = await getTransporterSession();
+  if (!s) return { error: "No autorizado", status: 401 };
+  return { session: s };
+}
+
+export async function validateTransporterPortalAccess(transporterName, pin) {
+  const rows = await sql`SELECT * FROM transporter_portal_access WHERE transporter_name = ${transporterName} AND is_enabled = true LIMIT 1`;
+  if (!rows.length) return { ok: false, error: "Acceso no configurado" };
+  const a = rows[0];
+  if (a.locked_until && new Date(a.locked_until) > new Date()) return { ok: false, error: "Cuenta bloqueada temporalmente" };
+  const valid = await bcrypt.compare(String(pin).trim(), a.pin_hash);
+  if (!valid) {
+    const na = (a.failed_attempts || 0) + 1;
+    const lu = na >= 5 ? new Date(Date.now() + 15*60*1000) : null;
+    await sql`UPDATE transporter_portal_access SET failed_attempts=${na}, locked_until=${lu}, updated_at=NOW() WHERE id=${a.id}`;
+    return { ok: false, error: "PIN incorrecto" };
+  }
+  await sql`UPDATE transporter_portal_access SET failed_attempts=0, locked_until=NULL, last_login_at=NOW(), updated_at=NOW() WHERE id=${a.id}`;
+  return { ok: true };
+}
+
+export async function generateTransporterPIN(transporterName) {
+  const pin = String(Math.floor(100000 + Math.random()*900000));
+  const h = await bcrypt.hash(pin, 10);
+  const ex = await sql`SELECT id FROM transporter_portal_access WHERE transporter_name=${transporterName} LIMIT 1`;
+  if (ex.length) {
+    await sql`UPDATE transporter_portal_access SET pin_hash=${h}, is_enabled=true, failed_attempts=0, locked_until=NULL, pin_updated_at=NOW(), updated_at=NOW() WHERE transporter_name=${transporterName}`;
+  } else {
+    await sql`INSERT INTO transporter_portal_access (transporter_name, pin_hash, is_enabled, pin_updated_at) VALUES (${transporterName}, ${h}, true, NOW())`;
+  }
+  return pin;
+}
