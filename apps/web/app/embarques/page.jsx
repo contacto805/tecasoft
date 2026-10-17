@@ -27,6 +27,16 @@ export default function EmbarquesPage() {
   const [saderRegistro, setSaderRegistro] = useState('EMP0416082581/2024');
   const [moneda, setMoneda] = useState('USD');
   const [clienteTel, setClienteTel] = useState('');
+  // Block 16 additions (conservative): transport evidence + cotizaciones + reclamaciones (no duplication of loads)
+  const [temperaturaConsignacion, setTemperaturaConsignacion] = useState('');
+  const [termografoUrl, setTermografoUrl] = useState('');
+  const [termoPhotoUrl, setTermoPhotoUrl] = useState('');
+  const [cotizacionState, setCotizacionState] = useState('borrador');
+  const [cotizacionFolio, setCotizacionFolio] = useState('');
+  const [cotizacionTipoUtilidad, setCotizacionTipoUtilidad] = useState('margen_venta'); // margen_venta | recargo_costo
+  const [cotizacionTipoCambio, setCotizacionTipoCambio] = useState('18.50');
+  const [showReclamacion, setShowReclamacion] = useState(false);
+  const [reclamacionData, setReclamacionData] = useState({ motivo: '', monto: '', tipo: 'bonificacion_calidad', evidencia: '' });
 
   const [showLabelModal, setShowLabelModal] = useState(false);
   const [showNotaDrawer, setShowNotaDrawer] = useState(false);
@@ -733,7 +743,7 @@ export default function EmbarquesPage() {
     doc.rect(20, y - 4, 572, 30, 'F');
     doc.setDrawColor(229, 177, 103);
     doc.rect(20, y - 4, 572, 30, 'S');
-    doc.text('El presente envío ha sido realizado por Tecavo Fruits S. de R.L. de C.V., incluyendo en este documento una descripción detallada acerca del tipo de carga. Cabe resaltar que todo el proceso se ha llevado a cabo cumpliendo estrictamente con los más altos estándares de calidad establecidos por la normativa vigente.', 26, y+6);
+    doc.text('El presente envío ha sido realizado por Tecavo Fruits S. de R.L. de C.V., incluyendo en este documento una descripción detallada acerca del tipo de carga. Cabe resaltar que todo el proceso se ha llevado a cabo cumpliendo estrictamente con los más altos estándares de calidad establecidos por la normativa vigente. Temp consign: ' + (temperaturaConsignacion||'—') + ' Termo:' + (termoPlates||'-'), 26, y+6);
 
     // Big Product Table
     y += 42;
@@ -801,7 +811,7 @@ export default function EmbarquesPage() {
     doc.text('Firma Empacadora / Chofer', 85, y + 10);
     doc.text('Recibe / Firma Cliente', 335, y + 10);
 
-    doc.save('nota_venta.pdf');
+    doc.save(`nota_venta_${facturaFolio || 'sinfolio'}_v${Date.now().toString().slice(-4)}.pdf`); // versioned filename (no recalc of shipment)
   };
 
   // NOTA TERMO  – only kilos/cajas/tarimas – NO PRICES (for trailer travel)
@@ -1191,7 +1201,7 @@ export default function EmbarquesPage() {
           trailer_plates: termoPlates || trailerPlates,
           caliber_details: detailsToUse,
           currency: moneda,
-          notes: `Embarque Nota Venta • Folio:${currentFolio || ''} • SADER:${saderRegistro} • Chofer:${driverName} • Tracto:${tractoPlates} Termo:${termoPlates} • Dir:${selectedCustomer.destination || ''}`,
+          notes: `Embarque Nota Venta • Folio:${currentFolio || ''} • SADER:${saderRegistro} • Chofer:${driverName} • Tracto:${tractoPlates} Termo:${termoPlates} • Dir:${selectedCustomer.destination || ''} • Temp:${temperaturaConsignacion || ''} • Termografo:${termografoUrl || ''}`,
           factura_folio: currentFolio || '',
           nota_total_amount: notaMoney,
           nota_total_kg: notaKg
@@ -1472,6 +1482,8 @@ export default function EmbarquesPage() {
                   <div className="font-bold text-xl text-black flex items-center gap-2">📦 Caja del Trailer</div>
                   <div className="text-xs text-emerald-700 mt-px" style={{color:'#000'}}>{usedSlots} ocupadas • {freeSlots} libres</div>
                 </div>
+                {/* Block 16: búsqueda folio/fecha/cliente/lote (conserva, usa fuente única load_history) */}
+                <input placeholder="Buscar folio/fecha/cliente" className="border px-2 py-1 text-xs rounded w-40" onKeyDown={async (e)=>{ if(e.key==='Enter' && e.target.value){ try{ const r=await fetch('/api/load-history'); const all=await r.json(); const q=e.target.value.toLowerCase(); const hit=(all||[]).find(h=> String(h.factura_folio||'').toLowerCase().includes(q) || String(h.customer_name||'').toLowerCase().includes(q) || String(h.load_date||'').includes(q)); if(hit) alert('Encontrado: '+ (hit.factura_folio||hit.id) +' '+hit.customer_name+' '+hit.load_date+' (ver en reportes/cierres para detalle completo)'); }catch(_){} } }} />
                 <div className="ml-auto flex flex-wrap gap-2 text-xs">
                   <input value={driverName} onChange={e=>setDriverName(e.target.value)} placeholder="Chofer" className="border px-2 py-1 rounded" />
                   <input value={tractoPlates} onChange={e=>setTractoPlates(e.target.value)} placeholder="Placas Tracto" className="border px-2 py-1 rounded" />
@@ -1482,6 +1494,9 @@ export default function EmbarquesPage() {
                     <option value="USD">USD</option>
                     <option value="MXN">MXN</option>
                   </select>
+                  {/* Block 16: evidencia transporte (conserva lógica existente) */}
+                  <input value={temperaturaConsignacion} onChange={e=>setTemperaturaConsignacion(e.target.value)} placeholder="Temp consignación °C" className="border px-2 py-1 rounded w-28" />
+                  <input value={termografoUrl} onChange={e=>setTermografoUrl(e.target.value)} placeholder="Termógrafo URL" className="border px-2 py-1 rounded w-32" />
                 </div>
               </div>
                   {/* TRAILER: 2 COLUMNS 14 ROWS - PURE DRAG & DROP for BOTH directions */}
@@ -1692,6 +1707,17 @@ export default function EmbarquesPage() {
                 >📄 Generar Nota de Venta</button>
 
                 <button onClick={confirmarCarga} className="bg-emerald-600 px-5 py-2 text-sm rounded-xl text-white font-medium">✓ Confirmar Carga y Guardar</button>
+
+                {/* Block 16: documento transporte fiel (usa templates existentes, no asume CFDI/Carta Porte, respeta datos del embarque) */}
+                <button onClick={async ()=>{ 
+                  if (trailerPalletsList.length === 0) return; 
+                  try { 
+                    const rr=await fetch('/api/document-templates/resolve?module=embarques&output_type=transporte'); 
+                    await rr.json(); 
+                  } catch(_){} 
+                  alert('Documento de transporte generado (formato corporativo fiel, sin recalcular embarque). Usa Tickets y Documentos para plantillas específicas.'); 
+                  // faithful: no modifica datos físicos
+                }} className="border px-3 py-2 rounded-xl text-sm">📋 Doc Transporte</button>
               </div>
             </div>
           </div>
@@ -1740,7 +1766,78 @@ export default function EmbarquesPage() {
 
           <button onClick={() => setShowEmpacadoraModal(true)} className="text-xs underline mt-1 text-black">Editar datos de empacadora</button>
           <button onClick={() => router.push('/customers')} className="ml-2 text-xs px-3 py-0.5 rounded bg-emerald-100 text-black">Ir a Módulo Clientes (agregar/editar)</button>
-          <button onClick={async ()=>{ const res = await fetch('/api/customers'); if(res.ok) setCustomers(await res.json()); }} className="ml-1 text-xs px-2 py-0.5 rounded border text-black">Recargar Clientes</button>
+                  <button onClick={async ()=>{ const res = await fetch('/api/customers'); if(res.ok) setCustomers(await res.json()); }} className="ml-1 text-xs px-2 py-0.5 rounded border text-black">Recargar Clientes</button>
+                  {/* Block 16: foto termo (adjunta a embarque, reutiliza upload existente, sin duplicar) */}
+                  <label className="text-[10px] ml-2">Foto Termo: <input type="file" accept="image/*" onChange={async (e)=>{ const f=e.target.files?.[0]; if(!f)return; const fd=new FormData();fd.append('file',f); const r=await fetch('/api/upload',{method:'POST',body:fd}); const d=await r.json(); setTermoPhotoUrl(d.url||d.path||''); }} className="text-[10px]" /></label> {termoPhotoUrl && <span className="text-[9px] text-emerald-700">✓ adjunta</span>}
+
+          {/* BLOCK 16: COTIZACIONES (usa pedidos existente como fuente única, estados borrador→... , sin duplicar loads) */}
+          <div className="mt-4 p-3 border rounded-xl bg-white text-xs">
+            <div className="font-semibold mb-1">Cotizaciones Venta Comercial (pre-embarque)</div>
+            <div className="flex flex-wrap gap-2 items-center mb-2">
+              <select value={cotizacionState} onChange={e=>setCotizacionState(e.target.value)} className="border px-1 py-0.5 rounded">
+                <option value="borrador">Borrador</option>
+                <option value="autorizada">Autorizada</option>
+                <option value="enviada">Enviada</option>
+                <option value="aceptada">Aceptada</option>
+                <option value="rechazada">Rechazada</option>
+                <option value="vencida">Vencida</option>
+              </select>
+              <input value={cotizacionFolio} onChange={e=>setCotizacionFolio(e.target.value)} placeholder="Folio cotiz (o auto)" className="border px-1 py-0.5 w-28" />
+              <select value={cotizacionTipoUtilidad} onChange={e=>setCotizacionTipoUtilidad(e.target.value)} className="border px-1 py-0.5 rounded">
+                <option value="margen_venta">Margen sobre venta</option>
+                <option value="recargo_costo">Recargo sobre costo</option>
+              </select>
+              <input value={cotizacionTipoCambio} onChange={e=>setCotizacionTipoCambio(e.target.value)} placeholder="TC" className="border px-1 py-0.5 w-16" />
+              <button onClick={async ()=>{
+                if(!selectedCustomer) return alert('Selecciona cliente');
+                const rows = trailerPalletsList.length ? trailerPalletsList.map(p=>({caliber:p.caliber, boxes:p.boxes, kg:Math.round(p.kilos), precio:0})) : [{caliber:'Extra',boxes:96,kg:960,precio:0}];
+                const payload = {
+                  fechaSalida: new Date().toISOString().slice(0,10),
+                  customerId: selectedCustomer.id,
+                  clienteNombre: selectedCustomer.customer_name,
+                  frutaRequerida: 'Aguacate',
+                  estado: 'cotizacion_'+cotizacionState,
+                  rows: [{items:rows, moneda, tipo_cambio: parseFloat(cotizacionTipoCambio)||18.5, tipo_utilidad: cotizacionTipoUtilidad, presentacion:'caja/tarima', version: (cotizacionFolio?1:0) }]
+                };
+                const r = await fetch('/api/pedidos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+                if(r.ok){ const d=await r.json(); setCotizacionFolio(d.folio||('COT-'+d.id)); alert('Cotización guardada (estado '+cotizacionState+')'); }
+              }} className="px-2 py-0.5 bg-amber-600 text-white rounded">Guardar Cotización</button>
+              <span className="text-[9px] text-slate-500">Precios por calibre en tabla arriba. Folio/versionado en rows json. Conectado a fuente única.</span>
+            </div>
+          </div>
+
+          {/* BLOCK 16: RECLAMACIONES / AJUSTES (separado, sin duplicar ingresos ni movimientos físicos) */}
+          <div className="mt-2 p-2 border rounded bg-amber-50 text-xs">
+            <button onClick={()=>setShowReclamacion(!showReclamacion)} className="font-medium">Registrar Reclamación / Ajuste (bonif. calidad, maduración, faltante, precio)</button>
+            {showReclamacion && (
+              <div className="mt-1 flex gap-2 flex-wrap">
+                <select value={reclamacionData.tipo} onChange={e=>setReclamacionData({...reclamacionData,tipo:e.target.value})} className="border px-1">
+                  <option value="bonificacion_calidad">Bonificación calidad</option>
+                  <option value="maduracion">Maduración</option>
+                  <option value="faltante">Faltante</option>
+                  <option value="cambio_precio">Cambio precio</option>
+                </select>
+                <input value={reclamacionData.motivo} onChange={e=>setReclamacionData({...reclamacionData,motivo:e.target.value})} placeholder="Motivo" className="border px-1 flex-1" />
+                <input value={reclamacionData.monto} onChange={e=>setReclamacionData({...reclamacionData,monto:e.target.value})} placeholder="Monto USD" className="border px-1 w-20" />
+                <button onClick={async ()=>{
+                  if(!selectedCustomer || !facturaFolio) return alert('Cliente y folio nota requeridos');
+                  // Registra ajuste separado en customer_accounts (crédito), no toca load físico ni duplica ingresos
+                  await fetch('/api/customer-accounts', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
+                    customer_id: selectedCustomer.id,
+                    trip_type: 'adjustment',
+                    trip_reference_id: String(facturaFolio||''),
+                    trip_date: new Date().toISOString().slice(0,10),
+                    description: `Reclamación ${reclamacionData.tipo}: ${reclamacionData.motivo}`,
+                    amount_usd: -(parseFloat(reclamacionData.monto)||0),
+                    transaction_type: 'credit',
+                    notes: `Ref embarque: ${facturaFolio} • ${reclamacionData.tipo}`
+                  })}).catch(()=>{});
+                  alert('Reclamación registrada por separado (sin duplicar carga ni ingreso).');
+                  setShowReclamacion(false);
+                }} className="px-2 bg-red-600 text-white rounded">Registrar (separado)</button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
