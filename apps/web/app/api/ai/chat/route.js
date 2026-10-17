@@ -52,6 +52,9 @@ export async function POST(request) {
     // Catálogo de herramientas (solo las permitidas por rol)
     const availableTools = IA_TOOLS; // el caller filtra internamente
 
+    // Ensure literal type for OpenAI SDK
+    const toolsForCall = availableTools.map(t => ({ type: "function", function: t.function }));
+
     const systemPrompt = `Eres TECAVO IA, asistente empresarial de Soft Tecavo (TECAVO FRUITS).
 Responde SIEMPRE con:
 - Fuente exacta de los datos (tabla o API)
@@ -72,7 +75,7 @@ El usuario actual es ${isSuper ? "Superadministrador (visibilidad total)" : "usu
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini", // proxy resolvera al equivalente disponible
       messages,
-      tools: availableTools,
+      tools: toolsForCall,
       tool_choice: "auto",
       temperature: 0.2,
       max_tokens: 800
@@ -85,19 +88,20 @@ El usuario actual es ${isSuper ? "Superadministrador (visibilidad total)" : "usu
     const toolResults = [];
 
     for (const tc of toolCalls) {
-      const name = tc.function.name;
+      const fn = tc?.function || {};
+      const name = fn.name;
       let args = {};
-      try { args = JSON.parse(tc.function.arguments || "{}"); } catch {}
+      try { args = JSON.parse(fn.arguments || "{}"); } catch {}
 
       let result;
       if (name === "get_kpi_summary") {
         result = await getKpiSummary(args.period || "week", user);
       } else if (name === "get_lot_performance") {
-        result = await getLotPerformance(args, user);
+        result = await getLotPerformance(args || {}, user);
       } else if (name === "get_payment_status") {
-        result = await getPaymentStatus(args, user);
+        result = await getPaymentStatus(args || {}, user);
       } else if (name === "search_producers") {
-        result = await searchProducers(args, user);
+        result = await searchProducers(args || {}, user);
       } else {
         result = { error: "Herramienta no permitida" };
       }

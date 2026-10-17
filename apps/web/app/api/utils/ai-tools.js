@@ -99,7 +99,8 @@ export async function getKpiSummary(period = "week", user) {
   }
 }
 
-export async function getLotPerformance({ lotId, producer, limit = 10 }, user) {
+export async function getLotPerformance(args = {}, user) {
+  const { lotId, producer, limit = 10 } = args;
   const isSuper = user?.is_super_admin || user?.admin_role === "superadministrador";
   try {
     let rows;
@@ -131,7 +132,8 @@ export async function getLotPerformance({ lotId, producer, limit = 10 }, user) {
   }
 }
 
-export async function getPaymentStatus({ producerNumber, status }, user) {
+export async function getPaymentStatus(args = {}, user) {
+  const { producerNumber, status } = args;
   const isSuper = user?.is_super_admin || user?.admin_role === "superadministrador";
   try {
     let q = sql`SELECT folio, producer_name, amount, saldo_pendiente, scheduled_payment_date, dias_retraso_habiles, status FROM payment_schedule`;
@@ -153,7 +155,8 @@ export async function getPaymentStatus({ producerNumber, status }, user) {
   }
 }
 
-export async function searchProducers({ q }, user) {
+export async function searchProducers(args = {}, user) {
+  const { q } = args;
   const isSuper = user?.is_super_admin || user?.admin_role === "superadministrador";
   if (!isSuper) return { error: "Busqueda de productores restringida", note: "Solo Superadministrador" };
   try {
