@@ -37,38 +37,35 @@ export async function getCustomerSession() {
   const token = cookieStore.get(COOKIE_NAME)?.value;
   if (!token) return null;
 
+  // Fetch candidates (not arbitrary most-recent); match exact token for isolation
   const sessions = await sql`
     SELECT s.*, c.id as customer_id, c.customer_name, c.client_number, c.commercial_name
     FROM customer_portal_sessions s
     JOIN customers c ON c.id = s.customer_id
     WHERE s.expires_at > NOW()
     ORDER BY s.last_activity_at DESC
-    LIMIT 1
+    LIMIT 100
   `;
 
-  if (!sessions.length) return null;
-
-  const session = sessions[0];
-
-  // Verify token against hash
-  const isValid = await bcrypt.compare(token, session.token_hash);
-  if (!isValid) return null;
-
-  // Update last activity
-  await sql`
-    UPDATE customer_portal_sessions 
-    SET last_activity_at = NOW() 
-    WHERE id = ${session.id}
-  `;
-
-  return {
-    id: session.id,
-    customerId: session.customer_id,
-    customerName: session.customer_name,
-    clientNumber: session.client_number,
-    commercialName: session.commercial_name,
-    expiresAt: session.expires_at,
-  };
+  for (const session of sessions) {
+    const isValid = await bcrypt.compare(token, session.token_hash);
+    if (isValid) {
+      await sql`
+        UPDATE customer_portal_sessions 
+        SET last_activity_at = NOW() 
+        WHERE id = ${session.id}
+      `;
+      return {
+        id: session.id,
+        customerId: session.customer_id,
+        customerName: session.customer_name,
+        clientNumber: session.client_number,
+        commercialName: session.commercial_name,
+        expiresAt: session.expires_at,
+      };
+    }
+  }
+  return null;
 }
 
 export async function requireCustomerSession() {
@@ -84,13 +81,18 @@ export async function destroyCustomerSession() {
   const token = cookieStore.get(COOKIE_NAME)?.value;
 
   if (token) {
-    // Delete matching session(s)
-    await sql`
-      DELETE FROM customer_portal_sessions 
-      WHERE token_hash IN (
-        SELECT token_hash FROM customer_portal_sessions WHERE expires_at > NOW()
-      )
+    // Revoke ONLY the session matching this exact token (preserve other clients' sessions)
+    const candidates = await sql`
+      SELECT id, token_hash FROM customer_portal_sessions 
+      WHERE expires_at > NOW() 
+      LIMIT 100
     `;
+    for (const c of candidates) {
+      if (await bcrypt.compare(token, c.token_hash)) {
+        await sql`DELETE FROM customer_portal_sessions WHERE id = ${c.id}`;
+        break;
+      }
+    }
   }
 
   cookieStore.delete(COOKIE_NAME);
@@ -207,13 +209,16 @@ export async function getProducerSession() {
   const cookieStore = await cookies();
   const token = cookieStore.get(PRODUCER_COOKIE)?.value;
   if (!token) return null;
-  const rows = await sql`SELECT * FROM producer_portal_sessions WHERE expires_at > NOW() LIMIT 1`;
-  if (!rows.length) return null;
-  const s = rows[0];
-  const ok = await bcrypt.compare(token, s.token_hash);
-  if (!ok) return null;
-  await sql`UPDATE producer_portal_sessions SET last_activity_at = NOW() WHERE producer_name = ${s.producer_name}`;
-  return { producerName: s.producer_name, expiresAt: s.expires_at };
+  // Token-specific match (not arbitrary most-recent)
+  const rows = await sql`SELECT * FROM producer_portal_sessions WHERE expires_at > NOW() LIMIT 100`;
+  for (const s of rows) {
+    const ok = await bcrypt.compare(token, s.token_hash);
+    if (ok) {
+      await sql`UPDATE producer_portal_sessions SET last_activity_at = NOW() WHERE producer_name = ${s.producer_name}`;
+      return { producerName: s.producer_name, expiresAt: s.expires_at };
+    }
+  }
+  return null;
 }
 
 export async function requireProducerSession() {
@@ -358,13 +363,16 @@ export async function getTransporterSession() {
   const cookieStore = await cookies();
   const token = cookieStore.get(TRANSPORTER_COOKIE)?.value;
   if (!token) return null;
-  const rows = await sql`SELECT * FROM transporter_portal_sessions WHERE expires_at > NOW() LIMIT 1`;
-  if (!rows.length) return null;
-  const s = rows[0];
-  const ok = await bcrypt.compare(token, s.token_hash);
-  if (!ok) return null;
-  await sql`UPDATE transporter_portal_sessions SET last_activity_at = NOW() WHERE transporter_name = ${s.transporter_name}`;
-  return { transporterName: s.transporter_name, expiresAt: s.expires_at };
+  // Token-specific match (not arbitrary most-recent)
+  const rows = await sql`SELECT * FROM transporter_portal_sessions WHERE expires_at > NOW() LIMIT 100`;
+  for (const s of rows) {
+    const ok = await bcrypt.compare(token, s.token_hash);
+    if (ok) {
+      await sql`UPDATE transporter_portal_sessions SET last_activity_at = NOW() WHERE transporter_name = ${s.transporter_name}`;
+      return { transporterName: s.transporter_name, expiresAt: s.expires_at };
+    }
+  }
+  return null;
 }
 
 export async function requireTransporterSession() {
