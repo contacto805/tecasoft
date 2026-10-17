@@ -134,6 +134,12 @@ export default function SuperadministradorPage() {
   });
   const [uploadingBg, setUploadingBg] = useState(false);
 
+// TECAVO IA (Fase 05 Bloque 01) - fundacion
+const [iaMessages, setIaMessages] = useState([]);
+const [iaInput, setIaInput] = useState("");
+const [iaLoading, setIaLoading] = useState(false);
+const [iaConnected, setIaConnected] = useState(null);
+
   useEffect(() => {
     checkSuperAdmin();
     loadAll();
@@ -1117,6 +1123,30 @@ export default function SuperadministradorPage() {
     if (h && h.destino) setSelectedDestino(h.destino);
   };
 
+  // TECAVO IA chat (Bloque 01) - llama API segura con rol
+  const sendIaMessage = async () => {
+    const q = iaInput.trim();
+    if (!q) return;
+    setIaLoading(true);
+    const newMsgs = [...iaMessages, { role: "user", content: q }];
+    setIaMessages(newMsgs);
+    setIaInput("");
+    try {
+      const r = await fetch("/api/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ message: q, history: newMsgs })
+      });
+      const d = await r.json();
+      const reply = d.reply || d.error || "Sin respuesta del asistente.";
+      setIaMessages([...newMsgs, { role: "assistant", content: reply }]);
+    } catch (e) {
+      setIaMessages([...newMsgs, { role: "assistant", content: "Error consultando TECAVO IA. Verifica backend." }]);
+    }
+    setIaLoading(false);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -1478,6 +1508,7 @@ export default function SuperadministradorPage() {
               { id: 'pedidos', label: 'Pedidos', icon: <FileText size={18} /> },
               { id: 'apks', label: 'Descargas de APK', icon: <Smartphone size={18} /> },
               { id: 'costos-historico', label: 'Costos Detallados Destino', icon: <BarChart3 size={18} /> },
+              { id: 'teca-vo-ia', label: 'TECAVO IA (Bloque 01)', icon: <BarChart3 size={18} /> },
             ].map(item => (
               <button key={item.id} onClick={() => scrollTo(item.id)} className="flex items-center justify-center gap-3 px-4 py-3 bg-white hover:bg-slate-50 border border-slate-200 rounded-2xl text-sm font-medium">
                 <span className="text-emerald-700">{item.icon}</span> {item.label}
@@ -2353,6 +2384,55 @@ Notas comerciales" className="w-full border px-2 py-1 rounded text-sm h-14" />
               ))}
             </div>
           </div>
+        </section>
+
+        {/* TECAVO IA - BLOQUE 01/19 FUNDACION: Autenticacion, permisos, catalogo herramientas seguras, API OpenAI via proxy (sin exponer keys) */}
+        <section id="teca-vo-ia" className="bg-white p-6 rounded-3xl border shadow-sm mt-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 bg-emerald-100 text-emerald-700 rounded-xl"><BarChart3 size={22} /></div>
+            <div>
+              <div className="text-xl font-semibold">TECAVO IA — Bloque 01 (Fundación)</div>
+              <div className="text-sm text-slate-500">Asistente con OpenAI via AppGen Cloud proxy. Solo lectura. Permisos verificados en backend. Superadministrador tiene visibilidad completa. Cada consulta usa 1 crédito AppGen. Sin claves en cliente.</div>
+            </div>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="border rounded-2xl p-4">
+              <div className="font-semibold text-sm mb-2">Conexión y Config</div>
+              <button onClick={async () => {
+                setIaConnected(null);
+                try {
+                  const r = await fetch('/api/ai/chat');
+                  const d = await r.json();
+                  setIaConnected(d.connected !== false);
+                } catch { setIaConnected(false); }
+              }} className="px-3 py-1 text-sm border rounded">Probar conexión OpenAI (proxy)</button>
+              <div className="text-xs mt-2 text-slate-500">{iaConnected === null ? "No probado" : iaConnected ? "Conectado via AppGen Cloud" : "Fallo (revisa APPGEN_API_KEY en .env)"}</div>
+              <div className="text-[10px] mt-1">Modelo: proxy OpenAI. Herramientas solo lectura por rol.</div>
+            </div>
+
+            <div className="border rounded-2xl p-4">
+              <div className="font-semibold text-sm mb-2">Chat de consulta (lenguaje natural)</div>
+              <div className="h-48 overflow-auto border rounded bg-slate-50 p-2 text-sm mb-2">
+                {iaMessages.length === 0 && <div className="text-slate-400 text-xs">Ejemplos: "¿Cuánto debemos pagar esta semana?", "Rendimiento del lote 125", "Estado de pagos de Ana Gutiérrez"</div>}
+                {iaMessages.map((m, i) => (
+                  <div key={i} className={`mb-2 ${m.role === "user" ? "text-right" : ""}`}>
+                    <span className={`inline-block px-2 py-1 rounded ${m.role === "user" ? "bg-emerald-700 text-white" : "bg-white border"}`}>
+                      {m.content}
+                    </span>
+                  </div>
+                ))}
+                {iaLoading && <div className="text-xs text-slate-500">Consultando fuentes reales...</div>}
+              </div>
+              <div className="flex gap-2">
+                <input value={iaInput} onChange={e=>setIaInput(e.target.value)} onKeyDown={e=>{ if(e.key==="Enter" && iaInput.trim()) sendIaMessage(); }} placeholder="Pregunta sobre datos reales..." className="flex-1 border rounded px-3 py-1 text-sm" />
+                <button onClick={sendIaMessage} disabled={iaLoading || !iaInput.trim()} className="px-4 py-1 bg-emerald-700 text-white rounded text-sm disabled:bg-emerald-300">Enviar</button>
+              </div>
+              <div className="text-[10px] text-slate-400 mt-1">Respuestas incluyen fuente, periodo y certeza. Solo Super ve todo.</div>
+            </div>
+          </div>
+
+          <div className="text-[10px] mt-3 text-slate-500">Catálogo actual (Bloque 01): get_kpi_summary, get_lot_performance, get_payment_status, search_producers. Todas verifican sesión y rol en servidor. Historial en system_audit_log.</div>
         </section>
 
         </div>
