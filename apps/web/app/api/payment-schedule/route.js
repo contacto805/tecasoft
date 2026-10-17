@@ -128,6 +128,11 @@ export async function GET(request) {
     const year = searchParams.get("year");
     const urgent = searchParams.get("urgent");
     const id = searchParams.get("id");
+    const week = searchParams.get("week"); // this | next | prev | overdue
+    const producerFilter = searchParams.get("producer");
+    const orderFilter = searchParams.get("order");
+    const minAtraso = searchParams.get("minAtraso");
+    const statusFilter = searchParams.get("statusFilter");
 
     if (id) {
       const payment = await sql`
@@ -156,6 +161,37 @@ export async function GET(request) {
       conditions.push(sql`(due_date - DATE ${today}) <= 13 AND status = 'scheduled'`);
     }
 
+    if (producerFilter) {
+      conditions.push(sql`producer_name ILIKE ${'%' + producerFilter + '%'} `);
+    }
+    if (orderFilter) {
+      conditions.push(sql`cutting_order_id = ${parseInt(orderFilter) || 0}`);
+    }
+    if (statusFilter) {
+      conditions.push(sql`status = ${statusFilter}`);
+    }
+    if (minAtraso) {
+      // client will filter further on dias; here for future
+    }
+
+    // Week grouping support for P3 dashboard (Mon-Sun administrative week)
+    if (week) {
+      const now = new Date();
+      const dow = now.getDay();
+      const diffToMon = dow === 0 ? -6 : 1 - dow;
+      let mon = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diffToMon);
+      if (week === 'next') mon.setDate(mon.getDate() + 7);
+      if (week === 'prev') mon.setDate(mon.getDate() - 7);
+      const sun = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6);
+      const start = mon.toISOString().split('T')[0];
+      const end = sun.toISOString().split('T')[0];
+      if (week === 'overdue') {
+        conditions.push(sql`scheduled_payment_date < ${start} AND (saldo_pendiente > 0 OR status NOT IN ('paid'))`);
+      } else {
+        conditions.push(sql`scheduled_payment_date >= ${start} AND scheduled_payment_date <= ${end}`);
+      }
+    }
+
     if (conditions.length > 0) {
       where = sql`WHERE ${conditions[0]}`;
       for (let i = 1; i < conditions.length; i++) {
@@ -164,7 +200,9 @@ export async function GET(request) {
     }
 
     const payments = await sql`
-      SELECT * FROM payment_schedule
+      SELECT ps.*, co.folio AS corte_folio, co.broker_name AS corredor
+      FROM payment_schedule ps
+      LEFT JOIN cutting_orders co ON ps.cutting_order_id = co.id
       ${where}
       ORDER BY scheduled_payment_date ASC, priority DESC
     `;

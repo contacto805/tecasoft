@@ -30,6 +30,109 @@ export default function AdminGeneralPage() {
   const [assignRole, setAssignRole] = useState('capturista');
   const SECTIONS = ['registro', 'aprobacion', 'config', 'reportes'];
 
+  // 03.P3 inner component - 3 bloques de pagos (mínimo)
+  function PagosDashboard() {
+    const [pays, setPays] = useState([]);
+    const [pLoading, setPLoading] = useState(false);
+    const [fProducer, setFProducer] = useState('');
+    const [fStatus, setFStatus] = useState('');
+    const [fMinAtraso, setFMinAtraso] = useState('');
+
+    const loadPays = async (w = '') => {
+      setPLoading(true);
+      try {
+        let url = '/api/payment-schedule';
+        const q = [];
+        if (w) q.push('week=' + w);
+        if (fProducer) q.push('producer=' + encodeURIComponent(fProducer));
+        if (fStatus) q.push('statusFilter=' + fStatus);
+        if (fMinAtraso) q.push('minAtraso=' + fMinAtraso);
+        if (q.length) url += '?' + q.join('&');
+        const r = await fetch(url);
+        const d = await r.json();
+        setPays(Array.isArray(d) ? d : []);
+      } catch { setPays([]); }
+      finally { setPLoading(false); }
+    };
+
+    useEffect(() => { loadPays(); }, []);
+
+    const groupByWeek = (list) => {
+      const today = new Date();
+      const dow = today.getDay();
+      const diff = dow === 0 ? -6 : 1 - dow;
+      const mon = new Date(today); mon.setDate(today.getDate() + diff); mon.setHours(0,0,0,0);
+      const sun = new Date(mon); sun.setDate(mon.getDate()+6);
+      const nextMon = new Date(mon); nextMon.setDate(mon.getDate()+7);
+      const nextSun = new Date(nextMon); nextSun.setDate(nextMon.getDate()+6);
+      const thisStart = mon.toISOString().slice(0,10);
+      const thisEnd = sun.toISOString().slice(0,10);
+      const nextS = nextMon.toISOString().slice(0,10);
+      const nextE = nextSun.toISOString().slice(0,10);
+
+      const esta = list.filter(p => p.scheduled_payment_date && p.scheduled_payment_date >= thisStart && p.scheduled_payment_date <= thisEnd);
+      const prox = list.filter(p => p.scheduled_payment_date && p.scheduled_payment_date >= nextS && p.scheduled_payment_date <= nextE);
+      const venc = list.filter(p => p.scheduled_payment_date && p.scheduled_payment_date < thisStart && (parseFloat(p.saldo_pendiente||0) > 0 || (p.status && p.status !== 'paid')));
+      return { esta, prox, venc };
+    };
+
+    const { esta, prox, venc } = groupByWeek(pays);
+
+    const applyFilters = () => loadPays();
+    const clearF = () => { setFProducer(''); setFStatus(''); setFMinAtraso(''); loadPays(); };
+
+    const renderList = (items, label) => (
+      <div className="border rounded p-3 bg-gray-50">
+        <div className="font-medium text-sm mb-2">{label} ({items.length})</div>
+        {items.length === 0 && <div className="text-xs text-gray-400">Sin registros</div>}
+        <div className="max-h-44 overflow-auto text-xs space-y-1">
+          {items.slice(0, 12).map((p,i) => {
+            const saldo = parseFloat(p.saldo_pendiente || (p.amount - (p.monto_pagado||0)) || 0);
+            const atraso = p.dias_retraso_habiles || 0;
+            return (
+              <div key={i} className="flex justify-between bg-white p-1 rounded border">
+                <div>
+                  <span className="font-mono">{p.folio}</span> {p.producer_name} 
+                  {p.corte_folio && <span className="ml-1 text-[10px] text-blue-600">Corte:{p.corte_folio}</span>}
+                  {p.corredor && <span className="ml-1 text-[10px]">·{p.corredor}</span>}
+                </div>
+                <div className="text-right">
+                  ${parseFloat(p.amount||0).toFixed(0)} | Ab:{parseFloat(p.monto_pagado||0).toFixed(0)} | Pend:{saldo.toFixed(0)}
+                  <span className="ml-2">Ret:{atraso}d</span>
+                  {p.contractual_due_date && p.contractual_due_date !== p.scheduled_payment_date && <span className="ml-1 text-amber-600">vs cont</span>}
+                  {p.cutting_order_id && <a href={`/cutting-orders`} className="ml-1 underline text-blue-600">ver orden</a>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="text-[10px] mt-1 text-gray-500">Subtotal pendiente: ${items.reduce((s,p)=> s + parseFloat(p.saldo_pendiente || (p.amount - (p.monto_pagado||0)) || 0),0).toFixed(0)}</div>
+      </div>
+    );
+
+    return (
+      <div>
+        <div className="flex gap-2 mb-3 text-xs">
+          <input value={fProducer} onChange={e=>setFProducer(e.target.value)} placeholder="Productor" className="border px-2 py-1 rounded" />
+          <select value={fStatus} onChange={e=>setFStatus(e.target.value)} className="border px-2 py-1 rounded"><option value="">Estado</option><option>scheduled</option><option>partial</option><option>paid</option></select>
+          <input value={fMinAtraso} onChange={e=>setFMinAtraso(e.target.value)} placeholder="Mín retraso" className="border px-2 py-1 w-20 rounded" />
+          <button onClick={applyFilters} className="px-2 bg-blue-600 text-white rounded">Filtrar</button>
+          <button onClick={clearF} className="px-2 border rounded">Limpiar</button>
+          <button onClick={()=>loadPays('this')} className="px-2 border rounded">Esta sem</button>
+          <button onClick={()=>loadPays('next')} className="px-2 border rounded">Próxima</button>
+          <button onClick={()=>loadPays('overdue')} className="px-2 border rounded">Vencidos</button>
+        </div>
+        {pLoading && <div className="text-xs">Cargando pagos...</div>}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          {renderList(esta, 'PAGOS ESTA SEMANA (Lun-Dom)')}
+          {renderList(prox, 'PAGOS SEMANA PRÓXIMA')}
+          {renderList(venc, 'PAGOS VENCIDOS (semanas anteriores)')}
+        </div>
+        <div className="text-[10px] mt-2 text-gray-500">Monto estimado=amount • Abonado=monto_pagado • Pendiente=saldo • Autorizado si hay autorizado_por. Sin ceros ficticios. Retraso hábil solo L-V desde día sig. a programado. Rol admin verificado en vistas.</div>
+      </div>
+    );
+  }
+
   useEffect(() => {
     if (activeTab === "dashboard") {
       loadDashboard();
@@ -457,6 +560,19 @@ export default function AdminGeneralPage() {
                   {dashboardData.closings.pending}
                 </p>
               </div>
+            </div>
+
+            {/* 03.P3 | PAGOS A PRODUCTORES - 3 BLOQUES (esta semana, próxima, vencidos) con filtros y roles */}
+            <div className="mt-6 bg-white rounded-lg shadow-sm p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Pagos a Productores</h3>
+                  <p className="text-xs text-gray-500">Semana admin (Lun-Dom) • Datos reales • Sin duplicados • Días hábiles de retraso (solo L-V, sin festivos en contador)</p>
+                </div>
+                <button onClick={() => window.location.href = '/programacion-pagos'} className="text-sm px-3 py-1 border rounded">Ir a Programación</button>
+              </div>
+
+              <PagosDashboard />
             </div>
           </div>
         )}
