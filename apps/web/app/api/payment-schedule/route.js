@@ -36,6 +36,25 @@ async function loadActiveHolidays(year) {
   }
 }
 
+function calcularDiasRetrasoHabiles(scheduledStr, refDateStr = null, isLiquidated = false) {
+  if (!scheduledStr) return 0;
+  const scheduled = new Date(scheduledStr + 'T12:00:00');
+  let ref = refDateStr ? new Date(refDateStr + 'T12:00:00') : new Date();
+  if (ref <= scheduled) return 0;
+  // count from NEXT day after scheduled, only Mon-Fri, include today if pending
+  let d = new Date(scheduled);
+  d.setDate(d.getDate() + 1);
+  d.setHours(0, 0, 0, 0);
+  ref.setHours(0, 0, 0, 0);
+  let count = 0;
+  while (d <= ref) {
+    const dow = d.getDay();
+    if (dow >= 1 && dow <= 5) count++; // Mon-Fri only; NO holidays subtracted per spec
+    d.setDate(d.getDate() + 1);
+  }
+  return count;
+}
+
 async function computePaymentSchedule(fruitReceptionDateStr, paymentDays, cuttingOrderId = null) {
   if (!fruitReceptionDateStr) {
     const today = new Date();
@@ -150,7 +169,22 @@ export async function GET(request) {
       ORDER BY scheduled_payment_date ASC, priority DESC
     `;
 
-    return NextResponse.json(payments);
+    const enriched = payments.map(p => {
+      const isLiquid = (p.status === 'paid' || (p.monto_pagado || 0) >= (p.amount || 0));
+      const refDate = isLiquid && p.paid_at ? p.paid_at.split('T')[0] : (p.fecha_liquidacion ? p.fecha_liquidacion.split('T')[0] : null);
+      const dias = calcularDiasRetrasoHabiles(p.scheduled_payment_date, refDate, isLiquid);
+      const pagado = parseFloat(p.monto_pagado || 0);
+      const saldo = (p.saldo_pendiente != null) ? parseFloat(p.saldo_pendiente) : Math.max(0, parseFloat(p.amount || 0) - pagado);
+      return {
+        ...p,
+        dias_retraso_habiles: dias,
+        monto_pagado: pagado,
+        saldo_pendiente: saldo,
+        status: (saldo <= 0 && (pagado > 0 || p.status === 'paid')) ? 'paid' : (pagado > 0 ? 'partial' : (p.status || 'scheduled'))
+      };
+    });
+
+    return NextResponse.json(enriched);
   } catch (error) {
     console.error("Error fetching payment schedule:", error);
     return NextResponse.json(
@@ -229,7 +263,9 @@ export async function POST(request) {
         contractual_due_date,
         original_friday,
         adjustment_reason,
-        calendar_version
+        calendar_version,
+        monto_pagado,
+        saldo_pendiente
       ) VALUES (
         ${folio},
         ${producer_name},
@@ -254,7 +290,9 @@ export async function POST(request) {
         ${schedule.contractual_due_date},
         ${schedule.original_friday},
         ${schedule.adjustment_reason},
-        ${schedule.calendar_version}
+        ${schedule.calendar_version},
+        0,
+        ${parseFloat(amount)}
       )
       RETURNING *
     `;
@@ -343,6 +381,24 @@ export async function PUT(request) {
       updateData.calendar_version = schedule.calendar_version;
     }
 
+    // Handle partial payments / liquidacion for dias_retraso (P2)
+    const newMontoPagado = updateData.monto_pagado !== undefined ? parseFloat(updateData.monto_pagado) : parseFloat(current[0].monto_pagado || 0);
+    const totalAmount = updateData.amount !== undefined ? parseFloat(updateData.amount) : parseFloat(current[0].amount || 0);
+    let newSaldo = totalAmount - newMontoPagado;
+    if (newSaldo < 0) newSaldo = 0;
+    if (updateData.monto_pagado !== undefined || updateData.status === 'paid') {
+      updateData.monto_pagado = newMontoPagado;
+      updateData.saldo_pendiente = newSaldo;
+      if (newSaldo <= 0 || updateData.status === 'paid') {
+        updateData.status = 'paid';
+        if (!updateData.fecha_liquidacion && !current[0].fecha_liquidacion) {
+          updateData.fecha_liquidacion = updateData.paid_at ? updateData.paid_at.split('T')[0] : new Date().toISOString().split('T')[0];
+        }
+      } else {
+        updateData.status = 'partial';
+      }
+    }
+
     const result = await sql`
       UPDATE payment_schedule SET
         producer_name = ${updateData.producer_name !== undefined ? updateData.producer_name : current[0].producer_name},
@@ -366,6 +422,10 @@ export async function PUT(request) {
         paid_at = ${updateData.paid_at !== undefined ? updateData.paid_at : current[0].paid_at},
         paid_by = ${updateData.paid_by !== undefined ? updateData.paid_by : current[0].paid_by},
         cutting_order_id = ${updateData.cutting_order_id !== undefined ? updateData.cutting_order_id : current[0].cutting_order_id},
+        monto_pagado = ${updateData.monto_pagado !== undefined ? updateData.monto_pagado : current[0].monto_pagado},
+        saldo_pendiente = ${updateData.saldo_pendiente !== undefined ? updateData.saldo_pendiente : current[0].saldo_pendiente},
+        fecha_liquidacion = ${updateData.fecha_liquidacion !== undefined ? updateData.fecha_liquidacion : current[0].fecha_liquidacion},
+        autorizado_por = ${updateData.autorizado_por !== undefined ? updateData.autorizado_por : current[0].autorizado_por},
         contractual_due_date = ${updateData.contractual_due_date !== undefined ? updateData.contractual_due_date : current[0].contractual_due_date},
         original_friday = ${updateData.original_friday !== undefined ? updateData.original_friday : current[0].original_friday},
         adjustment_reason = ${updateData.adjustment_reason !== undefined ? updateData.adjustment_reason : current[0].adjustment_reason},

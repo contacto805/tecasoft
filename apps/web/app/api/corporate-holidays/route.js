@@ -52,13 +52,13 @@ export async function PUT(request) {
 
     const [updated] = await sql`
       UPDATE corporate_holidays SET
-        year = COALESCE(${updates.year ? parseInt(updates.year) : null}, year),
-        holiday_date = COALESCE(${updates.holiday_date || null}, holiday_date),
-        description = COALESCE(${updates.description || null}, description),
-        applicability = COALESCE(${updates.applicability || null}, applicability),
-        validity = COALESCE(${updates.validity || null}, validity),
-        zone = COALESCE(${updates.zone || null}, zone),
-        is_active = COALESCE(${updates.is_active !== undefined ? updates.is_active : null}, is_active),
+        year = ${updates.year ? parseInt(updates.year) : null}::int,
+        holiday_date = ${updates.holiday_date || null}::date,
+        description = ${updates.description || null},
+        applicability = ${updates.applicability || null},
+        validity = ${updates.validity || null},
+        zone = ${updates.zone || null},
+        is_active = ${updates.is_active !== undefined ? updates.is_active : null},
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ${parseInt(id)}
       RETURNING *

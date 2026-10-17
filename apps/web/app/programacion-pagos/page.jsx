@@ -95,9 +95,10 @@ export default function PaymentSchedulePage() {
           calMap[key].total_amount += amt;
           if (p.producer_name && !calMap[key].producers.includes(p.producer_name)) calMap[key].producers.push(p.producer_name);
         }
-        if (p.status !== 'paid') {
+          if (p.status !== 'paid') {
           pendingP.add(p.producer_name);
-          if (sp && Math.floor((sp.getTime() - now.getTime()) / 86400000) < 0) overdueA += amt;
+          const sal = (p.saldo_pendiente != null ? parseFloat(p.saldo_pendiente) : amt);
+          if (sp && Math.floor((Number(sp.getTime()) - Number(now.getTime())) / 86400000) < 0) overdueA += sal;
         }
       });
       const cal = Object.values(calMap);
@@ -105,7 +106,7 @@ export default function PaymentSchedulePage() {
         weekly_scheduled: weekly,
         monthly_scheduled: monthly,
         pending_producers: pendingP.size,
-        total_liabilities: arr.filter(p => p.status !== 'paid').reduce((s, p) => s + parseFloat(p.amount || 0), 0),
+        total_liabilities: arr.filter(p => p.status !== 'paid').reduce((s, p) => s + (p.saldo_pendiente != null ? parseFloat(p.saldo_pendiente) : parseFloat(p.amount || 0)), 0),
         overdue_amount: overdueA,
         calendar_data: cal.slice(0, 8)
       });
@@ -135,7 +136,7 @@ export default function PaymentSchedulePage() {
         const days = lot.payment_days || 15;
         const due = new Date(reception);
         due.setDate(due.getDate() + days);
-        const daysLeft = Math.floor((due.getTime() - today.getTime()) / 86400000);
+        const daysLeft = Math.floor((Number(due.getTime()) - Number(today.getTime())) / 86400000);
         if (daysLeft <= 13 && (lot.status !== 'cancelado')) {
           const relatedSched = schedList.find(s => s.lot_id === lot.id) || {};
           alertList.push({
@@ -343,7 +344,34 @@ export default function PaymentSchedulePage() {
       const res = await fetch('/api/payment-schedule', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: payment.id, status: 'paid', paid_at: todayStr, paid_by: isSuperAdmin ? 'super-admin' : 'admin' })
+        body: JSON.stringify({ id: payment.id, status: 'paid', paid_at: todayStr, paid_by: isSuperAdmin ? 'super-admin' : 'admin', monto_pagado: payment.amount, fecha_liquidacion: todayStr })
+      });
+      if (res.ok) {
+        await fetchPayments();
+        await fetchStats();
+      }
+    } catch (e) {}
+  };
+
+  const registrarParcial = async (payment) => {
+    const montoStr = prompt('Monto abonado (parcial):', '0');
+    if (montoStr === null) return;
+    const monto = parseFloat(montoStr);
+    if (!monto || monto <= 0) return;
+    const todayStr = new Date().toISOString().split('T')[0];
+    const nuevoPagado = (parseFloat(payment.monto_pagado || 0) + monto);
+    try {
+      const res = await fetch('/api/payment-schedule', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: payment.id,
+          monto_pagado: nuevoPagado,
+          paid_at: todayStr,
+          autorizado_por: isSuperAdmin ? 'super-admin' : 'admin',
+          updated_by: isSuperAdmin ? 'super-admin' : 'admin',
+          audit_reason: 'Pago parcial registrado - días de retraso continúan sobre saldo'
+        })
       });
       if (res.ok) {
         await fetchPayments();
@@ -354,11 +382,12 @@ export default function PaymentSchedulePage() {
 
   const getComputedStatus = (payment) => {
     if (payment.status === 'paid') return 'paid';
+    if (payment.status === 'partial') return 'partial';
     const today = new Date();
     let due = null;
     try { due = payment.due_date ? new Date(payment.due_date) : null; } catch(e){}
     if (!due || isNaN(due.getTime())) return 'scheduled';
-    const daysUntilDue = Math.floor((due.getTime() - today.getTime()) / (1000 * 3600 * 24));
+    const daysUntilDue = Math.floor((Number(due.getTime()) - Number(today.getTime())) / (1000 * 3600 * 24));
     if (daysUntilDue < 0) return 'overdue';
     if (daysUntilDue <= 13) return 'urgent';
     return 'scheduled';
@@ -371,10 +400,13 @@ export default function PaymentSchedulePage() {
   };
 
   const getStatusBadge = (payment) => {
-    const st = payment.status === 'paid' ? 'paid' : getComputedStatus(payment);
-    if (st === 'paid' || payment.status === 'paid') {
-      return <span className="px-3 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-full flex items-center gap-1"><CheckCircle className="w-3 h-3" />Pagado</span>;
+    if (payment.status === 'paid' || (payment.saldo_pendiente || 0) <= 0) {
+      return <span className="px-3 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-full flex items-center gap-1"><CheckCircle className="w-3 h-3" />Liquidado</span>;
     }
+    if (payment.status === 'partial') {
+      return <span className="px-3 py-1 bg-amber-100 text-amber-800 text-xs font-medium rounded-full flex items-center gap-1">Parcial</span>;
+    }
+    const st = getComputedStatus(payment);
     if (st === 'overdue') {
       return <span className="px-3 py-1 bg-red-100 text-red-800 text-xs font-medium rounded-full flex items-center gap-1"><XCircle className="w-3 h-3" />Vencido</span>;
     }
@@ -395,6 +427,7 @@ export default function PaymentSchedulePage() {
     if (filter === 'all') return true;
     if (filter === 'urgent') return getComputedStatus(payment) === 'urgent' || getComputedStatus(payment) === 'overdue';
     if (filter === 'paid') return payment.status === 'paid';
+    if (filter === 'partial') return payment.status === 'partial';
     if (filter === 'overdue') return getComputedStatus(payment) === 'overdue';
     if (filter === 'scheduled') return getComputedStatus(payment) === 'scheduled';
     return true;
@@ -457,7 +490,7 @@ export default function PaymentSchedulePage() {
                 {frutaProxima.map((f, i) => {
                   const d1 = new Date(f.fecha_vencimiento).getTime();
                   const d2 = new Date().getTime();
-                  const daysLeft = Math.floor((d1 - d2) / 86400000);
+                  const daysLeft = Math.floor((Number(d1) - Number(d2)) / 86400000);
                   return (
                     <tr key={i} className="border-t hover:bg-amber-50">
                       <td className="px-4 py-2.5 font-medium">{f.producer}</td>
@@ -548,7 +581,7 @@ export default function PaymentSchedulePage() {
             <input value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} placeholder="Buscar productor, beneficiario, folio o concepto" className="pl-9 w-full border rounded-lg py-2 text-sm" />
           </div>
           <div className="flex gap-1 text-sm">
-            {['all','urgent','scheduled','paid','overdue'].map(v => (
+            {['all','urgent','scheduled','partial','paid','overdue'].map(v => (
               <button key={v} onClick={() => setFilter(v)} className={`px-3 py-1 rounded ${filter===v ? 'bg-emerald-600 text-white' : 'bg-gray-100'}`}>{v.toUpperCase()}</button>
             ))}
           </div>
@@ -562,16 +595,20 @@ export default function PaymentSchedulePage() {
               <th className="p-4 text-left">Folio</th>
               <th className="p-4 text-left">Productor / Beneficiario</th>
               <th className="p-4 text-left">Banco / CLABE</th>
-              <th className="p-4">Vencimiento Contractual</th>
-              <th className="p-4">Programado Viernes (efectivo)</th>
+              <th className="p-4">Venc. Contractual</th>
+              <th className="p-4">Programado Viernes</th>
               <th className="p-4 text-right">Monto</th>
+              <th className="p-4 text-center">Días retraso hábiles</th>
+              <th className="p-4 text-right">Saldo pendiente</th>
               <th className="p-4">Estado</th>
-              <th className="p-4 w-28">Acciones</th>
+              <th className="p-4 w-36">Acciones</th>
             </tr></thead>
             <tbody className="divide-y text-sm">
               {filteredPayments.length === 0 && <tr><td className="p-10 text-center text-gray-400" colSpan="8">No hay registros que coincidan</td></tr>}
               {filteredPayments.map(p => {
                 const st = getComputedStatus(p);
+                const diasRet = (p.dias_retraso_habiles != null ? p.dias_retraso_habiles : 0);
+                const saldo = (p.saldo_pendiente != null ? p.saldo_pendiente : Math.max(0, parseFloat(p.amount||0) - parseFloat(p.monto_pagado||0)));
                 return <tr key={p.id} className="hover:bg-gray-50">
                   <td className="p-4 font-mono font-semibold">{p.folio}</td>
                   <td className="p-4">
@@ -590,10 +627,16 @@ export default function PaymentSchedulePage() {
                     {(p.original_friday && p.original_friday !== p.scheduled_payment_date) && <div className="text-[10px] text-amber-600">orig: {new Date(p.original_friday).toLocaleDateString('es-MX')}</div>}
                   </td>
                   <td className="p-4 text-right font-medium">${parseFloat(p.amount || 0).toLocaleString('es-MX', {minimumFractionDigits: 2})}</td>
+                  <td className="p-4 text-center">
+                    <span className={`px-2 py-0.5 text-xs rounded ${diasRet > 0 ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-600'}`}>{diasRet}</span>
+                    {p.contractual_due_date && p.scheduled_payment_date && p.contractual_due_date !== p.scheduled_payment_date && <div className="text-[9px] text-gray-500">vs contractual</div>}
+                  </td>
+                  <td className="p-4 text-right font-medium text-amber-700">${saldo.toLocaleString('es-MX', {minimumFractionDigits: 2})}</td>
                   <td className="p-4">{getStatusBadge(p)}</td>
                   <td className="p-4">
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1 flex-wrap">
                       {p.status !== 'paid' && <button className="text-xs bg-emerald-700 text-white px-2 py-px rounded" onClick={() => markAsPaid(p)}>Pagar</button>}
+                      {p.status !== 'paid' && <button className="text-xs bg-amber-600 text-white px-2 py-px rounded" onClick={() => registrarParcial(p)}>Parcial</button>}
                       <button onClick={() => openEdit(p)}><Edit size={15} className="text-blue-700" /></button>
                       <button onClick={() => deletePayment(p.id)}><Trash2 size={15} className="text-red-700" /></button>
                     </div>
