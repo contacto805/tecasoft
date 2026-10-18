@@ -15,8 +15,12 @@ export async function GET(request) {
     
     const customers = await query;
 
-    const enriched = customers.map(c => {
+    const enriched = await Promise.all(customers.map(async (c) => {
       const fiscalComplete = !!(c.fiscal_rfc && c.fiscal_razon_social && c.fiscal_codigo_postal && c.fiscal_regimen_fiscal);
+      let banks = [];
+      try {
+        banks = await sql`SELECT * FROM customer_bank_accounts WHERE customer_id = ${c.id} ORDER BY is_primary DESC, created_at DESC`;
+      } catch (_) {}
       return {
         ...c,
         datos_fiscales_completos: fiscalComplete,
@@ -33,9 +37,12 @@ export async function GET(request) {
         payment_terms_days: c.payment_terms_days || 30,
         credit_limit_usd: parseFloat(c.credit_limit_usd || 0),
         default_currency: c.default_currency || 'USD',
-        delivery_address: c.delivery_address || null
+        delivery_address: c.delivery_address || null,
+        estado_documental: c.estado_documental || 'Pendiente',
+        bank_accounts: banks,
+        primary_bank: banks.find(b => b.is_primary) || banks[0] || null
       };
-    });
+    }));
 
     if (forSelect === 'true') {
       return NextResponse.json(enriched.map(c => ({

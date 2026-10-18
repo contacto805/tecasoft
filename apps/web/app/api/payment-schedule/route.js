@@ -303,7 +303,9 @@ export async function POST(request) {
         adjustment_reason,
         calendar_version,
         monto_pagado,
-        saldo_pendiente
+        saldo_pendiente,
+        bank_account_id,
+        owner_type
       ) VALUES (
         ${folio},
         ${producer_name},
@@ -330,7 +332,9 @@ export async function POST(request) {
         ${schedule.adjustment_reason},
         ${schedule.calendar_version},
         0,
-        ${parseFloat(amount)}
+        ${parseFloat(amount)},
+        ${data.bank_account_id || null},
+        ${data.owner_type || 'producer'}
       )
       RETURNING *
     `;
@@ -468,6 +472,8 @@ export async function PUT(request) {
         original_friday = ${updateData.original_friday !== undefined ? updateData.original_friday : current[0].original_friday},
         adjustment_reason = ${updateData.adjustment_reason !== undefined ? updateData.adjustment_reason : current[0].adjustment_reason},
         calendar_version = ${updateData.calendar_version !== undefined ? updateData.calendar_version : current[0].calendar_version},
+        bank_account_id = ${updateData.bank_account_id !== undefined ? updateData.bank_account_id : current[0].bank_account_id},
+        owner_type = ${updateData.owner_type !== undefined ? updateData.owner_type : current[0].owner_type},
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ${id}
       RETURNING *

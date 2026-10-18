@@ -427,8 +427,15 @@ export default function MaterialsInventoryPage() {
 
         {activeSection === 'proveedores' && (
           <div className="bg-white border rounded-2xl p-6 mb-6">
-            <h2 className="font-semibold mb-2">8. Proveedores</h2>
-            <div className="text-sm">{providers.length ? providers.map(p=><div key={p.id}>{p.supplier_name || p.provider_name}</div>) : 'Proveedores desde purchase_order_suppliers / expense_providers.'}</div>
+            <h2 className="font-semibold mb-2">8. Proveedores (Expediente Financiero)</h2>
+            <div className="text-xs mb-3">Categorías: Materiales • Cajas • Tarimas • Fletes • Servicios • Combustible • Otros. Cuentas bancarias + saldos + facturas/recepciones.</div>
+            <div className="text-sm mb-3">{providers.length ? providers.map(p => (
+              <div key={p.id} className="border p-2 mb-1 rounded text-xs">
+                {p.supplier_name || p.provider_name} • {p.categoria || p.tipo_proveedor || '—'} • RFC: {p.rfc || '—'}
+                <div className="text-[10px] text-slate-500">{p.banco ? p.banco + ' ' + (p.clabe ? 'CLABE ****'+p.clabe.slice(-4) : '') : ''}</div>
+              </div>
+            )) : 'Proveedores desde purchase_order_suppliers / expense_providers. Agregue en Compras o Gastos.'}</div>
+            <div className="text-[10px] text-slate-500">Vincular pagos a cuenta bancaria del proveedor. Saldos desde purchase_orders + receptions + pagos. No duplica gastos al registrar pago.</div>
           </div>
         )}
 

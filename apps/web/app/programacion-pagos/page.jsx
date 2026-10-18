@@ -14,8 +14,22 @@ export default function PaymentSchedulePage() {
   const [form, setForm] = useState({
     producer_name: '', beneficiary_name: '', bank_name: '', account_number: '', clabe: '',
     concept: '', amount: '', fruit_reception_date: new Date().toISOString().split('T')[0],
-    payment_days: 22, priority: 'normal', observations: '', cutting_order_id: ''
+    payment_days: 22, priority: 'normal', observations: '', cutting_order_id: '', bank_account_id: null
   });
+  const [customerBanks, setCustomerBanks] = useState([]);
+
+  // Load banks from customer expediente when producer name matches (FASE 06)
+  useEffect(() => {
+    if (!form.producer_name || form.producer_name.length < 3) { setCustomerBanks([]); return; }
+    (async () => {
+      try {
+        const res = await fetch('/api/customers');
+        const list = await res.json();
+        const match = (list || []).find(c => (c.customer_name || '').toLowerCase().includes(form.producer_name.toLowerCase().slice(0, 8)));
+        setCustomerBanks((match && match.bank_accounts) || []);
+      } catch { setCustomerBanks([]); }
+    })();
+  }, [form.producer_name]);
   const [datePreview, setDatePreview] = useState(null);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
 
@@ -297,7 +311,7 @@ export default function PaymentSchedulePage() {
       return;
     }
     try {
-      const payload = { ...form, amount: parseFloat(form.amount), cutting_order_id: form.cutting_order_id ? parseInt(form.cutting_order_id) : null };
+      const payload = { ...form, amount: parseFloat(form.amount), cutting_order_id: form.cutting_order_id ? parseInt(form.cutting_order_id) : null, bank_account_id: form.bank_account_id || null };
       let res;
       if (editingPayment) {
         res = await fetch('/api/payment-schedule', {
@@ -695,7 +709,13 @@ export default function PaymentSchedulePage() {
             </div>
             <div><label className="text-xs block mb-0.5">ID Orden de Corte (enlace único)</label><input type="number" placeholder="Opcional - ID de cutting_orders" value={String(form.cutting_order_id || '')} onChange={e=>setForm({...form,cutting_order_id:e.target.value})} className="w-full border px-3 py-1.5 rounded" /></div>
             <div><label className="text-xs block mb-0.5">Banco</label><input value={form.bank_name} onChange={e=>setForm({...form,bank_name:e.target.value})} className="w-full border px-3 py-1.5 rounded" /></div>
-            <div><label className="text-xs block mb-0.5">CLABE / Cuenta</label><div className="flex gap-1.5"><input value={form.clabe} onChange={e=>setForm({...form,clabe:e.target.value})} placeholder="CLABE" className="flex-1 border px-3 py-1.5 rounded"/><input value={form.account_number} onChange={e=>setForm({...form,account_number:e.target.value})} placeholder="Cuenta" className="flex-1 border px-3 py-1.5 rounded" /></div></div>
+            <div><label className="text-xs block mb-0.5">CLABE / Cuenta (o selecciona de expediente del productor)</label><div className="flex gap-1.5"><input value={form.clabe} onChange={e=>setForm({...form,clabe:e.target.value})} placeholder="CLABE" className="flex-1 border px-3 py-1.5 rounded"/><input value={form.account_number} onChange={e=>setForm({...form,account_number:e.target.value})} placeholder="Cuenta" className="flex-1 border px-3 py-1.5 rounded" /></div></div>
+            <div className="md:col-span-2"><label className="text-xs block mb-0.5">Vincular a cuenta verificada del productor (recomendado)</label>
+              <select value={form.bank_account_id || ''} onChange={e=>setForm({...form, bank_account_id: e.target.value ? parseInt(e.target.value) : null})} className="border px-3 py-1.5 rounded w-full">
+                <option value="">Usar datos manuales arriba</option>
+                {customerBanks.map(b => <option key={b.id} value={b.id}>{b.bank_name} • {b.is_primary ? 'Principal' : ''} • {b.titular || ''}</option>)}
+              </select>
+            </div>
             <div><label className="text-xs block mb-0.5">Prioridad</label><select value={form.priority} onChange={e=>setForm({...form,priority:e.target.value})} className="w-full border px-3 py-1.5 rounded"><option value="normal">Normal</option><option value="urgent">Urgente</option></select></div>
             <div className="md:col-span-2">
               <label className="text-xs block mb-0.5">Observaciones</label>

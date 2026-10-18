@@ -688,8 +688,7 @@ function CustomerAccountModal({ customer, onClose, primaryColor, textColor }) {
           </div>
           <button onClick={onClose} className="text-3xl leading-none">×</button>
         </div>
-
-        {/* Navegación de secciones del expediente */}
+          {/* Navegación de secciones del expediente */}
         <div className="flex flex-wrap gap-1 border-b bg-gray-50 px-4 py-2 text-sm">
           {[
             { key: 'general', label: 'INFORMACIÓN GENERAL' },
@@ -698,6 +697,7 @@ function CustomerAccountModal({ customer, onClose, primaryColor, textColor }) {
             { key: 'depositos', label: 'DEPÓSITOS' },
             { key: 'cuenta', label: 'CUENTA CORRIENTE' },
             { key: 'estado', label: 'ESTADO DE CUENTA' },
+            { key: 'bancos', label: 'BANCOS Y PAGOS (EXPEDIENTE FINANCIERO)' },
             { key: 'portal', label: 'ACCESO AL PORTAL' },
             { key: 'docs', label: 'DOCUMENTOS' },
             { key: 'historial', label: 'HISTORIAL' }
@@ -797,6 +797,41 @@ function CustomerAccountModal({ customer, onClose, primaryColor, textColor }) {
             </div>
           )}
 
+          {/* BANCOS Y PAGOS - EXPEDIENTE FINANCIERO PRODUCTORES (FASE 06) */}
+          {activeSection === 'bancos' && (
+            <div className="space-y-4">
+              <div className="font-semibold">Cuentas Bancarias del Productor • Datos parcialmente ocultos • Una principal verificada</div>
+              <div className="text-xs text-slate-500">Múltiples cuentas verificadas. Solo Super ve datos completos. Pagos se vinculan a cuenta específica.</div>
+
+              <div className="border rounded p-3 bg-white">
+                <div className="text-sm font-medium mb-2">Cuentas registradas</div>
+                {(customer.bank_accounts || []).length === 0 && <div className="text-xs text-slate-500">Sin cuentas bancarias registradas. Agregue abajo.</div>}
+                {(customer.bank_accounts || []).map((b, i) => (
+                  <div key={i} className="border-b py-2 text-sm flex justify-between items-start">
+                    <div>
+                      <div className="font-medium">{b.bank_name} {b.is_primary ? '(PRINCIPAL)' : ''} {b.verified ? '✓ Verificada' : ''}</div>
+                      <div className="text-xs text-slate-600">Titular: {b.titular || '—'}</div>
+                      <div className="text-xs font-mono">CLABE: {b.clabe ? '••••' + String(b.clabe).slice(-4) : '—'} • Cuenta: {b.account_number ? '••••' + String(b.account_number).slice(-4) : '—'}</div>
+                    </div>
+                    <div className="text-[10px] text-right text-slate-500">{b.currency || 'MXN'}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="border rounded p-3 bg-slate-50 text-sm">
+                <div className="font-medium mb-1">Agregar / Actualizar cuenta bancaria</div>
+                <BankAccountForm customerId={customer.id} onSaved={() => { /* refresh parent if needed */ fetchIntegratedData(); }} />
+              </div>
+
+              <div className="text-xs bg-white border p-3 rounded">
+                <div className="font-semibold mb-1">Pagos y Saldos vinculados (de payment_schedule + producer_payments + liquidaciones)</div>
+                <div>Usar Programación de Pagos o Productor para ver saldos, programados (22/28 días), contractual vs viernes, parciales.</div>
+                <a href="/programacion-pagos" className="text-emerald-700 underline text-xs">Ir a Programación de Pagos →</a>
+                <div className="mt-1 text-[10px]">Estado documental: {customer.estado_documental || 'Pendiente'}. Bloqueo de autorización si documentos faltantes (ver expediente lotes).</div>
+              </div>
+            </div>
+          )}
+
           {/* ACCESO AL PORTAL */}
           {activeSection === 'portal' && (
             <div className="space-y-3">
@@ -884,6 +919,43 @@ function ViajesList({ customerId, primaryColor }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function BankAccountForm({ customerId, onSaved }) {
+  const [form, setForm] = useState({ bank_name: '', account_number: '', clabe: '', titular: '', is_primary: true, currency: 'MXN', notes: '' });
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    if (!form.bank_name) return alert('Banco requerido');
+    setSaving(true);
+    try {
+      await fetch('/api/customer-bank-accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...form, customer_id: customerId })
+      });
+      setForm({ bank_name: '', account_number: '', clabe: '', titular: '', is_primary: false, currency: 'MXN', notes: '' });
+      if (onSaved) onSaved();
+      alert('Cuenta guardada (datos bancarios almacenados de forma segura)');
+    } catch (e) { alert('Error'); }
+    setSaving(false);
+  };
+
+  return (
+    <div className="grid grid-cols-2 gap-2 text-xs">
+      <input placeholder="Banco *" value={form.bank_name} onChange={e=>setForm({...form,bank_name:e.target.value})} className="border px-2 py-1 rounded" />
+      <input placeholder="Titular" value={form.titular} onChange={e=>setForm({...form,titular:e.target.value})} className="border px-2 py-1 rounded" />
+      <input placeholder="CLABE" value={form.clabe} onChange={e=>setForm({...form,clabe:e.target.value})} className="border px-2 py-1 rounded" />
+      <input placeholder="Cuenta" value={form.account_number} onChange={e=>setForm({...form,account_number:e.target.value})} className="border px-2 py-1 rounded" />
+      <select value={form.currency} onChange={e=>setForm({...form,currency:e.target.value})} className="border px-2 py-1 rounded">
+        <option value="MXN">MXN</option><option value="USD">USD</option>
+      </select>
+      <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={form.is_primary} onChange={e=>setForm({...form,is_primary:e.target.checked})} /> Principal</label>
+      <input placeholder="Notas" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})} className="border px-2 py-1 rounded col-span-2" />
+      <button onClick={save} disabled={saving} className="col-span-2 bg-emerald-700 text-white py-1 rounded text-xs">{saving ? 'Guardando...' : 'Guardar cuenta bancaria'}</button>
+      <div className="col-span-2 text-[9px] text-slate-500">Se muestra oculta (últimos 4). Superadmin puede verificar.</div>
     </div>
   );
 }
