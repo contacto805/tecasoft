@@ -115,6 +115,47 @@ export async function POST(request) {
       `;
     }
 
+    // === INVENTARIO ÚNICO: Actualizar stock del material vinculado (si hay product_or_service o material_id en PO) ===
+    try {
+      const [po] = await sql`SELECT product_or_service, supplier_name FROM purchase_orders WHERE id = ${parseInt(purchaseOrderId)}`;
+      if (po && po.product_or_service) {
+        // Buscar material por nombre aproximado
+        const [mat] = await sql`
+          SELECT id, quantity_available, costo_promedio, cost_per_unit, unit, factor_conversion 
+          FROM materials_inventory 
+          WHERE LOWER(material_name) LIKE ${'%' + po.product_or_service.toLowerCase().slice(0,30) + '%'} 
+          LIMIT 1
+        `;
+        if (mat) {
+          const factor = parseFloat(mat.factor_conversion || 1) || 1;
+          const addQty = parseFloat(quantityReceived) * factor;
+          const newStock = parseFloat(mat.quantity_available || 0) + addQty;
+          const newCost = parseFloat(cost_per_unit || mat.cost_per_unit || 0); // if PO had unit price? assume from reception if sent
+
+          // Actualizar stock + costo promedio ponderado
+          const oldQty = parseFloat(mat.quantity_available || 0);
+          const oldC = parseFloat(mat.costo_promedio || mat.cost_per_unit || 0);
+          const total = oldQty + addQty;
+          const prom = total > 0 ? ((oldQty * oldC) + (addQty * newCost)) / total : newCost;
+
+          await sql`
+            UPDATE materials_inventory 
+            SET quantity_available = ${newStock}, 
+                costo_promedio = ${prom},
+                last_purchase_date = CURRENT_DATE,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ${mat.id}
+          `;
+
+          // Movimiento único de inventario (entrada)
+          await sql`
+            INSERT INTO movements (entity_type, entity_id, movement_type, qty, qty_before, qty_after, unit, module, reference, notes, created_at)
+            VALUES ('material', ${mat.id}, 'ENTRADA_COMPRA', ${addQty}, ${oldQty}, ${newStock}, ${mat.unit}, 'inventario', ${invoiceNumber || 'REC-' + result.id}, ${'Recepción PO#' + purchaseOrderId + ' proveedor ' + (po.supplier_name || '')}, CURRENT_TIMESTAMP)
+          `;
+        }
+      }
+    } catch(e) { /* non fatal */ }
+
     return NextResponse.json(result, { status: 201 });
   } catch (error) {
     console.error('Error creating reception:', error);

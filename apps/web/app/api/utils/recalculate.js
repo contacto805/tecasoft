@@ -316,6 +316,85 @@ export async function syncLotAggregatesFromProduction(lotId, totals) {
 }
 
 /**
+ * FASE 02: FÓRMULAS EXACTAS DE PRODUCCIÓN Y RENDIMIENTO (sin denominador cero)
+ * KG_COMERCIAL = SUMA (por calibre/clase comercial)
+ * KG_CLASIFICADOS = KG_COMERCIAL + KG_PROCESO + KG_DESECHO
+ * KG_CONTABILIZADOS = KG_CLASIFICADOS + KG_MERMA_CONFIRMADA
+ * KG_PENDIENTES = KG_RECIBIDOS - KG_CONTABILIZADOS
+ * RENDIMIENTO_COMERCIAL = (KG_COMERCIAL / KG_RECIBIDOS) * 100
+ */
+export async function calcularRendimientoLote(lotId) {
+  const lotIdNum = parseInt(lotId);
+  if (!lotIdNum) return null;
+
+  const received = await getCanonicalReceivedKg(lotIdNum);
+  if (received <= 0) return { error: 'Sin kg recibidos', recibido: 0 };
+
+  const prod = await sql`
+    SELECT 
+      COALESCE(SUM(CASE WHEN class_name IN ('A','SUPER','EXTRA','PRIMERA','MEDIANO','B') THEN total_kg ELSE 0 END), 0) as kg_comercial,
+      COALESCE(SUM(CASE WHEN class_name IN ('PROCESO','PROCESO') THEN total_kg ELSE 0 END), 0) as kg_proceso,
+      COALESCE(SUM(CASE WHEN class_name IN ('DESECHO','DESECHO') THEN total_kg ELSE 0 END), 0) as kg_desecho
+    FROM production_selection_details 
+    WHERE lot_id = ${lotIdNum}
+  `;
+  const kgCom = parseFloat(prod[0]?.kg_comercial || 0);
+  const kgProc = parseFloat(prod[0]?.kg_proceso || 0);
+  const kgDes = parseFloat(prod[0]?.kg_desecho || 0);
+
+  // From batches for merma confirmada
+  const b = await sql`
+    SELECT COALESCE(SUM(merma_kg),0) as merma FROM production_batches 
+    WHERE lot_id = ${lotIdNum} AND COALESCE(status,'CONFIRMADO') != 'BORRADOR'
+  `;
+  const kgMerma = parseFloat(b[0]?.merma || 0);
+
+  const kgClasificados = kgCom + kgProc + kgDes;
+  const kgContabilizados = kgClasificados + kgMerma;
+  const kgPendientes = Math.max(0, received - kgContabilizados);
+
+  const rendComercial = received > 0 ? parseFloat(((kgCom / received) * 100).toFixed(2)) : 0;
+  const rendTotal = received > 0 ? parseFloat(((kgClasificados / received) * 100).toFixed(2)) : 0;
+
+  return {
+    kg_recibidos: received,
+    kg_comercial: kgCom,
+    kg_proceso: kgProc,
+    kg_desecho: kgDes,
+    kg_merma: kgMerma,
+    kg_clasificados: kgClasificados,
+    kg_contabilizados: kgContabilizados,
+    kg_pendientes: kgPendientes,
+    rendimiento_comercial: rendComercial,
+    rendimiento_total: rendTotal
+  };
+}
+
+/**
+ * FASE 03: STOCK ÚNICO MATERIALES (fórmula oficial)
+ */
+export async function calcularStockMaterial(materialId) {
+  const mid = parseInt(materialId);
+  if (!mid) return 0;
+  const [m] = await sql`SELECT quantity_available FROM materials_inventory WHERE id = ${mid}`;
+  return parseFloat(m?.quantity_available || 0);
+}
+
+/**
+ * Valor de inventario materiales para Cierre Semanal (único, no duplicar gastos)
+ */
+export async function getInventarioMaterialesValor() {
+  const [row] = await sql`
+    SELECT 
+      COALESCE(SUM(quantity_available * COALESCE(costo_promedio, cost_per_unit, 0)), 0) as valor_total,
+      COALESCE(SUM(quantity_available), 0) as total_unidades
+    FROM materials_inventory 
+    WHERE COALESCE(estatus,'Activo') = 'Activo'
+  `;
+  return { valor: parseFloat(row?.valor_total || 0), unidades: parseFloat(row?.total_unidades || 0) };
+}
+
+/**
  * BLOCK 07: MOTOR ÚNICO DE COSTOS Y RENTABILIDAD (reutilizado por dashboard, lote, ventas, simulador, Cierre)
  * Fuente canónica: 
  * - Compra: agreed (cutting_orders) + valor ponderado lotificación (precios autorizados)

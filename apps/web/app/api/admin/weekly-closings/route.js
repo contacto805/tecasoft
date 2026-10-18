@@ -235,15 +235,23 @@ export async function GET(request) {
       fuente: 'reconciliacion_automatica_sin_doble_asiento'
     }));
 
+    // FASE 03: Valor inventario materiales (fuente única, no duplica gastos)
+    let invMateriales = { valor: 0, unidades: 0 };
+    try {
+      const { getInventarioMaterialesValor } = await import('@/app/api/utils/recalculate');
+      invMateriales = await getInventarioMaterialesValor();
+    } catch(_) {}
+
     return NextResponse.json({ 
       closings: closingsEnriquecidos, 
       comparatives, 
       lotYieldSummary: lotYieldSummaryEnriquecido,
+      inventario_materiales: invMateriales,
       meta: {
         ultima_actualizacion: new Date().toISOString(),
         origen: 'consultas_confirmadas',
         estado: 'datos_actualizados_con_estado_y_origen',
-        nota: 'Cierres autorizados no son reescritos. Saldos estimados marcados como Pendiente/Estimado.'
+        nota: 'Cierres autorizados no son reescritos. Saldos estimados marcados como Pendiente/Estimado. Inventario materiales desde materials_inventory (único).'
       }
     });
   } catch (error) {

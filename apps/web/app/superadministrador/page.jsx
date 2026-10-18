@@ -2506,6 +2506,47 @@ Notas comerciales" className="w-full border px-2 py-1 rounded text-sm h-14" />
           </div>
         </section>
 
+        {/* MATRIZ V7 FASE 01-03: Consolidación (entregable) */}
+        <section className="max-w-6xl mx-auto px-6 py-6">
+          <div className="bg-white rounded-3xl border p-6">
+            <div className="font-semibold text-lg mb-3">MATRIZ DE CONSOLIDACIÓN V7 (FASE 01-03)</div>
+            <div className="text-xs text-slate-500 mb-3">Cada departamento genera su información. Otros consultan. Sin duplicación de hechos operativos. Datos históricos conservados. Lote Registro retirado de navegación activa.</div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div>
+                <div className="font-semibold mb-1 text-emerald-700">CONSERVADOS (fuente única)</div>
+                <ul className="text-xs space-y-0.5">
+                  <li>• Ingreso de Fruta (fruit_input_weighings + cutting complete)</li>
+                  <li>• Producción (production_batches + production_selection_details)</li>
+                  <li>• Embarques (load_history propietario cargas físicas)</li>
+                  <li>• Administración (notas, abonos, customer_accounts)</li>
+                  <li>• Cierre Semanal (reconciliador, no registrador)</li>
+                  <li>• Inventario Materiales (materials_inventory + receptions + deductions)</li>
+                </ul>
+              </div>
+              <div>
+                <div className="font-semibold mb-1 text-amber-700">FUSIONADOS / MODIFICADOS</div>
+                <ul className="text-xs space-y-0.5">
+                  <li>• Lotificación → Producción (legacy solo lectura)</li>
+                  <li>• Lote Registro → Retirado de menú (desactivado)</li>
+                  <li>• Múltiples lotif → production_selection_details</li>
+                  <li>• Tarimas integradas a Inventario Materiales</li>
+                  <li>• Costos → motor único (recalculate + cutting + operating)</li>
+                  <li>• Cierre envía inventario materiales (sin duplicar gastos)</li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="mt-3 text-xs border-t pt-3">
+              <div className="font-semibold">DEPENDENCIAS CLAVE:</div>
+              <div>Orden de Corte → Ingreso Fruta (único) → Producción (único) → Inventarios (único) → Embarques → Cierre (conciliación). Rendimiento de Lote usado por productores, admin, inventarios, precios, IA, cierre.</div>
+              <div className="mt-1">Fórmulas aplicadas: KG_COMERCIAL, KG_CLASIFICADOS, KG_CONTABILIZADOS, KG_PENDIENTES, REND_COMERCIAL (sin /0). Stock materiales con costo promedio móvil + factor conversión.</div>
+            </div>
+
+            <div className="mt-2 text-[10px] text-emerald-600">Pruebas: datos legacy conservados, corridas múltiples permitidas por lote, sin doble conteo, stock actualizado desde recepciones/ consumos producción, Lote Registro inactivo.</div>
+          </div>
+        </section>
+
         <div className="text-center pb-10 text-xs text-slate-400">Acceso exclusivo Superadministrador • Todas las secciones visibles y controlables aquí. Trazabilidad y movimientos centralizados.</div>
       </div>
     </div>
