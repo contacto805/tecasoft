@@ -1,7 +1,12 @@
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
-import { getKpiSummary, getLotPerformance, getPaymentStatus, searchProducers, IA_TOOLS } from "@/app/api/utils/ai-tools";
+import { 
+  getKpiSummary, getLotPerformance, getPaymentStatus, searchProducers, IA_TOOLS,
+  getWeeklyClosing, getMaterialConsumption, getPackingCostPerTarima, getProducerPaymentsDue,
+  getBankPayments, getUnreconciledMovements, getLotsWithLosses, getInventorySummary,
+  getClientPendingBalances, getRentabilidadAnalysis, runErrorDetection, getFinancialSimulator
+} from "@/app/api/utils/ai-tools";
 
 // Helper: obtener usuario real de la sesion (reutiliza logica existente)
 async function getAuthenticatedUser(request) {
@@ -55,14 +60,17 @@ export async function POST(request) {
     // Ensure literal type for OpenAI SDK
     const toolsForCall = availableTools.map(t => ({ type: "function", function: t.function }));
 
-    const systemPrompt = `Eres TECAVO IA, asistente empresarial de Soft Tecavo (TECAVO FRUITS).
-Responde SIEMPRE con:
-- Fuente exacta de los datos (tabla o API)
-- Periodo consultado
-- Si es HECHO, INFERENCIA o HIPÓTESIS
-- Limites de certeza
-Solo puedes usar las herramientas del catálogo proporcionado.
-Nunca inventes números ni datos de otros productores.
+    const systemPrompt = `Eres TECAVO IA - Inteligencia Empresarial de TECAVO FRUITS (ERP real).
+REGLA OBLIGATORIA EN CADA RESPUESTA (nunca omitir):
+• Periodo consultado
+• Fuente exacta (tabla/API)
+• Estado de los datos: CONFIRMADO | DETECTADO | CALCULADO
+• Fecha de actualización
+• Cálculo realizado (usa motor financiero cuando aplique)
+• Registros relacionados (folios o ids)
+• Nunca inventes cantidades. Usa SOLO resultados de herramientas.
+• Distingue utilidad bruta / operativa / neta y valida denominadores.
+• Para conciliación: propone relaciones pero no las aplica automáticamente.
 El usuario actual es ${isSuper ? "Superadministrador (visibilidad total)" : "usuario con acceso limitado"}.`;
 
     const messages = [
@@ -102,6 +110,30 @@ El usuario actual es ${isSuper ? "Superadministrador (visibilidad total)" : "usu
         result = await getPaymentStatus(args || {}, user);
       } else if (name === "search_producers") {
         result = await searchProducers(args || {}, user);
+      } else if (name === "get_weekly_closing") {
+        result = await getWeeklyClosing(args || {}, user);
+      } else if (name === "get_material_consumption") {
+        result = await getMaterialConsumption(args || {}, user);
+      } else if (name === "get_packing_cost_per_tarima") {
+        result = await getPackingCostPerTarima(args || {}, user);
+      } else if (name === "get_producer_payments_due") {
+        result = await getProducerPaymentsDue(args || {}, user);
+      } else if (name === "get_bank_payments") {
+        result = await getBankPayments(args || {}, user);
+      } else if (name === "get_unreconciled_movements") {
+        result = await getUnreconciledMovements(args || {}, user);
+      } else if (name === "get_lots_with_losses") {
+        result = await getLotsWithLosses(args || {}, user);
+      } else if (name === "get_inventory_summary") {
+        result = await getInventorySummary(args || {}, user);
+      } else if (name === "get_client_pending_balances") {
+        result = await getClientPendingBalances(args || {}, user);
+      } else if (name === "get_rentabilidad_analysis") {
+        result = await getRentabilidadAnalysis(args || {}, user);
+      } else if (name === "run_error_detection") {
+        result = await runErrorDetection(args || {}, user);
+      } else if (name === "get_financial_simulator") {
+        result = await getFinancialSimulator(args || {}, user);
       } else {
         result = { error: "Herramienta no permitida" };
       }

@@ -5,16 +5,12 @@ import { validateTransporterPortalAccess, createTransporterSession } from "@/app
 export async function POST(request) {
   try {
     const { transporterName, pin } = await request.json();
-    if (!transporterName || !pin) {
-      return NextResponse.json({ error: "Transportista y PIN requeridos" }, { status: 400 });
-    }
-    const validation = await validateTransporterPortalAccess(transporterName.trim(), String(pin).trim());
-    if (!validation.ok) {
-      return NextResponse.json({ error: validation.error || "Credenciales inválidas" }, { status: 401 });
-    }
-    await createTransporterSession(transporterName.trim());
-    return NextResponse.json({ success: true, transporter: { name: transporterName.trim() } });
+    if (!transporterName || !pin) return NextResponse.json({ success: false, error: "Nombre y PIN requeridos" }, { status: 400 });
+    const val = await validateTransporterPortalAccess(transporterName, pin);
+    if (!val.ok) return NextResponse.json({ success: false, error: val.error }, { status: 401 });
+    await createTransporterSession(transporterName);
+    return NextResponse.json({ success: true });
   } catch (e) {
-    return NextResponse.json({ error: "Error de autenticación" }, { status: 500 });
+    return NextResponse.json({ success: false, error: "Error" }, { status: 500 });
   }
 }

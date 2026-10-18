@@ -244,6 +244,7 @@ export default function LandingPage() {
           <p className="text-[10px] text-slate-500 mt-2 tracking-wide">Acceso total al sistema • navega libremente por todo</p>
           <a href="/portal-productores" className="inline-block mt-2 text-xs text-emerald-700 underline">Acceso para productores (folio de orden)</a>
           <a href="/portal-cliente" className="inline-block mt-1 text-xs text-emerald-700 underline">Portal de Clientes (Número + PIN)</a>
+          <a href="/portal-transporter" className="inline-block mt-1 text-xs text-emerald-700 underline">Portal Transportistas</a>
         </div>
 
         {isAuthenticated && (

@@ -380,6 +380,17 @@ export default function AdministracionPage() {
               <button onClick={() => router.push('/motor-financiero')} className="px-5 py-2 bg-emerald-900 text-white rounded-xl text-sm font-medium hover:bg-black">Abrir Motor Financiero →</button>
             </div>
           </div>
+
+          {/* FASE 10 - TECAVO IA */}
+          <div className="mt-3 p-4 bg-emerald-900 text-white rounded-2xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-semibold">TECAVO IA — Inteligencia Empresarial</div>
+                <div className="text-xs text-emerald-200">10 módulos: Asistente Dirección, Notificaciones, Auditoría, Conciliación, Rentabilidad, Detección Errores, Simulador, Supervisión, Propuestas, Config. Datos reales + motor financiero. Cada respuesta con fuente, periodo, estado y cálculo.</div>
+              </div>
+              <button onClick={() => router.push('/tecavo-ia')} className="px-5 py-2 bg-white text-emerald-900 rounded-xl text-sm font-medium">Abrir TECAVO IA →</button>
+            </div>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <button onClick={() => router.push('/admin/authorizations')} className="px-4 py-2 bg-brand-600 text-white rounded-lg font-medium hover:bg-brand-700 transition-colors">Ver Autorizaciones Pendientes</button>
             <button onClick={() => router.push('/admin/audit-log')} className="px-4 py-2 bg-slate-200 text-slate-900 rounded-lg font-medium hover:bg-slate-300 transition-colors">Ver Registro de Auditoría</button>

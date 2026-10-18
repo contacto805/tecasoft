@@ -2409,6 +2409,7 @@ Notas comerciales" className="w-full border px-2 py-1 rounded text-sm h-14" />
               }} className="px-3 py-1 text-sm border rounded">Probar conexión OpenAI (proxy)</button>
               <div className="text-xs mt-2 text-slate-500">{iaConnected === null ? "No probado" : iaConnected ? "Conectado via AppGen Cloud" : "Fallo (revisa APPGEN_API_KEY en .env)"}</div>
               <div className="text-[10px] mt-1">Modelo: proxy OpenAI. Herramientas solo lectura por rol.</div>
+              <a href="/tecavo-ia" target="_blank" className="inline-block mt-2 text-xs px-3 py-1 bg-emerald-700 text-white rounded">Abrir TECAVO IA completo (10 secciones) →</a>
             </div>
 
             <div className="border rounded-2xl p-4">
