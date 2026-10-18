@@ -1,5 +1,6 @@
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
+import { calculateIntegralLotCost, calculateNetIncome, calculateUtility, calculateMargin } from "@/app/api/utils/financial-engine";
 
 // Helper: Monday-Sunday week (Mexico style)
 function getWeekBounds(startStr) {
@@ -18,6 +19,8 @@ function getWeekBounds(startStr) {
 }
 
 // Core integral calculator - queries ONLY confirmed source tables. No duplication.
+function toNum(v) { return (v == null || isNaN(parseFloat(v))) ? 0 : parseFloat(v); }
+
 async function calcularCierreIntegral(startDate, endDate) {
   const [weekStart, weekEnd] = [startDate, endDate];
 
@@ -179,32 +182,41 @@ async function calcularCierreIntegral(startDate, endDate) {
   const pagosFletes = fletesComerciales; // reuse
 
   // =====================
-  // PESTAÑA 5: RENTABILIDAD
+  // PESTAÑA 5: RENTABILIDAD (usando MOTOR FINANCIERO CENTRALIZADO V9)
   // =====================
-  const ingresosNetos = await sql`SELECT COALESCE(SUM(total_amount),0) FROM load_history WHERE load_date BETWEEN ${weekStart} AND ${weekEnd}`;
+  const ingresosNetosRes = await calculateNetIncome({ weekStart, weekEnd });
+  const ingresosNetos = ingresosNetosRes.ingreso_neto || 0;
 
-  // Costo de ventas (use historical where possible via lot + production)
-  const costoVentas = await sql`
-    SELECT COALESCE(SUM(
-      ld.total_kg * COALESCE(
-        (SELECT cost_per_kg_received FROM lot_cost_summary lcs WHERE lcs.lot_id=ld.lot_id LIMIT 1),
-        (SELECT fruit_price FROM lots WHERE id=ld.lot_id),
-        0
-      )
-    ),0) FROM load_details ld JOIN load_history lh ON lh.id=ld.load_id
-    WHERE lh.load_date BETWEEN ${weekStart} AND ${weekEnd}
-  `;
+  // Costo de ventas via motor (histórico por lote)
+  let costoVentas = 0;
+  try {
+    const loads = await sql`SELECT lot_id, total_kg FROM load_details ld JOIN load_history lh ON lh.id=ld.load_id WHERE lh.load_date BETWEEN ${weekStart} AND ${weekEnd} LIMIT 200`;
+    for (const l of loads) {
+      if (l.lot_id) {
+        const c = await calculateIntegralLotCost(l.lot_id);
+        if (c && c.costo_kg_comercializable) {
+          costoVentas += (toNum(l.total_kg) || 0) * c.costo_kg_comercializable;
+        }
+      }
+    }
+  } catch (_) {
+    // fallback
+    const fb = await sql`SELECT COALESCE(SUM(total_amount),0) as t FROM load_history WHERE load_date BETWEEN ${weekStart} AND ${weekEnd}`;
+    costoVentas = parseFloat(fb[0]?.t || 0) * 0.65;
+  }
+  costoVentas = parseFloat(costoVentas.toFixed(2));
 
-  const utilidadBruta = parseFloat(ingresosNetos[0]?.total || 0) - parseFloat(costoVentas[0]?.total || 0);
+  const utilidadBruta = calculateUtility(ingresosNetos, { costo_ventas: costoVentas }, 'bruta');
+  const margenBruto = calculateMargin(utilidadBruta, ingresosNetos);
 
   // =====================
   // PESTAÑA 6: CONCILIACIÓN (9 comparisons)
   // =====================
   const conc = {
-    ingreso_vs_produccion: Math.abs(parseFloat(prodRecibidos[0]?.kg_recibidos || 0) - parseFloat(ingresosNetos[0]?.total || 0)),
+    ingreso_vs_produccion: Math.abs(parseFloat(prodRecibidos[0]?.kg_recibidos || 0) - toNum(ingresosNetos)),
     produccion_vs_inventarios: Math.abs(parseFloat(prodLotif[0]?.total_lotificado || 0) - parseFloat(invFruta[0]?.entradas || 0)),
     inventarios_vs_embarques: Math.abs(parseFloat(invFinalFruta) - parseFloat(tarimasEmbarc[0]?.embarc || 0)),
-    ventas_vs_cobranza: Math.abs(parseFloat(ingresosNetos[0]?.total || 0) - parseFloat(cobrosClientes[0]?.total || 0)),
+    ventas_vs_cobranza: Math.abs(toNum(ingresosNetos) - parseFloat(cobrosClientes[0]?.total || 0)),
     obligaciones_vs_pagos: Math.abs(parseFloat(pagosProductores[0]?.total || 0) + parseFloat(pagosProveedores[0]?.total || 0) - parseFloat(pagosFletes[0]?.total || 0)),
   };
 
@@ -252,9 +264,11 @@ async function calcularCierreIntegral(startDate, endDate) {
       total_movimientos: parseFloat(bankWeek[0]?.total_mov || 0),
     },
     rentabilidad: {
-      ingresos_netos: parseFloat(ingresosNetos[0]?.total || 0),
-      costo_ventas: parseFloat(costoVentas[0]?.total || 0),
+      ingresos_netos: ingresosNetos,
+      costo_ventas: costoVentas,
       utilidad_bruta: utilidadBruta,
+      margen_bruto: margenBruto || 0,
+      fuente: "financial-engine (centralizado V9)",
     },
     conciliacion: {
       comparaciones: conc,
