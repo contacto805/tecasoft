@@ -1,6 +1,7 @@
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
 import { logMovement, recalculateLotPerformance } from "@/app/api/utils/recalculate";
+import { syncCommercialTripFromLoad } from "@/app/api/utils/sync-trip-from-load";
 
 // POST - Create a new load (sale) and deduct inventory
 export async function POST(request) {
@@ -255,11 +256,20 @@ export async function POST(request) {
       `;
     }
 
+    // STAGE 3: Automatic idempotent link carga → viaje comercial (no financial charges created here)
+    try {
+      await syncCommercialTripFromLoad(load[0].id, 'embarque');
+    } catch (syncErr) {
+      // Non-fatal: log but do not block confirmation
+      console.warn('syncCommercialTripFromLoad non-fatal:', syncErr?.message);
+    }
+
     return NextResponse.json({
       load: load[0],
       details: loadDetails,
       totalAmount: finalTotalAmount,
-      factura_folio: factura_folio || null
+      factura_folio: factura_folio || null,
+      tripLinked: true
     });
   } catch (error) {
     console.error("Error in POST /api/loads/complete:", error);

@@ -5,27 +5,26 @@ export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
     const customerId = searchParams.get("customerId");
+    const loadHistoryId = searchParams.get("loadHistoryId");
     const estatus = searchParams.get("estatus");
 
-    let query = sql`
-      SELECT v.*, c.customer_name, c.destination 
+    let base = sql`
+      SELECT v.*, c.customer_name, c.destination,
+             lh.id as load_id, lh.factura_folio as load_folio, lh.total_kg as load_kg
       FROM viajes v 
       LEFT JOIN customers c ON v.customer_id = c.id
-      ORDER BY v.fecha_salida DESC, v.id DESC
-      LIMIT 200
+      LEFT JOIN load_history lh ON lh.id = v.load_history_id
     `;
 
-    if (customerId) {
-      query = sql`
-        SELECT v.*, c.customer_name, c.destination 
-        FROM viajes v 
-        LEFT JOIN customers c ON v.customer_id = c.id
-        WHERE v.customer_id = ${parseInt(customerId)}
-        ORDER BY v.fecha_salida DESC
-      `;
+    if (loadHistoryId) {
+      base = sql`${base} WHERE v.load_history_id = ${parseInt(loadHistoryId)} ORDER BY v.fecha_salida DESC`;
+    } else if (customerId) {
+      base = sql`${base} WHERE v.customer_id = ${parseInt(customerId)} ORDER BY v.fecha_salida DESC`;
+    } else {
+      base = sql`${base} ORDER BY v.fecha_salida DESC, v.id DESC LIMIT 200`;
     }
 
-    const rows = await query;
+    const rows = await base;
     return NextResponse.json(rows);
   } catch (e) {
     console.error("viajes GET", e);

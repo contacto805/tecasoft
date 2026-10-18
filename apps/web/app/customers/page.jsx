@@ -747,8 +747,8 @@ function CustomerAccountModal({ customer, onClose, primaryColor, textColor }) {
                 <div className="font-semibold">Viajes / Cargas del Cliente</div>
                 <a href={`/cartera?cliente=${customer.id}`} className="text-xs underline" style={{color:primaryColor}}>Ver en Cartera →</a>
               </div>
-              <div className="text-sm text-slate-600">Consulta los viajes asociados en el módulo de Cartera o Embarques. Fuente: viajes + load_history con customer_id = {customer.id}.</div>
-              <div className="mt-2 text-xs bg-emerald-50 p-3 rounded">Total viajes registrados: {integratedData?.resumen?.total_viajes || '—'}</div>
+              <ViajesList customerId={customer.id} primaryColor={primaryColor} />
+              <div className="mt-2 text-[10px] text-slate-500">Fuente: viajes (vinculados por load_history_id) + load_history. Una misma carga genera un solo viaje comercial.</div>
             </div>
           )}
 
@@ -827,6 +827,63 @@ function CustomerAccountModal({ customer, onClose, primaryColor, textColor }) {
           <a href={`/cartera?cliente=${customer.id}`} className="px-4 py-2 bg-emerald-700 text-white rounded text-sm">Abrir Cartera Completa</a>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ViajesList({ customerId, primaryColor }) {
+  const [viajes, setViajes] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!customerId) return;
+    (async () => {
+      try {
+        const res = await fetch(`/api/viajes?customerId=${customerId}`);
+        const data = await res.json();
+        setViajes(Array.isArray(data) ? data : []);
+      } catch (_) {
+        setViajes([]);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [customerId]);
+
+  if (loading) return <div className="text-xs text-slate-500">Cargando viajes...</div>;
+
+  if (!viajes.length) {
+    return <div className="text-sm text-slate-500 border p-3 rounded">Sin viajes registrados para este cliente. Confirma cargas en Embarques para vincular automáticamente.</div>;
+  }
+
+  return (
+    <div className="border rounded overflow-auto max-h-72 text-sm">
+      <table className="w-full text-xs">
+        <thead className="bg-gray-100">
+          <tr>
+            <th className="p-2 text-left">Folio</th>
+            <th className="p-2 text-left">Fecha</th>
+            <th className="p-2 text-left">Destino</th>
+            <th className="p-2 text-right">Cajas / Kg</th>
+            <th className="p-2 text-right">Valor USD</th>
+            <th className="p-2 text-left">Transporte</th>
+            <th className="p-2 text-left">Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {viajes.map((v, i) => (
+            <tr key={i} className="border-t">
+              <td className="p-2 font-mono">{v.folio || v.load_id || '-'}</td>
+              <td className="p-2">{v.fecha_salida || v.trip_date || '-'}</td>
+              <td className="p-2">{v.destino || '-'}</td>
+              <td className="p-2 text-right">{v.numero_cajas || 0} / {(parseFloat(v.peso) || parseFloat(v.total_kg) || 0).toFixed(0)} kg</td>
+              <td className="p-2 text-right font-semibold">{(parseFloat(v.valor_usd) || parseFloat(v.price_per_trip) || 0).toFixed(2)}</td>
+              <td className="p-2">{v.transportista || v.driver_name || '-'}</td>
+              <td className="p-2"><span className="text-emerald-700">{v.estatus || v.status || 'Confirmado'}</span></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
