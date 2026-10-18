@@ -335,7 +335,7 @@ export default function SuperAdminPage() {
               </div>
             </div>
 
-            {/* Hidden other APK sections - only production-ready Orden de Corte shown */}
+            {/* Only show Orden de Corte APK section (all other APK sections hidden) */}
             {apks.filter(a => (a.nombre||'').toLowerCase().includes('corte')).length > 0 ? (
               apks.filter(a => (a.nombre||'').toLowerCase().includes('corte')).slice(0,1).map((apk, i) => (
                 <div key={i} className="border-2 border-emerald-600 rounded-3xl p-6">
@@ -346,9 +346,6 @@ export default function SuperAdminPage() {
               ))
             ) : (
               <div className="text-sm bg-slate-50 p-3 rounded-xl text-slate-600">Solo el módulo Orden de Corte tiene APK de producción. Use Superadministrador para generar el enlace.</div>
-            )}
-            ) : (
-              <div className="text-sm bg-slate-50 p-3 rounded-xl text-slate-600">No hay APKs generadas todavía. Sube archivos APK vía API o módulo de apps generadas.</div>
             )}
           </div>
         </div>

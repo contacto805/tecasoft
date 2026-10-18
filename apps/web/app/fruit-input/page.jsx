@@ -638,12 +638,6 @@ export default function FruitInputPage() {
     if (!currentLot.collectorName || !currentLot.collectorName.trim()) {
       errors.push('Acopiador');
     }
-    if (currentLot.commissionAmount === '' || isNaN(parseFloat(currentLot.commissionAmount)) || parseFloat(currentLot.commissionAmount) < 0) {
-      errors.push('Comisión (debe ser mayor o igual a 0)');
-    }
-    if (currentLot.paymentDays === '' || isNaN(parseInt(currentLot.paymentDays)) || parseInt(currentLot.paymentDays) < 0) {
-      errors.push('Días de pago (debe ser un número mayor o igual a 0)');
-    }
     
     if (errors.length > 0) {
       alert(`Por favor completa correctamente los siguientes campos:\n\n• ${errors.join('\n• ')}`);
@@ -660,8 +654,8 @@ export default function FruitInputPage() {
         date: currentLot.date,
         fruit_price: parseFloat(currentLot.fruitPrice),
         collector_name: currentLot.collectorName,
-        commission_amount: parseFloat(currentLot.commissionAmount),
-        payment_days: parseInt(currentLot.paymentDays),
+        commission_amount: parseFloat(currentLot.commissionAmount) || 0,
+        payment_days: parseInt(currentLot.paymentDays) || 7,
         is_cut_fruit: currentLot.isCuttingFruit,
         fruit_source: currentLot.isPackingHouse ? 'empaque' : 'acopio',
         freight_paid: currentLot.freightPaid,
@@ -1132,9 +1126,6 @@ export default function FruitInputPage() {
             <div class="row">
               <div class="field"><span class="label">Corredor:</span> ${currentLot.collectorName}</div>
               <div class="field"><span class="label">Precio/kg:</span> $${parseFloat(currentLot.fruitPrice).toFixed(2)}</div>
-            </div>
-            <div class="row">
-              <div class="field"><span class="label">Comisión:</span> $${parseFloat(currentLot.commissionAmount).toFixed(2)}</div>
             </div>
           </div>
 
@@ -1631,31 +1622,6 @@ export default function FruitInputPage() {
                   value={currentLot.collectorName || currentLot.brokerName || ''}
                   onChange={(e) => setCurrentLot({ ...currentLot, collectorName: e.target.value, brokerName: e.target.value })}
                   placeholder="Nombre del corredor"
-                  disabled={lotCreated}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-green-500/20 focus:border-green-500 outline-none disabled:bg-slate-50 disabled:text-slate-600" 
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-700">Comisión Pactada ($) *</label>
-                <input 
-                  type="number" 
-                  step="0.01"
-                  value={currentLot.commissionAmount}
-                  onChange={(e) => setCurrentLot({ ...currentLot, commissionAmount: e.target.value })}
-                  placeholder="500.00"
-                  disabled={lotCreated}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-green-500/20 focus:border-green-500 outline-none disabled:bg-slate-50 disabled:text-slate-600" 
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-700">Días de Pago *</label>
-                <input 
-                  type="number" 
-                  value={currentLot.paymentDays}
-                  onChange={(e) => setCurrentLot({ ...currentLot, paymentDays: e.target.value })}
-                  placeholder="8"
                   disabled={lotCreated}
                   className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-green-500/20 focus:border-green-500 outline-none disabled:bg-slate-50 disabled:text-slate-600" 
                 />
