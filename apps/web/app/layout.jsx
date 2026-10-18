@@ -87,8 +87,7 @@ function LayoutContent({ children }) {
           credentials: 'include',
           signal: controller.signal,
         });
-        const txt = await response.text();
-        const data = txt ? JSON.parse(txt) : {};
+        const data = await response.json().catch(() => ({}));
         setIsAuthenticated(!!data?.authenticated);
       } catch (err) {
         if (err?.name === 'AbortError') return;
@@ -112,8 +111,7 @@ function LayoutContent({ children }) {
       try {
         const res = await fetch('/api/server-time');
         if (res.ok) {
-          const txt = await res.text();
-          baseData = txt ? JSON.parse(txt) : null;
+          baseData = await res.json().catch(() => null);
         }
       } catch (_) {}
     };
