@@ -37,7 +37,10 @@ export async function POST(request) {
       model_type,
       port,
       baud_rate = 9600,
-      connection_type = 'USB'
+      connection_type = 'USB-Serial',
+      parity = 'none',
+      data_bits = 8,
+      stop_bits = 1
     } = await request.json();
 
     if (!userId || !device_name) {
@@ -86,7 +89,14 @@ export async function PUT(request) {
       port,
       baud_rate,
       is_enabled,
-      connection_type
+      connection_type,
+      data_bits,
+      parity,
+      stop_bits,
+      flow_control,
+      frame_format,
+      read_unit,
+      protocol_notes
     } = await request.json();
 
     if (!id) {
@@ -129,6 +139,41 @@ export async function PUT(request) {
     if (connection_type !== undefined) {
       updateFields.push(`connection_type = $${paramCount}`);
       values.push(connection_type);
+      paramCount++;
+    }
+    if (data_bits !== undefined) {
+      updateFields.push(`data_bits = $${paramCount}`);
+      values.push(data_bits);
+      paramCount++;
+    }
+    if (parity !== undefined) {
+      updateFields.push(`parity = $${paramCount}`);
+      values.push(parity);
+      paramCount++;
+    }
+    if (stop_bits !== undefined) {
+      updateFields.push(`stop_bits = $${paramCount}`);
+      values.push(stop_bits);
+      paramCount++;
+    }
+    if (flow_control !== undefined) {
+      updateFields.push(`flow_control = $${paramCount}`);
+      values.push(flow_control);
+      paramCount++;
+    }
+    if (frame_format !== undefined) {
+      updateFields.push(`frame_format = $${paramCount}`);
+      values.push(frame_format);
+      paramCount++;
+    }
+    if (read_unit !== undefined) {
+      updateFields.push(`read_unit = $${paramCount}`);
+      values.push(read_unit);
+      paramCount++;
+    }
+    if (protocol_notes !== undefined) {
+      updateFields.push(`protocol_notes = $${paramCount}`);
+      values.push(protocol_notes);
       paramCount++;
     }
 

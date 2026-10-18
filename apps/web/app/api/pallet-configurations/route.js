@@ -106,14 +106,19 @@ export async function GET(request) {
 
 export async function POST(request) {
   try {
+    const body = await request.json();
     const {
       pallet_name,
       pallet_type,
       boxes_capacity,
       total_weight_kg,
       description,
+      destino,
+      presentacion,
+      kg_por_caja,
+      cajas_por_tarima,
       materials
-    } = await request.json();
+    } = body;
 
     if (!pallet_name) {
       return NextResponse.json(
@@ -123,7 +128,7 @@ export async function POST(request) {
     }
 
     // Create pallet configuration
-      const configResult = await sql`
+    const configResult = await sql`
       INSERT INTO pallet_configurations (
         pallet_name, pallet_type, boxes_capacity, total_weight_kg, description,
         destino, presentacion, kg_por_caja, cajas_por_tarima
@@ -133,10 +138,10 @@ export async function POST(request) {
         ${boxes_capacity || null},
         ${total_weight_kg || null},
         ${description || null},
-        ${body.destino || null},
-        ${body.presentacion || null},
-        ${body.kg_por_caja || 10},
-        ${body.cajas_por_tarima || 96}
+        ${destino || null},
+        ${presentacion || null},
+        ${kg_por_caja || 10},
+        ${cajas_por_tarima || 96}
       )
       RETURNING *
     `;
@@ -181,6 +186,7 @@ export async function POST(request) {
 
 export async function PUT(request) {
   try {
+    const body = await request.json();
     const {
       id,
       pallet_name,
@@ -188,9 +194,13 @@ export async function PUT(request) {
       boxes_capacity,
       total_weight_kg,
       description,
+      destino,
+      presentacion,
+      kg_por_caja,
+      cajas_por_tarima,
       is_active,
       materials
-    } = await request.json();
+    } = body;
 
     if (!id) {
       return NextResponse.json(
@@ -208,10 +218,10 @@ export async function PUT(request) {
         boxes_capacity = COALESCE(${boxes_capacity || null}, boxes_capacity),
         total_weight_kg = COALESCE(${total_weight_kg || null}, total_weight_kg),
         description = COALESCE(${description || null}, description),
-        destino = COALESCE(${body.destino || null}, destino),
-        presentacion = COALESCE(${body.presentacion || null}, presentacion),
-        kg_por_caja = COALESCE(${body.kg_por_caja || null}, kg_por_caja),
-        cajas_por_tarima = COALESCE(${body.cajas_por_tarima || null}, cajas_por_tarima),
+        destino = COALESCE(${destino || null}, destino),
+        presentacion = COALESCE(${presentacion || null}, presentacion),
+        kg_por_caja = COALESCE(${kg_por_caja || null}, kg_por_caja),
+        cajas_por_tarima = COALESCE(${cajas_por_tarima || null}, cajas_por_tarima),
         is_active = COALESCE(${is_active !== undefined ? is_active : null}, is_active),
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ${parseInt(id)}

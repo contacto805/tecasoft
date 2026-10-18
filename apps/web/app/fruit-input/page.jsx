@@ -34,7 +34,14 @@ export default function FruitInputPage() {
     grossWeight: '',
     withPallet: false,
     photo: null,
-    photoPreview: null
+    photoPreview: null,
+    // FASE 05: Dos evidencias independientes
+    guiaCampoPhoto: null,
+    guiaCampoPreview: null,
+    boletaBasculaPhoto: null,
+    boletaBasculaPreview: null,
+    operation: 'ingreso_fruta',
+    origin: 'manual'
   });
   const [lotCreated, setLotCreated] = useState(false);
   const [lotId, setLotId] = useState(null);
@@ -390,6 +397,56 @@ export default function FruitInputPage() {
     }, 'image/jpeg', 0.85);
   };
 
+  // FASE 05: Captura para tipo específico (guia / boleta)
+  const [cameraTarget, setCameraTarget] = useState(null); // 'guia' | 'boleta' | null
+  const startCameraFor = async (target) => {
+    setCameraTarget(target);
+    await startCamera();
+  };
+
+  // Capturar y asignar según target
+  const capturePhotoForTarget = () => {
+    if (!videoRef.current || !canvasRef.current) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (video.videoWidth === 0 || video.videoHeight === 0) return;
+    const ctx = canvas.getContext('2d');
+    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+    ctx.drawImage(video, 0, 0);
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const file = new File([blob], `ev-${Date.now()}.jpg`, { type: 'image/jpeg' });
+      const preview = canvas.toDataURL('image/jpeg');
+      if (cameraTarget === 'guia') {
+        setCurrentWeighing(p => ({...p, guiaCampoPhoto: file, guiaCampoPreview: preview}));
+      } else if (cameraTarget === 'boleta') {
+        setCurrentWeighing(p => ({...p, boletaBasculaPhoto: file, boletaBasculaPreview: preview}));
+      } else {
+        setCurrentWeighing(p => ({...p, photo: file, photoPreview: preview}));
+      }
+      stopCamera();
+      setCameraTarget(null);
+    }, 'image/jpeg', 0.85);
+  };
+
+  // Captura estable desde báscula (requiere 3 lecturas dentro de 0.5kg)
+  const captureStableFromScale = () => {
+    if (!weightHistory || weightHistory.length < 3) {
+      alert('Necesitas al menos 3 lecturas estables de la escala. Espera lecturas.');
+      return;
+    }
+    const last3 = weightHistory.slice(-3).map(w => w.value);
+    const max = Math.max(...last3);
+    const min = Math.min(...last3);
+    if (max - min > 0.5) {
+      alert('Lectura inestable. Espera que el peso se estabilice (±0.5 kg).');
+      return;
+    }
+    const stable = last3[last3.length-1];
+    setCurrentWeighing(p => ({...p, grossWeight: stable.toFixed(2), origin: 'bascula_auto'}));
+    alert(`✓ Pesada capturada desde báscula: ${stable.toFixed(2)} kg (estable)`);
+  };
+
   const handleFileSelect = (e) => {
     const file = e.target.files?.[0];
     console.log('📁 File selected:', file);
@@ -663,10 +720,10 @@ export default function FruitInputPage() {
     }
   };
 
-  // Add weighing
+  // Add weighing - FASE 05: soporta dos evidencias + origen + operación
   const addWeighing = async () => {
-    if (!currentWeighing.boxes || !currentWeighing.grossWeight || !currentWeighing.photo) {
-      alert('Por favor completa todos los campos de la pesada y agrega una foto');
+    if (!currentWeighing.boxes || !currentWeighing.grossWeight) {
+      alert('Por favor completa cajas y peso bruto');
       return;
     }
 
@@ -676,48 +733,32 @@ export default function FruitInputPage() {
     }
 
     try {
-      console.log('📤 Uploading photo...');
-      console.log('Photo file:', currentWeighing.photo);
-      
-      // Upload photo
-      const formData = new FormData();
-      formData.append('file', currentWeighing.photo);
+      let photoUrl = null;
+      let guiaUrl = null;
+      let boletaUrl = null;
 
-      console.log('FormData entries:', Array.from(formData.entries()).map(([key, value]) => ({
-        key,
-        fileName: value instanceof File ? value.name : 'not a file',
-        size: value instanceof File ? value.size : 0
-      })));
+      // Upload legacy + new two photos if present
+      const uploadOne = async (f) => {
+        if (!f) return null;
+        const fd = new FormData(); fd.append('file', f);
+        const r = await fetch('/api/upload', { method:'POST', body: fd });
+        const d = await r.json();
+        return d.url || null;
+      };
 
-      const uploadResponse = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData
-      });
-
-      console.log('Upload response status:', uploadResponse.status);
-      
-      if (!uploadResponse.ok) {
-        const errorText = await uploadResponse.text();
-        console.error('❌ Upload failed:', errorText);
-        throw new Error(`Upload failed: ${uploadResponse.status} - ${errorText}`);
-      }
-
-      const uploadData = await uploadResponse.json();
-      console.log('✅ Upload successful:', uploadData);
-      
-      if (!uploadData.url) {
-        throw new Error('Error al subir la foto - no URL returned');
-      }
+      photoUrl = await uploadOne(currentWeighing.photo);
+      guiaUrl = await uploadOne(currentWeighing.guiaCampoPhoto);
+      boletaUrl = await uploadOne(currentWeighing.boletaBasculaPhoto);
 
       // Calculate tare and net weight
       const boxes = parseInt(currentWeighing.boxes);
-      const boxTare = boxes * 2; // 2kg per box
+      const boxTare = boxes * 2;
       const palletTare = currentWeighing.withPallet ? 22 : 0;
       const totalTare = boxTare + palletTare;
       const grossWeight = parseFloat(currentWeighing.grossWeight);
       const netWeight = grossWeight - totalTare;
 
-      // Save weighing
+      // Save individual weighing with extra fields
       const response = await fetch('/api/weighings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -728,7 +769,9 @@ export default function FruitInputPage() {
           with_pallet: currentWeighing.withPallet,
           net_weight: netWeight,
           tare_weight: totalTare,
-          photo_url: uploadData.url
+          photo_url: photoUrl,
+          operation: currentWeighing.operation || 'ingreso_fruta',
+          origin: currentWeighing.origin || 'manual'
         })
       });
 
@@ -736,16 +779,34 @@ export default function FruitInputPage() {
       
       setWeighings([...weighings, {
         ...weighing,
-        photoPreview: currentWeighing.photoPreview
+        photoPreview: currentWeighing.photoPreview,
+        guiaCampoPreview: currentWeighing.guiaCampoPreview,
+        boletaBasculaPreview: currentWeighing.boletaBasculaPreview
       }]);
 
-      // Reset weighing form
+      // Also attach to fruit_input_weighings if first time or update totals
+      if (guiaUrl || boletaUrl) {
+        await fetch('/api/fruit-input-weighings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lot_id: lotId,
+            total_kg_weighed: netWeight,
+            public_scale_date: new Date().toISOString().slice(0,10),
+            notes: 'Evidencias adjuntas',
+            guia_campo_url: guiaUrl,
+            boleta_bascula_url: boletaUrl
+          })
+        });
+      }
+
+      // Reset
       setCurrentWeighing({
-        boxes: '',
-        grossWeight: '',
-        withPallet: false,
-        photo: null,
-        photoPreview: null
+        boxes: '', grossWeight: '', withPallet: false,
+        photo: null, photoPreview: null,
+        guiaCampoPhoto: null, guiaCampoPreview: null,
+        boletaBasculaPhoto: null, boletaBasculaPreview: null,
+        operation: 'ingreso_fruta', origin: 'manual'
       });
 
       alert('Pesada agregada exitosamente');
@@ -1977,42 +2038,58 @@ export default function FruitInputPage() {
                   </label>
                 </div>
 
-                {/* Photo Section */}
+                {/* Photo Section - FASE 05: DOS BOTONES INDEPENDIENTES */}
                 <div className="space-y-4">
-                  <label className="text-sm font-medium text-slate-700">Fotografía de la Pesada *</label>
+                  <label className="text-sm font-medium text-slate-700">Evidencias de Pesada (dos botones independientes)</label>
                   
-                  {!currentWeighing.photoPreview && !showCamera && (
-                    <>
-                      <div className="flex gap-3 mb-3">
-                        <button 
-                          onClick={startCamera}
-                          disabled={!!cameraRetryStatus}
-                          className="flex-1 px-6 py-3 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-75 disabled:cursor-not-allowed"
-                        >
-                          <i className="ph ph-camera text-lg"></i>
-                          Tomar Foto
-                        </button>
-                        <button 
-                          onClick={() => fileInputRef.current?.click()}
-                          disabled={!!cameraRetryStatus}
-                          className="flex-1 px-6 py-3 bg-slate-600 text-white font-medium rounded-xl hover:bg-slate-700 shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-75 disabled:cursor-not-allowed"
-                        >
-                          <i className="ph ph-upload-simple text-lg"></i>
-                          Subir Foto
-                        </button>
-                      </div>
-                      
-                      {cameraRetryStatus && (
-                        <div className="p-4 bg-blue-50 border-2 border-blue-300 rounded-xl flex items-center gap-3 animate-pulse">
-                          <div className="flex gap-1">
-                            <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
-                            <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                            <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                          </div>
-                          <span className="text-blue-700 font-medium text-sm">{cameraRetryStatus}</span>
-                        </div>
+                  {/* Botón 1: Guía de Campo */}
+                  <div className="border rounded-xl p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-sm font-medium">1. Foto Guía de Campo</div>
+                      {!currentWeighing.guiaCampoPreview && (
+                        <button onClick={() => startCameraFor('guia')} className="text-xs px-3 py-1 bg-blue-600 text-white rounded">Tomar / Subir</button>
                       )}
-                    </>
+                    </div>
+                    {currentWeighing.guiaCampoPreview && (
+                      <div className="relative">
+                        <img src={currentWeighing.guiaCampoPreview} alt="Guía Campo" className="w-full max-h-40 object-contain rounded border" />
+                        <button onClick={() => setCurrentWeighing(p => ({...p, guiaCampoPhoto:null, guiaCampoPreview:null}))} className="absolute top-1 right-1 bg-red-500 text-white rounded-full px-1 text-xs">×</button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Botón 2: Boleta de Báscula */}
+                  <div className="border rounded-xl p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-sm font-medium">2. Foto Boleta de Báscula</div>
+                      {!currentWeighing.boletaBasculaPreview && (
+                        <button onClick={() => startCameraFor('boleta')} className="text-xs px-3 py-1 bg-blue-600 text-white rounded">Tomar / Subir</button>
+                      )}
+                    </div>
+                    {currentWeighing.boletaBasculaPreview && (
+                      <div className="relative">
+                        <img src={currentWeighing.boletaBasculaPreview} alt="Boleta" className="w-full max-h-40 object-contain rounded border" />
+                        <button onClick={() => setCurrentWeighing(p => ({...p, boletaBasculaPhoto:null, boletaBasculaPreview:null}))} className="absolute top-1 right-1 bg-red-500 text-white rounded-full px-1 text-xs">×</button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Botón CAPTURAR PESADA DESDE BÁSCULA (valida estable) */}
+                  {useScaleSync && selectedScaleDevice && (
+                    <button 
+                      onClick={captureStableFromScale}
+                      className="w-full py-2 bg-emerald-700 text-white rounded-xl text-sm flex items-center justify-center gap-2"
+                    >
+                      <i className="ph ph-scale"></i> CAPTURAR PESADA DESDE BÁSCULA (validar estable)
+                    </button>
+                  )}
+
+                  {/* Legacy single photo (kept for compatibility) */}
+                  {!currentWeighing.photoPreview && !showCamera && (
+                    <div className="flex gap-3">
+                      <button onClick={startCamera} className="flex-1 px-4 py-2 bg-slate-600 text-white text-xs rounded">Tomar Foto Adicional</button>
+                      <button onClick={() => fileInputRef.current?.click()} className="flex-1 px-4 py-2 bg-slate-600 text-white text-xs rounded">Subir Foto Adicional</button>
+                    </div>
                   )}
 
                   {showCamera && (
@@ -2029,7 +2106,7 @@ export default function FruitInputPage() {
                       />
                       <div className="mt-3 flex gap-3">
                         <button 
-                          onClick={capturePhoto}
+                          onClick={cameraTarget ? capturePhotoForTarget : capturePhoto}
                           className="flex-1 px-6 py-3 bg-green-600 text-white font-medium rounded-xl hover:bg-green-700 shadow-sm transition-all flex items-center justify-center gap-2"
                         >
                           <i className="ph ph-camera text-lg"></i>
