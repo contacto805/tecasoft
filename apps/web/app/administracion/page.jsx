@@ -358,6 +358,17 @@ export default function AdministracionPage() {
             <button onClick={() => router.push('/administracion/tickets-y-documentos')} className="text-sm px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg">Abrir Tickets y Documentos →</button>
             <DownloadReportButton moduleName="Administración" title="Resumen Ejecutivo Dashboard" data={[dashboardData]} columns={[{ header: 'Métrica', key: 'metric' }]} format="pdf" includeStats={true} stats={{ 'Ventas Hoy': dashboardData.totalSalesDay }} />
           </div>
+
+          {/* BANCOS - FASE 07 Conciliación Bancaria Inteligente */}
+          <div className="mt-4 p-4 bg-white border border-emerald-200 rounded-2xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-semibold text-emerald-800">BANCOS → CONCILIACIÓN BANCARIA</div>
+                <div className="text-xs text-slate-600">Suba estados de cuenta (PDF/Excel/CSV) • TECAVO IA clasifica contra productores, proveedores, pagos programados y abonos • Integrado con Cierre Semanal • Nunca aplica automáticamente</div>
+              </div>
+              <button onClick={() => router.push('/administracion/conciliacion-bancaria')} className="px-5 py-2 bg-emerald-700 text-white rounded-xl text-sm font-medium hover:bg-emerald-800">Abrir Conciliación Bancaria →</button>
+            </div>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <button onClick={() => router.push('/admin/authorizations')} className="px-4 py-2 bg-brand-600 text-white rounded-lg font-medium hover:bg-brand-700 transition-colors">Ver Autorizaciones Pendientes</button>
             <button onClick={() => router.push('/admin/audit-log')} className="px-4 py-2 bg-slate-200 text-slate-900 rounded-lg font-medium hover:bg-slate-300 transition-colors">Ver Registro de Auditoría</button>
