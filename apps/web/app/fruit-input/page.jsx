@@ -1634,7 +1634,6 @@ export default function FruitInputPage() {
                   disabled={lotCreated}
                   className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-green-500/20 focus:border-green-500 outline-none disabled:bg-slate-50 disabled:text-slate-600" 
                 />
-                <p className="text-[10px] text-emerald-600">Se vincula automáticamente con comisión y programación de pagos desde folio</p>
               </div>
 
               <div className="space-y-2">
@@ -1644,7 +1643,7 @@ export default function FruitInputPage() {
                   step="0.01"
                   value={currentLot.commissionAmount}
                   onChange={(e) => setCurrentLot({ ...currentLot, commissionAmount: e.target.value })}
-                  placeholder="Ej. 500.00"
+                  placeholder="500.00"
                   disabled={lotCreated}
                   className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-green-500/20 focus:border-green-500 outline-none disabled:bg-slate-50 disabled:text-slate-600" 
                 />
@@ -1656,11 +1655,10 @@ export default function FruitInputPage() {
                   type="number" 
                   value={currentLot.paymentDays}
                   onChange={(e) => setCurrentLot({ ...currentLot, paymentDays: e.target.value })}
-                  placeholder="Ej. 8"
+                  placeholder="8"
                   disabled={lotCreated}
                   className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-green-500/20 focus:border-green-500 outline-none disabled:bg-slate-50 disabled:text-slate-600" 
                 />
-                <p className="text-xs text-slate-500">Se programará pago para el viernes siguiente después de cumplidos los días</p>
               </div>
             </div>
 
