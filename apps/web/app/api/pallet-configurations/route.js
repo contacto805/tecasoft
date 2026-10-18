@@ -21,11 +21,11 @@ export async function GET(request) {
 
       const materials = await sql`
         SELECT pm.*, 
-          mi.material_name, mi.category, mi.unit as inventory_unit, mi.cost_per_unit as inventory_cost,
+          mi.material_name, mi.category, mi.unit as inventory_unit, mi.cost_per_unit as inventory_cost, mi.costo_promedio,
           (CASE 
             WHEN pm.cost_source_type = 'purchase' THEN (SELECT po.unit_price FROM purchase_orders po WHERE po.id = pm.cost_source_id LIMIT 1)
             WHEN pm.cost_source_type = 'expense' THEN (SELECT e.cost_per_unit FROM expenses e WHERE e.id = pm.cost_source_id LIMIT 1)
-            ELSE mi.cost_per_unit 
+            ELSE COALESCE(mi.costo_promedio, mi.cost_per_unit, 0) 
           END) as effective_cost_per_unit
         FROM pallet_materials pm
         JOIN materials_inventory mi ON pm.material_id = mi.id
@@ -33,9 +33,34 @@ export async function GET(request) {
         ORDER BY pm.id
       `;
 
+      // Compute standard costs using current inventory prices (FASE 04)
+      const cfg = config[0];
+      const kgPorCaja = parseFloat(cfg.kg_por_caja || 10);
+      const cajasPorTarima = parseInt(cfg.cajas_por_tarima || cfg.boxes_capacity || 96);
+      const kgTarima = cajasPorTarima * kgPorCaja;
+
+      let costoMaterialTarima = 0;
+      const materialsWithCosts = materials.map(m => {
+        const qty = parseFloat(m.quantity_required || 0);
+        const unitCost = parseFloat(m.effective_cost_per_unit || 0);
+        const costoMat = qty * unitCost;
+        costoMaterialTarima += costoMat;
+        return { ...m, costo_material_i: parseFloat(costoMat.toFixed(4)) };
+      });
+
+      const costoPorCaja = cajasPorTarima > 0 ? costoMaterialTarima / cajasPorTarima : 0;
+      const costoPorKg = kgTarima > 0 ? costoMaterialTarima / kgTarima : 0;
+
       return NextResponse.json({
-        ...config[0],
-        materials
+        ...cfg,
+        materials: materialsWithCosts,
+        costo_calculado: {
+          kg_tarima: parseFloat(kgTarima.toFixed(2)),
+          costo_material_tarima: parseFloat(costoMaterialTarima.toFixed(4)),
+          costo_material_por_caja: parseFloat(costoPorCaja.toFixed(4)),
+          costo_material_por_kg: parseFloat(costoPorKg.toFixed(4)),
+          tipo: 'ESTANDAR (precios actuales inventario)'
+        }
       });
     }
 
@@ -98,15 +123,20 @@ export async function POST(request) {
     }
 
     // Create pallet configuration
-    const configResult = await sql`
+      const configResult = await sql`
       INSERT INTO pallet_configurations (
-        pallet_name, pallet_type, boxes_capacity, total_weight_kg, description
+        pallet_name, pallet_type, boxes_capacity, total_weight_kg, description,
+        destino, presentacion, kg_por_caja, cajas_por_tarima
       ) VALUES (
         ${pallet_name},
         ${pallet_type || null},
         ${boxes_capacity || null},
         ${total_weight_kg || null},
-        ${description || null}
+        ${description || null},
+        ${body.destino || null},
+        ${body.presentacion || null},
+        ${body.kg_por_caja || 10},
+        ${body.cajas_por_tarima || 96}
       )
       RETURNING *
     `;
@@ -178,6 +208,10 @@ export async function PUT(request) {
         boxes_capacity = COALESCE(${boxes_capacity || null}, boxes_capacity),
         total_weight_kg = COALESCE(${total_weight_kg || null}, total_weight_kg),
         description = COALESCE(${description || null}, description),
+        destino = COALESCE(${body.destino || null}, destino),
+        presentacion = COALESCE(${body.presentacion || null}, presentacion),
+        kg_por_caja = COALESCE(${body.kg_por_caja || null}, kg_por_caja),
+        cajas_por_tarima = COALESCE(${body.cajas_por_tarima || null}, cajas_por_tarima),
         is_active = COALESCE(${is_active !== undefined ? is_active : null}, is_active),
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ${parseInt(id)}

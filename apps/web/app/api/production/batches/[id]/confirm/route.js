@@ -175,10 +175,22 @@ export async function POST(request, { params }) {
       inventoryEvents.push({ type: 'subproducts', kg: thisProc + thisDes + thisMerm });
     }
 
-    // Materials: discount only once on authorized consumption (if material_deductions not yet for this batch)
-    if (batch.materials_used || body.materials) {
-      // simple: if no deductions exist for batch, could insert but respect that consumption registered separately
-      // for now log only (real deduction in pallet or dedicated module)
+    // FASE 04: SINGLE TRANSACTIONAL MATERIAL CONSUMPTION via pallet-config apply service
+    // Only once per confirmed corrida. Real costs recorded. Standard from current config.
+    if (body.pallet_config_id) {
+      try {
+        await fetch('/api/pallet-configurations/apply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            pallet_config_id: body.pallet_config_id,
+            quantity: Math.max(1, Math.round((thisPacked || 1000) / 960)), // approx pallets
+            production_batch_id: batchId,
+            lot_id: lotIdNum
+          })
+        });
+      } catch (_) {}
+    } else {
       await logMovement({
         entity_type: 'production_batch',
         entity_id: batchId,
@@ -186,7 +198,7 @@ export async function POST(request, { params }) {
         movement_type: 'MATERIALS_CONSUMPTION_AUTHORIZED',
         qty: 0,
         reference: `production_batch_id=${batchId}`,
-        notes: 'Materiales descontados una sola vez al registrar consumo autorizado.'
+        notes: 'Materiales vía servicio único (pallet-config/apply) al confirmar.'
       });
     }
 

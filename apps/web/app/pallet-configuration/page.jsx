@@ -24,6 +24,10 @@ export default function PalletConfigurationPage() {
     boxes_capacity: '',
     total_weight_kg: '',
     description: '',
+    destino: '',
+    presentacion: '',
+    kg_por_caja: 10,
+    cajas_por_tarima: 96,
     materials: []
   });
 
@@ -353,47 +357,40 @@ export default function PalletConfigurationPage() {
                       setFormData({ ...formData, pallet_name: e.target.value })
                     }
                     className="w-full px-3 py-2 border border-black rounded-lg text-black"
-                    placeholder="ej: Tarima 10kg (96 cajas)"
+                    placeholder="ej: Tarima 10kg Centroamérica"
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-black mb-1">
-                    Tipo de Tarima
+                    Destino / Presentación
                   </label>
                   <input
                     type="text"
-                    value={formData.pallet_type}
-                    onChange={(e) =>
-                      setFormData({ ...formData, pallet_type: e.target.value })
-                    }
+                    value={formData.destino}
+                    onChange={(e) => setFormData({ ...formData, destino: e.target.value })}
                     className="w-full px-3 py-2 border border-black rounded-lg text-black"
-                    placeholder="ej: 10kg-96"
+                    placeholder="Centroamérica / Nacional"
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-black mb-1">
-                    Capacidad de Cajas
+                    Kg netos por caja
                   </label>
                   <input
                     type="number"
-                    value={formData.boxes_capacity}
-                    onChange={(e) =>
-                      setFormData({ ...formData, boxes_capacity: e.target.value })
-                    }
+                    value={formData.kg_por_caja}
+                    onChange={(e) => setFormData({ ...formData, kg_por_caja: parseFloat(e.target.value) || 10 })}
                     className="w-full px-3 py-2 border border-black rounded-lg text-black"
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-black mb-1">
-                    Peso Total (kg)
+                    Cajas por tarima
                   </label>
                   <input
                     type="number"
-                    step="0.01"
-                    value={formData.total_weight_kg}
-                    onChange={(e) =>
-                      setFormData({ ...formData, total_weight_kg: e.target.value })
-                    }
+                    value={formData.cajas_por_tarima}
+                    onChange={(e) => setFormData({ ...formData, cajas_por_tarima: parseInt(e.target.value) || 96 })}
                     className="w-full px-3 py-2 border border-black rounded-lg text-black"
                   />
                 </div>

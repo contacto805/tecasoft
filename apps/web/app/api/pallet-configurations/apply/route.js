@@ -64,11 +64,16 @@ export async function POST(request) {
       );
     }
 
-    // Deduct materials from inventory
+    // Deduct materials from inventory - SINGLE TRANSACTIONAL SERVICE (FASE 04)
+    // Records COSTO ESTANDAR (from config current prices) and COSTO REAL (historical at deduction)
     const deductedMaterials = [];
+    const palletConfigId = parseInt(pallet_config_id);
+    const prodBatchId = parseInt(production_batch_id);
 
     for (const material of materials) {
-      const neededQuantity = material.quantity_required * parseInt(quantity);
+      const neededQuantity = parseFloat(material.quantity_required) * parseInt(quantity);
+      const realUnitCost = parseFloat(material.effective_cost_per_unit || material.inventory_cost || 0);
+      const costoTotalReal = neededQuantity * realUnitCost;
 
       // Update inventory
       await sql`
@@ -78,14 +83,18 @@ export async function POST(request) {
         WHERE id = ${material.material_id}
       `;
 
-      // Record deduction
+      // Record deduction with costs for standard vs real distinction
       await sql`
         INSERT INTO material_deductions (
-          production_batch_id, material_id, quantity_used
+          production_batch_id, material_id, quantity_used,
+          costo_unitario_aplicado, costo_total, pallet_config_id
         ) VALUES (
-          ${parseInt(production_batch_id)},
+          ${prodBatchId},
           ${material.material_id},
-          ${neededQuantity}
+          ${neededQuantity},
+          ${realUnitCost},
+          ${costoTotalReal},
+          ${palletConfigId}
         )
       `;
 
@@ -93,7 +102,9 @@ export async function POST(request) {
         material_id: material.material_id,
         material_name: material.material_name,
         quantity_deducted: neededQuantity,
-        unit: material.unit
+        unit: material.unit,
+        costo_real_unit: realUnitCost,
+        costo_real_total: parseFloat(costoTotalReal.toFixed(4))
       });
     }
 

@@ -17,6 +17,12 @@ export default function MaterialsInventoryPage() {
   const [editingMaterial, setEditingMaterial] = useState(null);
   const [newUnitInput, setNewUnitInput] = useState('');
   const [newUnitAbbr, setNewUnitAbbr] = useState('');
+
+  // FASE 04: Embedded pallet config + simulator inside Materials
+  const [palletConfigs, setPalletConfigs] = useState([]);
+  const [simConfig, setSimConfig] = useState(null);
+  const [simOverrides, setSimOverrides] = useState({ kg_por_caja: 10, cajas_por_tarima: 96, costo_override: {} });
+  const [simResult, setSimResult] = useState(null);
   const [formData, setFormData] = useState({
     material_name: '',
     category: '',
@@ -32,6 +38,7 @@ export default function MaterialsInventoryPage() {
   useEffect(() => {
     loadMaterials();
     loadUnits();
+    loadPalletConfigs();
   }, [refreshKey]);
 
   const loadMaterials = async () => {
@@ -59,6 +66,46 @@ export default function MaterialsInventoryPage() {
     } catch (err) {
       console.error('Error loading units:', err);
     }
+  };
+
+  const loadPalletConfigs = async () => {
+    try {
+      const res = await fetch('/api/pallet-configurations');
+      if (res.ok) {
+        const d = await res.json();
+        setPalletConfigs(Array.isArray(d) ? d : []);
+      }
+    } catch (_) {}
+  };
+
+  const runSimulator = async (cfg) => {
+    if (!cfg) return;
+    try {
+      // Use current materials prices + overrides
+      const res = await fetch('/api/pallet-configurations');
+      const all = res.ok ? await res.json() : [];
+      const fresh = all.find(c => c.id === cfg.id) || cfg;
+      const kgCaja = parseFloat(simOverrides.kg_por_caja || fresh.kg_por_caja || 10);
+      const cPorT = parseInt(simOverrides.cajas_por_tarima || fresh.cajas_por_tarima || fresh.boxes_capacity || 96);
+      const kgT = cPorT * kgCaja;
+
+      let sum = 0;
+      (fresh.materials || []).forEach(m => {
+        const q = parseFloat(m.quantity_required || 0);
+        const c = parseFloat(m.effective_cost_per_unit || m.inventory_cost || 0);
+        sum += q * c;
+      });
+      const porCaja = cPorT > 0 ? sum / cPorT : 0;
+      const porKg = kgT > 0 ? sum / kgT : 0;
+
+      setSimResult({
+        kg_tarima: kgT.toFixed(2),
+        costo_tarima: sum.toFixed(2),
+        costo_por_caja: porCaja.toFixed(2),
+        costo_por_kg: porKg.toFixed(2),
+        tipo: 'ESTÁNDAR (precios actuales)'
+      });
+    } catch (e) { /* fallback */ }
   };
 
   const handleAddUnit = async () => {
@@ -275,6 +322,65 @@ export default function MaterialsInventoryPage() {
 
         <div className="text-xs text-slate-500 mt-4">
           Sincronizado con órdenes de compra, gastos y descuentos automáticos en producción.
+        </div>
+
+        {/* FASE 04: CONFIGURACIÓN DE TARIMAS INTEGRADA DENTRO DE INVENTARIO DE MATERIALES */}
+        <div className="mt-8 bg-white border rounded-2xl shadow-sm p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-xl font-semibold">Configuración de Tarimas</h2>
+              <p className="text-sm text-slate-500">Modelos (6kg/10kg/etc) + materiales + fórmulas + simulador. COSTO ESTÁNDAR (config actual) vs REAL (histórico deducciones). Único service transaccional al confirmar corrida.</p>
+            </div>
+            <button onClick={() => router.push('/pallet-configuration')} className="text-sm px-3 py-1.5 border rounded">Módulo completo</button>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Lista de configs */}
+            <div>
+              <div className="font-medium mb-2">Modelos configurados</div>
+              <div className="space-y-2 max-h-60 overflow-auto">
+                {palletConfigs.length === 0 && <div className="text-xs text-slate-500">Sin configuraciones. Crea en el módulo o aquí.</div>}
+                {palletConfigs.slice(0,6).map(c => (
+                  <div key={c.id} className="border p-2 rounded text-sm flex justify-between items-center">
+                    <div>
+                      <div className="font-medium">{c.pallet_name}</div>
+                      <div className="text-xs text-slate-500">{c.destino || ''} • {c.presentacion || c.pallet_type || ''} • {c.cajas_por_tarima || c.boxes_capacity || '?'} cajas</div>
+                    </div>
+                    <button onClick={() => { setSimConfig(c); runSimulator(c); }} className="text-xs px-2 py-0.5 bg-emerald-100 rounded">Simular</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Simulador */}
+            <div>
+              <div className="font-medium mb-2">Simulador de Costo por Tarima</div>
+              {!simConfig && <div className="text-xs text-slate-500">Selecciona un modelo arriba para simular.</div>}
+              {simConfig && (
+                <div className="border p-3 rounded bg-slate-50 text-sm">
+                  <div className="font-semibold mb-1">{simConfig.pallet_name}</div>
+                  <div className="grid grid-cols-2 gap-2 text-xs mb-2">
+                    <label>Kg por caja <input type="number" value={simOverrides.kg_por_caja} onChange={e=>setSimOverrides({...simOverrides, kg_por_caja: e.target.value})} className="border w-16 px-1" /></label>
+                    <label>Cajas por tarima <input type="number" value={simOverrides.cajas_por_tarima} onChange={e=>setSimOverrides({...simOverrides, cajas_por_tarima: e.target.value})} className="border w-16 px-1" /></label>
+                  </div>
+                  <button onClick={() => runSimulator(simConfig)} className="px-3 py-1 bg-emerald-600 text-white text-xs rounded">Calcular con precios actuales</button>
+
+                  {simResult && (
+                    <div className="mt-3 text-xs">
+                      <div>KG_TARIMA = {simResult.kg_tarima}</div>
+                      <div>COSTO_MATERIAL_TARIMA = ${simResult.costo_tarima}</div>
+                      <div>COSTO_POR_CAJA = ${simResult.costo_por_caja}</div>
+                      <div>COSTO_POR_KG = ${simResult.costo_por_kg}</div>
+                      <div className="text-emerald-700 mt-1">{simResult.tipo}</div>
+                      <div className="text-[10px] mt-1">COSTO ESTÁNDAR usa precios vigentes. COSTO REAL = histórico de deducciones (no se modifica al cambiar precios actuales).</div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-3 text-[10px] text-slate-500">Al confirmar corrida de producción se usa servicio único transaccional (apply) que descuenta materiales una sola vez y registra costos reales. No se descuenta de nuevo al imprimir etiqueta o confirmar tarima.</div>
         </div>
 
         {/* Add/Edit Material Modal - minimal */}
