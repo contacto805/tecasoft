@@ -166,20 +166,38 @@ export default function FruitInputPage() {
     generateLotNumber();
   }, []);
 
-  // When selecting folio from cutting order: auto-assign traceability & prefill with broker commission + full traceability 
+  const [selectedOrderDetails, setSelectedOrderDetails] = useState(null);
+  const [rotGuia, setRotGuia] = useState(0);
+  const [rotBoleta, setRotBoleta] = useState(0);
+
+  // Enhanced auto recovery from Orden de Corte (full fields: productor, huerta, corredor, transportista, cuadrilla, cajas, fecha, condiciones)
   const handleSelectCuttingFolio = async (e) => {
     const folio = e.target.value;
     setSelectedCuttingFolio(folio);
     
     if (!folio) {
       setSelectedCuttingOrderId(null);
+      setSelectedOrderDetails(null);
       return;
     }
     
-    const ord = cuttingOrders.find(o => o.folio === folio || String(o.id) === folio);
+    let ord = cuttingOrders.find(o => o.folio === folio || String(o.id) === folio);
+    
+    // Fetch full details for complete recovery (cuadrilla, camion, transportista, cajas, condiciones)
+    try {
+      const detailRes = await fetch(`/api/cutting-orders?folio=${encodeURIComponent(folio)}`);
+      if (detailRes.ok) {
+        const details = await detailRes.json();
+        if (Array.isArray(details) && details[0]) ord = { ...ord, ...details[0] };
+        else if (details && details.id) ord = { ...ord, ...details };
+      }
+    } catch (_) {}
+    
     if (ord) {
       setSelectedCuttingOrderId(ord.id);
-      // PERFECT TRAZABILIDAD: prefill completo + comisión corredor del corte
+      setSelectedOrderDetails(ord);
+      
+      // Full automatic recovery respecting original order data
       setCurrentLot(prev => ({
         ...prev,
         producer: ord.producer_name || prev.producer,
@@ -191,7 +209,6 @@ export default function FruitInputPage() {
         paymentDays: ord.payment_days != null ? ord.payment_days : (prev.paymentDays || '7'),
       }));
 
-      // Si la orden ya tiene un lote asignado → continuar ingreso y mostrar comisión
       if (ord.lot_id) {
         try {
           const lotRes = await fetch(`/api/lots`);
@@ -1502,6 +1519,42 @@ export default function FruitInputPage() {
                 <p className="text-xs text-emerald-600">Al seleccionar el folio se asigna el lote desde la orden de corte • El lote sigue la trazabilidad.</p>
               </div>
 
+              {/* INTEGRACIÓN CONTROL DE CAJAS: mostrar datos de la orden + registrar devolución (reutiliza /api/box-control sin duplicar) */}
+              {selectedOrderDetails && (
+                <div className="md:col-span-2 mt-2 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-sm">
+                  <div className="font-medium text-emerald-800 mb-1">Control de Cajas (desde Orden de Corte)</div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                    <div>Cajas entregadas: <strong>{selectedOrderDetails.boxes_count || 0}</strong></div>
+                    <div>Cuadrilla: <strong>{selectedOrderDetails.crew_chief_name || '-'}</strong></div>
+                    <div>Transportista: <strong>{selectedOrderDetails.driver_name || '-'}</strong></div>
+                    <div>Camión: <strong>{selectedOrderDetails.truck_plates || '-'}</strong></div>
+                  </div>
+                  <button 
+                    onClick={async () => {
+                      if (!selectedCuttingOrderId) return;
+                      try {
+                        await fetch('/api/box-control', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            action: 'devolucion_cajas',
+                            cutting_order_id: selectedCuttingOrderId,
+                            lot_id: lotId,
+                            boxes_quantity: parseInt(selectedOrderDetails.boxes_count || 0),
+                            responsible_name: currentLot.producer || 'Operaciones',
+                            notes: `Devolución registrada desde Ingreso de Fruta - Lote ${currentLot.lotNumber}`
+                          })
+                        });
+                        alert('✓ Devolución de cajas registrada en Control de Cajas (sin duplicados)');
+                      } catch (e) { alert('No se pudo registrar devolución'); }
+                    }}
+                    className="mt-2 px-3 py-1 bg-emerald-600 text-white text-xs rounded hover:bg-emerald-700"
+                  >
+                    Registrar devolución de cajas en Control de Cajas
+                  </button>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <label className="text-sm font-medium text-slate-700">Número de Lote (Automático - Formato: TCV-FTS-0001)</label>
                 <input 
@@ -2052,8 +2105,12 @@ export default function FruitInputPage() {
                     </div>
                     {currentWeighing.guiaCampoPreview && (
                       <div className="relative">
-                        <img src={currentWeighing.guiaCampoPreview} alt="Guía Campo" className="w-full max-h-40 object-contain rounded border" />
-                        <button onClick={() => setCurrentWeighing(p => ({...p, guiaCampoPhoto:null, guiaCampoPreview:null}))} className="absolute top-1 right-1 bg-red-500 text-white rounded-full px-1 text-xs">×</button>
+                        <img src={currentWeighing.guiaCampoPreview} alt="Guía Campo" className="w-full max-h-40 object-contain rounded border" style={{transform: `rotate(${rotGuia}deg)`}} />
+                        <div className="absolute top-1 left-1 flex gap-1">
+                          <button onClick={() => setRotGuia(r => r - 90)} className="bg-white/80 text-xs px-1 rounded">↺</button>
+                          <button onClick={() => setRotGuia(r => r + 90)} className="bg-white/80 text-xs px-1 rounded">↻</button>
+                        </div>
+                        <button onClick={() => { setCurrentWeighing(p => ({...p, guiaCampoPhoto:null, guiaCampoPreview:null})); setRotGuia(0); }} className="absolute top-1 right-1 bg-red-500 text-white rounded-full px-1 text-xs">×</button>
                       </div>
                     )}
                   </div>
@@ -2068,8 +2125,12 @@ export default function FruitInputPage() {
                     </div>
                     {currentWeighing.boletaBasculaPreview && (
                       <div className="relative">
-                        <img src={currentWeighing.boletaBasculaPreview} alt="Boleta" className="w-full max-h-40 object-contain rounded border" />
-                        <button onClick={() => setCurrentWeighing(p => ({...p, boletaBasculaPhoto:null, boletaBasculaPreview:null}))} className="absolute top-1 right-1 bg-red-500 text-white rounded-full px-1 text-xs">×</button>
+                        <img src={currentWeighing.boletaBasculaPreview} alt="Boleta" className="w-full max-h-40 object-contain rounded border" style={{transform: `rotate(${rotBoleta}deg)`}} />
+                        <div className="absolute top-1 left-1 flex gap-1">
+                          <button onClick={() => setRotBoleta(r => r - 90)} className="bg-white/80 text-xs px-1 rounded">↺</button>
+                          <button onClick={() => setRotBoleta(r => r + 90)} className="bg-white/80 text-xs px-1 rounded">↻</button>
+                        </div>
+                        <button onClick={() => { setCurrentWeighing(p => ({...p, boletaBasculaPhoto:null, boletaBasculaPreview:null})); setRotBoleta(0); }} className="absolute top-1 right-1 bg-red-500 text-white rounded-full px-1 text-xs">×</button>
                       </div>
                     )}
                   </div>

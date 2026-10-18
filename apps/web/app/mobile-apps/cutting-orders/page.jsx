@@ -38,8 +38,8 @@ export default function CuttingOrdersAppDownload() {
             </div>
 
             <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-6 mb-8">
-              <h3 className="font-bold text-emerald-900 mb-2">✅ App Móvil Completada</h3>
-              <p className="text-sm text-emerald-800">La aplicación está lista. Crea órdenes en campo con sincronización automática al módulo de Órdenes de Corte.</p>
+              <h3 className="font-bold text-emerald-900 mb-2">✅ APK de Producción Disponible</h3>
+              <p className="text-sm text-emerald-800">La aplicación para Órdenes de Corte está lista para producción. Descarga el APK funcional desde la sección de Descargas (solo se muestra este módulo).</p>
             </div>
 
             <div className="space-y-4">

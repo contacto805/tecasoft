@@ -17,6 +17,12 @@ function LayoutContent({ children }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loading, setLoading] = useState(false);
   const [mxDisplay, setMxDisplay] = useState('');
+  // TECAVO IA floating assistant (global single instance, real backend, context aware)
+  const [iaOpen, setIaOpen] = useState(false);
+  const [iaMinimized, setIaMinimized] = useState(false);
+  const [iaMessages, setIaMessages] = useState([]);
+  const [iaInput, setIaInput] = useState('');
+  const [iaLoading, setIaLoading] = useState(false);
 
   const getGroupDashboard = () => {
     if (typeof window !== 'undefined') {
@@ -138,6 +144,32 @@ function LayoutContent({ children }) {
     return () => { clearInterval(id); clearInterval(t); };
   }, []);
 
+  // TECAVO IA - real chat using existing backend (no duplicate integration)
+  const sendIaMessage = async () => {
+    const q = iaInput.trim();
+    if (!q) return;
+    setIaLoading(true);
+    const newMsgs = [...iaMessages, { role: 'user', content: q }];
+    setIaMessages(newMsgs);
+    setIaInput('');
+    try {
+      const res = await fetch('/api/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ 
+          message: `Estoy en la pantalla: ${pathname}. ${q}`, 
+          history: newMsgs.slice(-6) 
+        })
+      });
+      const data = await res.json();
+      setIaMessages([...newMsgs, { role: 'assistant', content: data.reply || 'Respuesta no disponible.' }]);
+    } catch {
+      setIaMessages([...newMsgs, { role: 'assistant', content: 'Error al consultar TECAVO IA.' }]);
+    }
+    setIaLoading(false);
+  };
+
   // Redirect disabled to ensure the app always loads visible for all users/sessions.
 
   return (
@@ -187,6 +219,59 @@ function LayoutContent({ children }) {
           <span>{mxDisplay}</span>
         </div>
       )}
+
+      {/* TECAVO IA - Asistente flotante global (logo original estilo, una sola instancia, respeta permisos) */}
+      {isAuthenticated && (
+        <>
+          <button
+            onClick={() => { setIaOpen(!iaOpen); setIaMinimized(false); }}
+            className="fixed bottom-20 right-4 z-[140] w-12 h-12 rounded-full bg-emerald-900 text-white shadow-xl flex items-center justify-center border-2 border-emerald-600 hover:bg-emerald-800 transition-all"
+            title="TECAVO IA - Asistente Virtual"
+          >
+            <img src="https://app-cdn.appgen.com/c47548b2-8776-415f-8483-cdae09035713/assets/uploaded_1781494570784_ici2sv.png" alt="TECAVO IA" className="w-8 h-8 object-contain" />
+          </button>
+
+          {iaOpen && (
+            <div className="fixed bottom-20 right-4 z-[145] w-80 bg-white border border-emerald-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col" style={{ maxHeight: iaMinimized ? '42px' : '420px' }}>
+              <div className="bg-emerald-900 text-white px-3 py-1.5 text-xs font-semibold flex items-center justify-between">
+                <span>TECAVO IA — Asistente de Tecavo Fruits</span>
+                <div className="flex gap-1">
+                  <button onClick={() => setIaMinimized(!iaMinimized)} className="px-1.5 hover:bg-white/20 rounded">_</button>
+                  <button onClick={() => { setIaOpen(false); setIaMinimized(false); }} className="px-1.5 hover:bg-white/20 rounded">×</button>
+                </div>
+              </div>
+              {!iaMinimized && (
+                <>
+                  <div className="flex-1 p-3 overflow-auto text-sm bg-slate-50 min-h-[180px] space-y-2" style={{ maxHeight: '280px' }}>
+                    {iaMessages.length === 0 && (
+                      <div className="text-[10px] text-slate-500">Pregunta sobre datos reales del ERP (ingresos, lotes, cajas, pagos, etc). Ej: ¿Cuántos kilos ingresaron hoy? ¿Qué órdenes faltan por recibir?</div>
+                    )}
+                    {iaMessages.map((m, i) => (
+                      <div key={i} className={m.role === 'user' ? 'text-right' : ''}>
+                        <span className={`inline-block px-2 py-1 rounded-xl text-xs ${m.role === 'user' ? 'bg-emerald-800 text-white' : 'bg-white border'}`}>
+                          {m.content}
+                        </span>
+                      </div>
+                    ))}
+                    {iaLoading && <div className="text-xs text-emerald-600">Consultando fuentes reales...</div>}
+                  </div>
+                  <div className="p-2 border-t flex gap-1">
+                    <input 
+                      value={iaInput} 
+                      onChange={e => setIaInput(e.target.value)} 
+                      onKeyDown={e => { if (e.key === 'Enter') sendIaMessage(); }}
+                      placeholder="Pregunta a TECAVO IA..."
+                      className="flex-1 text-xs border rounded px-2 py-1" 
+                    />
+                    <button onClick={sendIaMessage} disabled={iaLoading || !iaInput.trim()} className="text-xs px-3 bg-emerald-800 text-white rounded">Enviar</button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </>
+      )}
+
       {children}
       {isAuthenticated && <MaterialAlertsPanel />}
       {isAuthenticated && (

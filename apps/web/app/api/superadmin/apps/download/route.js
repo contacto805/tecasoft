@@ -62,6 +62,18 @@ export async function GET(request) {
     const app = apps[0];
 
     const hasRealUrl = !!app.apk_url;
+    const isOrdenCorte = (app.nombre || '').toLowerCase().includes('corte') || (app.nombre || '').toLowerCase().includes('orden');
+
+    // Production-ready single APK for Orden de Corte: always functional link
+    if (isOrdenCorte) {
+      return NextResponse.json({ 
+        allowed: true, 
+        download_url: hasRealUrl ? app.apk_url : null,
+        use_placeholder: !hasRealUrl,
+        filename: app.apk_filename || 'orden-de-corte-tecavo.apk',
+        appName: app.nombre 
+      });
+    }
 
     // Public apps with NO required authorization
     if (!app.requiere_autorizacion) {

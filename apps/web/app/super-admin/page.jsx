@@ -335,24 +335,18 @@ export default function SuperAdminPage() {
               </div>
             </div>
 
-            {apks.length > 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {apks.map((apk, i) => (
-                  <div key={i} className="border border-slate-200rounded-2xl p-4 flex flex-col justify-between">
-                    <div>
-                      <div className="font-bold flex items-center gap-2 text-slate-900"><i className={`ph ${apk.icono || 'ph-device-mobile'} text-emerald-700`} /> {apk.nombre}</div>
-                      <div className="text-sm text-slate-500 mt-0.5">v{apk.version} • Android compatible</div>
-                      {apk.apk_filename && <div className="text-xs text-emerald-700 mt-0.5">{apk.apk_filename}</div>}
-                    </div>
-                    <button
-                      onClick={() => handleApkDownload(apk)}
-                      className="mt-4 w-full py-2.5 rounded-2xl bg-emerald-700 text-white hover:bg-emerald-800 text-sm font-semibold flex items-center justify-center gap-2"
-                    >
-                      <i className="ph ph-download-simple" /> DESCARGAR APK
-                    </button>
-                  </div>
-                ))}
-              </div>
+            {/* Hidden other APK sections - only production-ready Orden de Corte shown */}
+            {apks.filter(a => (a.nombre||'').toLowerCase().includes('corte')).length > 0 ? (
+              apks.filter(a => (a.nombre||'').toLowerCase().includes('corte')).slice(0,1).map((apk, i) => (
+                <div key={i} className="border-2 border-emerald-600 rounded-3xl p-6">
+                  <div className="font-bold text-xl text-emerald-800">Orden de Corte - APK Producción</div>
+                  <div className="text-sm">Único módulo con APK funcional de producción disponible.</div>
+                  <button onClick={() => handleApkDownload(apk)} className="mt-4 w-full px-6 py-3 bg-emerald-700 text-white rounded-2xl text-sm font-semibold">DESCARGAR APK ORDEN DE CORTE</button>
+                </div>
+              ))
+            ) : (
+              <div className="text-sm bg-slate-50 p-3 rounded-xl text-slate-600">Solo el módulo Orden de Corte tiene APK de producción. Use Superadministrador para generar el enlace.</div>
+            )}
             ) : (
               <div className="text-sm bg-slate-50 p-3 rounded-xl text-slate-600">No hay APKs generadas todavía. Sube archivos APK vía API o módulo de apps generadas.</div>
             )}

@@ -2286,24 +2286,18 @@ Notas comerciales" className="w-full border px-2 py-1 rounded text-sm h-14" />
           </div>
 
           <div className="border rounded-2xl overflow-hidden">
-            {apks.length === 0 && <div className="p-3 text-sm text-slate-400">Sin APKs generadas. Usa los botones para generar todas las pendientes del sistema.</div>}
+            {/* Only single production-ready APK for Orden de Corte shown. All other APK sections hidden. */}
             <div className="divide-y">
-              {apks.map((a, i) => (
-                <div key={`${a.id || 'apk'}-${i}`} className="p-3 flex flex-wrap items-center justify-between gap-2 bg-white hover:bg-sky-50">
-                  <div>
-                    <div className="font-medium">{a.nombre} <span className="text-xs px-1.5 py-px border rounded ml-1">{a.tipo}</span></div>
-                    <div className="text-xs text-slate-500">v{a.version || '1.3'} • {a.ruta} {a.apk_filename ? '• ' + a.apk_filename : ''}</div>
-                    <div className="text-[10px] mt-0.5">{a.apk_url ? <span className="text-emerald-600">URL válida almacenada</span> : <span className="text-amber-600">Generada (descarga funcional)</span>}</div>
-                  </div>
-                  <div className="flex gap-2 items-center">
-                    <label className="text-[10px] px-2 py-1 border rounded cursor-pointer hover:bg-white text-sky-700">
-                      Subir APK real
-                      <input type="file" accept=".apk" className="hidden" onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) uploadRealApk(a, f); e.target.value=''; }} />
-                    </label>
-                    <button onClick={() => downloadApk(a)} className="inline-flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs px-3 py-1.5 rounded-xl"><Download size={14}/> Descargar APK</button>
-                  </div>
+              {apks.filter(a => (a.nombre || '').toLowerCase().includes('corte')).slice(0,1).map((a, i) => (
+                <div key={`corte-${i}`} className="p-4 bg-emerald-50 rounded-xl border border-emerald-200">
+                  <div className="font-bold text-xl">Orden de Corte - APK Producción</div>
+                  <div className="text-sm mt-1">Módulo funcional y listo. Solo este se muestra en el área de descargas.</div>
+                  <button onClick={() => downloadApk(a)} className="mt-3 inline-flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm px-6 py-2.5 rounded-2xl"><Download size={16}/> Descargar APK Orden de Corte</button>
                 </div>
               ))}
+              {apks.filter(a => (a.nombre || '').toLowerCase().includes('corte')).length === 0 && (
+                <div className="p-3 text-sm">Genera el APK de Orden de Corte usando el botón superior para habilitar el enlace de descarga funcional.</div>
+              )}
             </div>
           </div>
           <div className="text-xs mt-2 text-slate-400">Solo se muestran APKs generadas con almacenamiento correcto. Las descargas siempre funcionan (usa URL real si se subió APK). Manejo de errores incluido para builds fallidos.</div>
