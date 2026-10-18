@@ -7,6 +7,15 @@ import 'jspdf-autotable';
 import { drawCompanyHeader } from '@/lib/company-header';
 import * as XLSX from 'xlsx';
 
+const TABS = [
+  { id: 'produccion', label: '1. PRODUCCIÓN' },
+  { id: 'inventarios', label: '2. INVENTARIOS' },
+  { id: 'costos', label: '3. COSTOS Y GASTOS' },
+  { id: 'bancos', label: '4. BANCOS Y COBRANZA' },
+  { id: 'rentabilidad', label: '5. RENTABILIDAD' },
+  { id: 'conciliacion', label: '6. CONCILIACIÓN' },
+];
+
 const fmt = (n) =>
   `$${parseFloat(n || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -72,6 +81,11 @@ export default function CierresPage() {
   const [saving, setSaving] = useState(false);
   const [selected, setSelected] = useState(null);
   const [isEditable, setIsEditable] = useState(false);
+
+  // V8 - 6 tabs + integral data
+  const [activeTab, setActiveTab] = useState('produccion');
+  const [integralData, setIntegralData] = useState(null);
+  const [conciliacionStatus, setConciliacionStatus] = useState('borrador');
 
   useEffect(() => { fetchClosings(); }, []);
 
@@ -180,45 +194,40 @@ export default function CierresPage() {
         `/api/weekly-closings?summary=true&startDate=${start}&endDate=${end}`
       );
       const data = await res.json();
-      const detalle = Array.isArray(data.ingreso_fruta_detalle) ? data.ingreso_fruta_detalle : [];
+
+      // V8 full integral
+      setIntegralData(data);
+
+      const detalle = Array.isArray(data.ingreso_fruta_detalle) ? data.ingreso_fruta_detalle : (data.produccion ? [] : []);
       const cargasDet = Array.isArray(data.cargas_detalle) ? data.cargas_detalle : [];
-      // recalcular totales desde detalle si existe
-      let autoKg = parseFloat(data.total_entradas_fruta_kg) || 0;
+
+      let autoKg = parseFloat(data.total_entradas_fruta_kg || data.produccion?.kg_recibidos) || 0;
       let autoDin = parseFloat(data.total_entradas_fruta_dinero) || 0;
-      if (detalle.length > 0) {
-        autoKg = detalle.reduce((s, r) => s + (parseFloat(r.kg) || 0), 0);
-        autoDin = detalle.reduce((s, r) => s + (parseFloat(r.dinero) || 0), 0);
-      }
-      // recalcular cargas desde detalle embarques si existe
-      let cargasKgCalc = parseFloat(data.total_cargas_kg) || 0;
+
+      let cargasKgCalc = parseFloat(data.total_cargas_kg || data.produccion?.kg_lotificados) || 0;
       let cargasDinCalc = parseFloat(data.total_cargas_dinero) || 0;
-      if (cargasDet.length > 0) {
-        cargasKgCalc = cargasDet.reduce((s, r) => s + (parseFloat(r.kg) || 0), 0);
-        cargasDinCalc = cargasDet.reduce((s, r) => s + (parseFloat(r.dinero) || 0), 0);
-      }
+
       setForm((f) => ({
         ...f,
-        // Solo sobrescribir campos automáticos del sistema; preservar manuales (bancos, efectivo, porcentajes, notas, recorded)
         totalCargasDinero: cargasDinCalc.toFixed(2),
-        totalVentasDesechoDinero: data.total_ventas_desecho_dinero?.toFixed(2) || '0',
-        totalVentasProcesoDinero: data.total_ventas_proceso_dinero?.toFixed(2) || '0',
-        valorInventarioMateriales: data.valor_inventario_materiales?.toFixed(2) || '0',
-        inventarioTarimas: data.inventario_tarimas_por_calibre || {},
-        totalGastos: data.total_gastos?.toFixed(2) || '0',
+        totalVentasProcesoDinero: (data.total_ventas_proceso_dinero || data.rentabilidad?.ingresos_netos || 0).toFixed(2),
+        valorInventarioMateriales: (data.valor_inventario_materiales || data.inventarios?.materiales_final || 0).toFixed(2),
+        totalGastos: (data.total_gastos || data.costos_gastos?.otros || 0).toFixed(2),
         totalEntradasFrutaDinero: autoDin.toFixed(2),
-        totalCuadrillaDinero: data.total_cuadrilla_dinero?.toFixed(2) || '0',
-        totalBrokerNotes: data.total_broker_notes?.toFixed(2) || '0',
-        totalFletes: data.total_fletes_dinero?.toFixed(2) || '0',
-        nominaSemanal: (data.nomina_semanal || data.nominaSemanal || 0).toFixed(2),
+        totalCuadrillaDinero: (data.total_cuadrilla_dinero || data.costos_gastos?.cuadrillas || 0).toFixed(2),
+        nominaSemanal: (data.nomina_semanal || data.costos_gastos?.nomina || 0).toFixed(2),
         totalCargasKg: cargasKgCalc.toFixed(2),
-        totalCuadrillaKg: data.total_cuadrilla_kg?.toFixed(2) || '0',
         totalEntradasFrutaKg: autoKg.toFixed(2),
-        totalDesechoKg: data.total_desecho_kg?.toFixed(2) || '0',
-        totalProcesoKg: data.total_proceso_kg?.toFixed(2) || '0',
-        // Auto detalles
+        totalDesechoKg: (data.total_desecho_kg || data.produccion?.desecho || 0).toFixed(2),
+        totalProcesoKg: (data.total_proceso_kg || data.produccion?.proceso || 0).toFixed(2),
         ingresoFrutaDetalle: detalle,
         cargasDetalle: cargasDet,
+        bancos: (data.bancos_cobranza?.abonos_banco || 0).toFixed(2),
       }));
+
+      if (data.conciliacion?.estado_general) {
+        setConciliacionStatus(data.conciliacion.estado_general);
+      }
       setIsEditable(false);
     } catch (e) {
       console.error(e);
@@ -227,31 +236,45 @@ export default function CierresPage() {
     }
   };
 
-  const handleSave = async () => {
+  const handleSave = async (extra = {}) => {
     setSaving(true);
     try {
       const method = editing ? 'PUT' : 'POST';
-      const body = editing ? { ...form, id: editing.id } : form;
+      const body = {
+        ...form,
+        id: editing?.id,
+        detalle_integral: integralData,
+        estado_conciliacion: conciliacionStatus,
+        ...extra,
+      };
       const res = await fetch('/api/weekly-closings', {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       if (res.ok) {
-        setShowForm(false);
         fetchClosings();
+        return true;
       }
     } catch (e) {
       console.error(e);
     } finally {
       setSaving(false);
     }
+    return false;
   };
 
-  // Lógica de flujo de cierre (senior): estados completos + acciones rápidas
+  // Lógica V8: flujo completo de cierre integral
   const quickStatusChange = async (newStatus) => {
     if (!editing) return;
-    const body = { ...form, id: editing.id, status: newStatus };
+    const newConc = newStatus === 'cerrado' ? 'cerrado' : (newStatus === 'aprobado' ? 'pendiente_autorizacion' : 'borrador');
+    const body = { 
+      ...form, 
+      id: editing.id, 
+      status: newStatus,
+      estado_conciliacion: newConc,
+      detalle_integral: integralData 
+    };
     try {
       await fetch('/api/weekly-closings', {
         method: 'PUT',
@@ -259,6 +282,7 @@ export default function CierresPage() {
         body: JSON.stringify(body),
       });
       setForm(f => ({ ...f, status: newStatus }));
+      setConciliacionStatus(newConc);
       fetchClosings();
     } catch (e) { console.error(e); }
   };
@@ -277,17 +301,25 @@ export default function CierresPage() {
     if (!editing && !form.weekStartDate) return;
     const targetId = editing?.id;
     if (!targetId) {
-      // If creating new, save first then approve
       await handleSave();
       return;
     }
+
+    let newStatus = form.status;
+    let newConc = conciliacionStatus;
+
+    if (action === 'aprobar') { newStatus = 'aprobado'; newConc = 'pendiente_autorizacion'; }
+    if (action === 'cerrar') { newStatus = 'cerrado'; newConc = 'cerrado'; }
+    if (action === 'reabrir') { newStatus = 'abierto'; newConc = 'borrador'; }
+
     const payload = {
       id: targetId,
-      action,
-      status: form.status,
+      status: newStatus,
+      estado_conciliacion: newConc,
       recordedBy: form.recordedBy || null,
       approvedBy: action === 'aprobar' ? (form.approvedBy || 'admin-general') : form.approvedBy || null,
       notes: form.notes,
+      detalle_integral: integralData,
     };
     try {
       const res = await fetch('/api/weekly-closings', {
@@ -298,8 +330,9 @@ export default function CierresPage() {
       if (res.ok) {
         const updated = await res.json();
         setForm((f) => ({ ...f, status: updated.status, approvedBy: updated.approved_by || f.approvedBy }));
+        setConciliacionStatus(newConc);
         fetchClosings();
-        alert(action === 'aprobar' ? 'Cierre aprobado por segundo admin.' : 'Estado actualizado.');
+        alert(action === 'cerrar' ? 'Cierre cerrado (snapshot guardado).' : 'Estado actualizado.');
       }
     } catch (e) { console.error(e); }
   };
@@ -349,135 +382,91 @@ export default function CierresPage() {
 
   const esUtilidad = resultadoDinero >= 0;
 
-  // Exportar PDF
+  // Exportar PDF V8 - multi pestaña + conciliación
   const exportPDF = () => {
     const doc = new jsPDF();
-    let y = drawCompanyHeader(doc, { companyName: 'TECAVO FRUITS' }); // uses current branding if loaded
-    doc.text('CIERRE SEMANAL', 14, y);
-    doc.text('TECAVO FRUITS', 14, 15);
+    let y = drawCompanyHeader(doc, { companyName: 'TECAVO FRUITS' });
+    doc.text('CIERRE SEMANAL INTEGRAL V7', 14, y + 8);
+    doc.setFontSize(11);
+    doc.text(`${form.weekLabel} | ${form.weekStartDate} - ${form.weekEndDate}`, 14, y + 16);
     doc.setFontSize(10);
-    doc.text('RFC: TFR230302EU5', 14, 22);
-    doc.setFontSize(16);
-    doc.text('Cierre Semanal', 14, 32);
-    doc.setFontSize(12);
-    doc.text(`${form.weekLabel || 'Semana'}`, 14, 40);
-    doc.text(`${form.weekStartDate} - ${form.weekEndDate}`, 14, 46);
 
-    let yPos = 55;
+    let yPos = y + 26;
 
-    // INGRESOS
-    doc.setFontSize(14);
-    doc.setTextColor(0, 128, 0);
-    doc.text('INGRESOS', 14, yPos);
+    // Resumen rápido
+    doc.text(`INGRESOS: ${fmt(totalIngresosDinero)}   EGRESOS: ${fmt(totalEgresosDinero)}   RESULTADO: ${fmt(resultadoDinero)}`, 14, yPos);
+    yPos += 10;
+
+    // PRODUCCIÓN
+    doc.setFontSize(12); doc.text('1. PRODUCCIÓN', 14, yPos); yPos += 6;
+    doc.setFontSize(9);
+    doc.text(`Recibidos: ${(integralData?.produccion?.kg_recibidos || 0).toFixed(0)} | Lotif: ${(integralData?.produccion?.kg_lotificados || 0).toFixed(0)} | A:${(integralData?.produccion?.calidad_a||0).toFixed(0)} B:${(integralData?.produccion?.calidad_b||0).toFixed(0)} Proceso:${(integralData?.produccion?.proceso||0).toFixed(0)}`, 14, yPos);
     yPos += 8;
-    doc.setFontSize(10);
-    doc.setTextColor(0, 0, 0);
-    const ingresosData = [
-      ['Proc. y Desecho (Dinero)', fmt(form.totalVentasProcesoDinero)],
-      ['Inventario Materiales', fmt(form.valorInventarioMateriales)],
-      ['Bancos', fmt(form.bancos)],
-      ['Cargas (Dinero)', fmt(form.totalCargasDinero)],
-      ['Cargas (KG)', form.totalCargasKg || '0'],
-      ['TOTAL INGRESOS', fmt(totalIngresosDinero)],
-    ];
-    doc.autoTable({
-      startY: yPos,
-      head: [],
-      body: ingresosData,
-      theme: 'grid',
-      margin: { left: 14 }
-    });
 
-    yPos = doc.lastAutoTable.finalY + 10;
-
-    // EGRESOS
-    doc.setFontSize(14);
-    doc.setTextColor(128, 0, 0);
-    doc.text('EGRESOS', 14, yPos);
+    // INVENTARIOS
+    doc.setFontSize(12); doc.text('2. INVENTARIOS', 14, yPos); yPos += 6;
+    doc.setFontSize(9);
+    doc.text(`Fruta Final: ${(integralData?.inventarios?.fruta_final || 0).toFixed(0)} kg | Mat Final: ${(integralData?.inventarios?.materiales_final || 0).toFixed(2)}`, 14, yPos);
     yPos += 8;
-    doc.setFontSize(10);
-    doc.setTextColor(0, 0, 0);
-    const egresosData = [
-      ['Cuadrillas (KG cortados)', form.totalCuadrillaKg || '0'],
-      ['Cuadrillas (Dinero)', fmt(form.totalCuadrillaDinero)],
-      ['Monto de Fletes', fmt(form.totalFletes)],
-      ['Gastos', fmt(form.totalGastos)],
-      ['Nómina', fmt(form.nominaSemanal)],
-      ['Luz y Renta', fmt((parseFloat(form.porcentajeLuz) || 0) + (parseFloat(form.porcentajeRenta) || 0))],
-      ['Ingreso Fruta (KG)', form.totalEntradasFrutaKg || '0'],
-      ['Ingreso Fruta (Dinero)', fmt(form.totalEntradasFrutaDinero)],
-      ['TOTAL EGRESOS', fmt(totalEgresosDinero)],
-    ];
-    doc.autoTable({
-      startY: yPos,
-      head: [],
-      body: egresosData,
-      theme: 'grid',
-      margin: { left: 14 }
-    });
 
-    yPos = doc.lastAutoTable.finalY + 10;
-
-    // RESULTADOS
-    doc.setFontSize(14);
-    doc.setTextColor(0, 0, 128);
-    doc.text('RESULTADOS', 14, yPos);
+    // COSTOS
+    doc.setFontSize(12); doc.text('3. COSTOS Y GASTOS', 14, yPos); yPos += 6;
+    doc.setFontSize(9);
+    doc.text(`Cuadrilla: ${(integralData?.costos_gastos?.cuadrillas || 0).toFixed(2)} | Nómina: ${(integralData?.costos_gastos?.nomina || 0).toFixed(2)} | Fletes: ${(integralData?.costos_gastos?.fletes_comerciales || 0).toFixed(2)}`, 14, yPos);
     yPos += 8;
-    const resultadosData = [
-      ['Kg de la Semana', kgDeLaSemana.toFixed(2)],
-      ['Utilidad/Pérdida', fmt(resultadoDinero)],
-    ];
-    doc.autoTable({
-      startY: yPos,
-      head: [],
-      body: resultadosData,
-      theme: 'grid',
-      margin: { left: 14 }
-    });
 
-    doc.save(`cierre_semanal_${form.weekStartDate}.pdf`);
+    // BANCOS
+    doc.setFontSize(12); doc.text('4. BANCOS Y COBRANZA', 14, yPos); yPos += 6;
+    doc.setFontSize(9);
+    doc.text(`Abonos: ${(integralData?.bancos_cobranza?.abonos_banco || 0).toFixed(2)} | Cobros Clientes: ${(integralData?.bancos_cobranza?.cobros_clientes || 0).toFixed(2)}`, 14, yPos);
+    yPos += 8;
+
+    // RENTABILIDAD + CONC
+    doc.setFontSize(12); doc.text('5-6. RENTABILIDAD + CONCILIACIÓN', 14, yPos); yPos += 6;
+    doc.setFontSize(9);
+    doc.text(`Utilidad Bruta: ${(integralData?.rentabilidad?.utilidad_bruta || 0).toFixed(2)} | Estado Conc.: ${conciliacionStatus}`, 14, yPos);
+
+    doc.save(`cierre_semanal_integral_${form.weekStartDate}.pdf`);
   };
 
-  // Exportar Excel
+  // Exportar Excel V8
   const exportExcel = () => {
     const data = [
-      ['CIERRE SEMANAL'],
+      ['CIERRE SEMANAL INTEGRAL V7'],
       [form.weekLabel || 'Semana'],
       [`${form.weekStartDate} - ${form.weekEndDate}`],
       [],
-      ['INGRESOS'],
-      ['Concepto', 'Monto'],
-      ['Proc. y Desecho (KG)', form.totalProcesoKg],
-      ['Proc. y Desecho (Dinero)', form.totalVentasProcesoDinero],
-      ['Inventario Materiales', form.valorInventarioMateriales],
-      ['Bancos', form.bancos],
-      ['Cargas (KG)', form.totalCargasKg],
-      ['Cargas (Dinero)', form.totalCargasDinero],
-      ['TOTAL INGRESOS', totalIngresosDinero],
+      ['1. PRODUCCIÓN'],
+      ['KG Recibidos', integralData?.produccion?.kg_recibidos || 0],
+      ['KG Lotificados', integralData?.produccion?.kg_lotificados || 0],
+      ['Calidad A', integralData?.produccion?.calidad_a || 0],
+      ['Proceso', integralData?.produccion?.proceso || 0],
+      ['Desecho', integralData?.produccion?.desecho || 0],
       [],
-      ['EGRESOS'],
-      ['Concepto', 'Monto'],
-      ['Cuadrillas (KG)', form.totalCuadrillaKg],
-      ['Cuadrillas (Dinero)', form.totalCuadrillaDinero],
-      ['Monto de Fletes', form.totalFletes],
-      ['Gastos', form.totalGastos],
-      ['Nómina', form.nominaSemanal],
-      ['Luz', form.porcentajeLuz],
-      ['Renta', form.porcentajeRenta],
-      ['Ingreso Fruta (KG)', form.totalEntradasFrutaKg],
-      ['Ingreso Fruta (Dinero)', form.totalEntradasFrutaDinero],
-      ['TOTAL EGRESOS', totalEgresosDinero],
+      ['2. INVENTARIOS'],
+      ['Materiales Final (fórmula)', integralData?.inventarios?.materiales_final || form.valorInventarioMateriales],
       [],
+      ['3. COSTOS'],
+      ['Cuadrillas', integralData?.costos_gastos?.cuadrillas || 0],
+      ['Nómina', integralData?.costos_gastos?.nomina || 0],
       [],
-      ['RESULTADOS'],
-      ['Kg de la Semana', kgDeLaSemana],
+      ['4. BANCOS'],
+      ['Abonos Banco', integralData?.bancos_cobranza?.abonos_banco || 0],
+      [],
+      ['5. RENTABILIDAD'],
+      ['Ingresos Netos', integralData?.rentabilidad?.ingresos_netos || 0],
+      ['Utilidad Bruta', integralData?.rentabilidad?.utilidad_bruta || 0],
+      [],
+      ['6. CONCILIACIÓN'],
+      ['Estado', conciliacionStatus],
+      [],
+      ['RESULTADO'],
       ['Utilidad/Pérdida', resultadoDinero],
     ];
-
     const ws = XLSX.utils.aoa_to_sheet(data);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Cierre Semanal');
-    XLSX.writeFile(wb, `cierre_semanal_${form.weekStartDate}.xlsx`);
+    XLSX.utils.book_append_sheet(wb, ws, 'Cierre Integral V7');
+    XLSX.writeFile(wb, `cierre_integral_${form.weekStartDate}.xlsx`);
   };
 
   // Exportar CSV
@@ -618,7 +607,7 @@ export default function CierresPage() {
                             c.status === 'aprobado' ? 'bg-emerald-100 text-emerald-700' :
                             c.status === 'pendiente_aprobacion' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
                           }`}>
-                            {c.status === 'cerrado' ? 'Cerrado' : c.status === 'aprobado' ? 'Aprobado' : c.status === 'pendiente_aprobacion' ? 'Pendiente Aprob.' : 'Abierto'}
+                            {c.estado_conciliacion || c.status || 'borrador'}
                           </span>
                           <div className="flex items-center gap-2">
                             <button onClick={(e) => { e.stopPropagation(); openEdit(c); }} className="p-2 text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition-colors">
@@ -683,428 +672,183 @@ export default function CierresPage() {
               </div>
             )}
 
-            <div className="p-6 space-y-8">
-              {/* Periodo */}
+            <div className="p-6 space-y-6">
+              {/* Periodo + Calcular V8 */}
               <div>
                 <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2">
-                  <i className="ph ph-calendar-blank text-brand-600"></i> Periodo de la Semana
+                  <i className="ph ph-calendar-blank text-brand-600"></i> Periodo de la Semana (Lunes a Domingo)
                 </h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="space-y-1">
-                    <label className="text-sm font-medium text-slate-600">Inicio de semana</label>
+                    <label className="text-sm font-medium text-slate-600">Inicio (Lunes)</label>
                     <input type="date" value={form.weekStartDate} onChange={(e) => setField('weekStartDate', e.target.value)}
-                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 outline-none" />
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200" />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-sm font-medium text-slate-600">Fin de semana</label>
+                    <label className="text-sm font-medium text-slate-600">Fin (Domingo)</label>
                     <input type="date" value={form.weekEndDate} onChange={(e) => setField('weekEndDate', e.target.value)}
-                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 outline-none" />
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200" />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-sm font-medium text-slate-600">Etiqueta de semana</label>
-                    <input type="text" value={form.weekLabel} onChange={(e) => setField('weekLabel', e.target.value)}
-                      placeholder="Ej. Semana 28" className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 outline-none" />
-                  </div>
-                </div>
-                <button
-                  onClick={() => fetchRelatedModuleData()}
-                  disabled={loadingData || !form.weekStartDate || !form.weekEndDate}
-                  className="mt-4 px-5 py-2.5 bg-brand-600 text-white text-sm font-semibold rounded-xl hover:bg-brand-700 disabled:opacity-50 transition-colors flex items-center gap-2"
-                >
-                  {loadingData ? <><i className="ph ph-spinner animate-spin"></i> Cargando...</> : <><i className="ph ph-arrows-clockwise"></i> Cargar datos del sistema</>}
-                </button>
-                <button
-                  onClick={() => setIsEditable(!isEditable)}
-                  className="mt-4 ml-3 px-4 py-2.5 bg-amber-600 text-white text-sm font-semibold rounded-xl hover:bg-amber-700 transition-colors flex items-center gap-2"
-                >
-                  <i className={`ph ph-${isEditable ? 'lock' : 'pencil-simple'}`}></i>
-                  {isEditable ? 'Bloquear' : 'Editar valores'}
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                {/* INGRESOS */}
-                <div>
-                  <h3 className="font-semibold text-emerald-700 mb-4 flex items-center gap-2 text-lg">
-                    <i className="ph-fill ph-arrow-circle-up"></i> INGRESOS
-                  </h3>
-                  <div className="space-y-3">
-                    {/* Proc y Desecho */}
-                    <div className="bg-slate-50 p-4 rounded-xl">
-                      <p className="text-sm font-semibold text-slate-700 mb-2">Proc. y Desecho</p>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="text-xs text-slate-500">KG</label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={form.totalProcesoKg}
-                            onChange={(e) => setField('totalProcesoKg', e.target.value)}
-                            disabled={!isEditable}
-                            className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-xs text-slate-500">Dinero</label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={form.totalVentasProcesoDinero}
-                            onChange={(e) => setField('totalVentasProcesoDinero', e.target.value)}
-                            disabled={!isEditable}
-                            className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Inventarios - Tarimas por calibre */}
-                    <div className="bg-slate-50 p-4 rounded-xl">
-                      <p className="text-sm font-semibold text-slate-700 mb-2">Inventario Tarimas</p>
-                      {Object.keys(form.inventarioTarimas).length > 0 ? (
-                        <div className="space-y-2">
-                          {Object.entries(form.inventarioTarimas).map(([caliber, tarimas]) => (
-                            <div key={caliber} className="flex items-center justify-between gap-2">
-                              <label className="text-xs text-slate-600">{caliber}</label>
-                              <div className="flex items-center gap-2">
-                                <input
-                                  type="number"
-                                  step="1"
-                                  value={tarimas}
-                                  onChange={(e) => setInventarioTarimaCalibre(caliber, e.target.value)}
-                                  disabled={!isEditable}
-                                  className="w-20 px-2 py-1 rounded-lg border border-slate-200 text-sm"
-                                />
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  placeholder="Precio"
-                                  className="w-24 px-2 py-1 rounded-lg border border-slate-200 text-sm"
-                                />
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-xs text-slate-400">Cargar datos del sistema para ver calibres</p>
-                      )}
-                    </div>
-
-                    {/* Materiales */}
-                    <div className="space-y-1">
-                      <label className="text-sm font-medium text-slate-600">Valor Inventario Materiales</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={form.valorInventarioMateriales}
-                        onChange={(e) => setField('valorInventarioMateriales', e.target.value)}
-                        disabled={!isEditable}
-                        className="w-full px-4 py-2.5 rounded-xl border border-slate-200"
-                      />
-                    </div>
-
-                    {/* Bancos */}
-                    <div className="space-y-1">
-                      <label className="text-sm font-medium text-slate-600">Bancos</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={form.bancos}
-                        onChange={(e) => setField('bancos', e.target.value)}
-                        className="w-full px-4 py-2.5 rounded-xl border border-slate-200"
-                      />
-                    </div>
-
-                    {/* Efectivo Disponible */}
-                    <div className="space-y-1">
-                      <label className="text-sm font-medium text-slate-600">Efectivo Disponible</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={form.efectivoDisponible}
-                        onChange={(e) => setField('efectivoDisponible', e.target.value)}
-                        className="w-full px-4 py-2.5 rounded-xl border border-slate-200"
-                      />
-                    </div>
-
-                    {/* Cargas */}
-                    <div className="bg-slate-50 p-4 rounded-xl">
-                      <p className="text-sm font-semibold text-slate-700 mb-2">Cargas</p>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="text-xs text-slate-500">KG Enviados</label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={form.totalCargasKg}
-                            onChange={(e) => setField('totalCargasKg', e.target.value)}
-                            disabled={!isEditable}
-                            className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-xs text-slate-500">Valor de Viajes</label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={form.totalCargasDinero}
-                            onChange={(e) => setField('totalCargasDinero', e.target.value)}
-                            disabled={!isEditable}
-                            className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
-                          />
-                        </div>
-                      </div>
-
-                      {/* Lista automática de embarques / Notas de Venta - integración con Ingreso de Embarques */}
-                      {form.cargasDetalle && form.cargasDetalle.length > 0 ? (
-                        <div className="mt-3">
-                          <p className="text-xs font-medium text-slate-600 mb-1.5">Registros automáticos por Nota de Venta (del período)</p>
-                          <div className="max-h-44 overflow-auto border border-slate-200 rounded-lg bg-white">
-                            <table className="w-full text-xs">
-                              <thead>
-                                <tr className="bg-slate-100 text-slate-600">
-                                  <th className="px-2 py-1.5 text-left font-medium">Nota</th>
-                                  <th className="px-2 py-1.5 text-left font-medium">Fecha</th>
-                                  <th className="px-2 py-1.5 text-left font-medium">Lote</th>
-                                  <th className="px-2 py-1.5 text-left font-medium">Cliente</th>
-                                  <th className="px-2 py-1.5 text-right font-medium">Kg</th>
-                                  <th className="px-2 py-1.5 text-right font-medium">Valor</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {(form.cargasDetalle || []).map((row, idx) => (
-                                  <tr key={idx} className="border-t border-slate-100">
-                                    <td className="px-2 py-1 font-medium text-slate-900">{row.nota || '-'}</td>
-                                    <td className="px-2 py-1 text-slate-600">{row.fecha ? String(row.fecha).split('T')[0] : '-'}</td>
-                                    <td className="px-2 py-1 text-slate-600">{row.lote || '-'}</td>
-                                    <td className="px-2 py-1 text-slate-600 truncate max-w-[90px]">{row.cliente || '-'}</td>
-                                    <td className="px-2 py-1 text-right">{parseFloat(row.kg || 0).toFixed(2)}</td>
-                                    <td className="px-2 py-1 text-right font-medium">{fmt(row.dinero || 0)}</td>
-                                  </tr>
-                                ))}
-                                <tr className="border-t bg-emerald-50 font-semibold text-emerald-800">
-                                  <td className="px-2 py-1 text-right" colSpan="4">Total período</td>
-                                  <td className="px-2 py-1 text-right">{parseFloat(form.totalCargasKg || 0).toFixed(2)}</td>
-                                  <td className="px-2 py-1 text-right">{fmt(form.totalCargasDinero)}</td>
-                                </tr>
-                              </tbody>
-                            </table>
-                          </div>
-                          <p className="text-[10px] text-emerald-700 mt-1">Cargado automáticamente desde Ingreso de Embarques (Notas de Venta) del período.</p>
-                        </div>
-                      ) : (
-                        <p className="mt-2 text-xs text-slate-400">Presiona “Cargar datos del sistema” para integrar automáticamente los embarques/ Notas de Venta.</p>
-                      )}
-                    </div>
-
-                    {/* Total Ingresos */}
-                    <div className="bg-emerald-50 p-4 rounded-xl border-2 border-emerald-200">
-                      <div className="flex justify-between items-center">
-                        <span className="font-bold text-emerald-800">TOTAL INGRESOS</span>
-                        <span className="font-black text-xl text-emerald-800">{fmt(totalIngresosDinero)}</span>
-                      </div>
-                    </div>
+                    <label className="text-sm font-medium text-slate-600">Etiqueta</label>
+                    <input type="text" value={form.weekLabel} onChange={(e) => setField('weekLabel', e.target.value)} placeholder="Semana X" className="w-full px-4 py-2.5 rounded-xl border border-slate-200" />
                   </div>
                 </div>
 
-                {/* EGRESOS */}
-                <div>
-                  <h3 className="font-semibold text-red-700 mb-4 flex items-center gap-2 text-lg">
-                    <i className="ph-fill ph-arrow-circle-down"></i> EGRESOS
-                  </h3>
-                  <div className="space-y-3">
-                    {/* Cuadrillas */}
-                    <div className="bg-slate-50 p-4 rounded-xl">
-                      <p className="text-sm font-semibold text-slate-700 mb-2">Cuadrillas</p>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="text-xs text-slate-500">KG cortados</label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={form.totalCuadrillaKg}
-                            onChange={(e) => setField('totalCuadrillaKg', e.target.value)}
-                            disabled={!isEditable}
-                            className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-xs text-slate-500">Dinero</label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={form.totalCuadrillaDinero}
-                            onChange={(e) => setField('totalCuadrillaDinero', e.target.value)}
-                            disabled={!isEditable}
-                            className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Monto de Fletes (auto desde Cuadrillas y Fletes - período) */}
-                    <div className="space-y-1">
-                      <label className="text-sm font-medium text-slate-600">Monto de Fletes</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={form.totalFletes}
-                        onChange={(e) => setField('totalFletes', e.target.value)}
-                        disabled={!isEditable}
-                        className="w-full px-4 py-2.5 rounded-xl border border-slate-200"
-                        placeholder="Se carga automáticamente desde fletes del período"
-                      />
-                    </div>
-
-                    {/* Gastos */}
-                    <div className="space-y-1">
-                      <label className="text-sm font-medium text-slate-600">Gastos</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={form.totalGastos}
-                        onChange={(e) => setField('totalGastos', e.target.value)}
-                        disabled={!isEditable}
-                        className="w-full px-4 py-2.5 rounded-xl border border-slate-200"
-                      />
-                    </div>
-
-                    {/* Nómina */}
-                    <div className="space-y-1">
-                      <label className="text-sm font-medium text-slate-600">Nómina Semanal</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={form.nominaSemanal}
-                        onChange={(e) => setField('nominaSemanal', e.target.value)}
-                        disabled={!isEditable}
-                        className="w-full px-4 py-2.5 rounded-xl border border-slate-200"
-                      />
-                    </div>
-
-                    {/* Luz y Renta */}
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1">
-                        <label className="text-sm font-medium text-slate-600">Luz</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={form.porcentajeLuz}
-                          onChange={(e) => setField('porcentajeLuz', e.target.value)}
-                          className="w-full px-4 py-2.5 rounded-xl border border-slate-200"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-sm font-medium text-slate-600">Renta</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={form.porcentajeRenta}
-                          onChange={(e) => setField('porcentajeRenta', e.target.value)}
-                          className="w-full px-4 py-2.5 rounded-xl border border-slate-200"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Ingreso de fruta */}
-                    <div className="bg-slate-50 p-4 rounded-xl">
-                      <p className="text-sm font-semibold text-slate-700 mb-2">Ingreso de Fruta</p>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="text-xs text-slate-500">KG (total)</label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={form.totalEntradasFrutaKg}
-                            onChange={(e) => setField('totalEntradasFrutaKg', e.target.value)}
-                            disabled={!isEditable}
-                            className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-xs text-slate-500">Dinero (total)</label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={form.totalEntradasFrutaDinero}
-                            onChange={(e) => setField('totalEntradasFrutaDinero', e.target.value)}
-                            disabled={!isEditable}
-                            className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
-                          />
-                        </div>
-                      </div>
-
-                      {/* Lista automática de lotes - integración con Ingreso de Fruta */}
-                      {form.ingresoFrutaDetalle && form.ingresoFrutaDetalle.length > 0 ? (
-                        <div className="mt-3">
-                          <p className="text-xs font-medium text-slate-600 mb-1.5">Registros automáticos por lote (del período)</p>
-                          <div className="max-h-44 overflow-auto border border-slate-200 rounded-lg bg-white">
-                            <table className="w-full text-xs">
-                              <thead>
-                                <tr className="bg-slate-100 text-slate-600">
-                                  <th className="px-2 py-1.5 text-left font-medium">Lote</th>
-                                  <th className="px-2 py-1.5 text-left font-medium">Fecha</th>
-                                  <th className="px-2 py-1.5 text-left font-medium">Productor</th>
-                                  <th className="px-2 py-1.5 text-right font-medium">Kg</th>
-                                  <th className="px-2 py-1.5 text-right font-medium">Valor</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {(form.ingresoFrutaDetalle || []).map((row, idx) => (
-                                  <tr key={idx} className="border-t border-slate-100">
-                                    <td className="px-2 py-1 font-medium text-slate-900">{row.lot_number || '-'}</td>
-                                    <td className="px-2 py-1 text-slate-600">{row.fecha ? String(row.fecha).split('T')[0] : '-'}</td>
-                                    <td className="px-2 py-1 text-slate-600 truncate max-w-[110px]">{row.productor || '-'}</td>
-                                    <td className="px-2 py-1 text-right">{parseFloat(row.kg || 0).toFixed(2)}</td>
-                                    <td className="px-2 py-1 text-right font-medium">{fmt(row.dinero || 0)}</td>
-                                  </tr>
-                                ))}
-                                <tr className="border-t bg-emerald-50 font-semibold text-emerald-800">
-                                  <td className="px-2 py-1 text-right" colSpan="3">Total período</td>
-                                  <td className="px-2 py-1 text-right">{parseFloat(form.totalEntradasFrutaKg || 0).toFixed(2)}</td>
-                                  <td className="px-2 py-1 text-right">{fmt(form.totalEntradasFrutaDinero)}</td>
-                                </tr>
-                              </tbody>
-                            </table>
-                          </div>
-                          <p className="text-[10px] text-emerald-700 mt-1">Cargado automáticamente desde Ingreso de Fruta del período (no requiere captura manual).</p>
-                        </div>
-                      ) : (
-                        <p className="mt-2 text-xs text-slate-400">Presiona “Cargar datos del sistema” para integrar automáticamente los lotes de Ingreso de Fruta.</p>
-                      )}
-                    </div>
-
-                    {/* Total Egresos */}
-                    <div className="bg-red-50 p-4 rounded-xl border-2 border-red-200">
-                      <div className="flex justify-between items-center">
-                        <span className="font-bold text-red-800">TOTAL EGRESOS</span>
-                        <span className="font-black text-xl text-red-800">{fmt(totalEgresosDinero)}</span>
-                      </div>
-                    </div>
-                  </div>
+                <div className="flex flex-wrap gap-3 mt-4">
+                  <button
+                    onClick={() => fetchRelatedModuleData()}
+                    disabled={loadingData || !form.weekStartDate || !form.weekEndDate}
+                    className="px-6 py-2.5 bg-emerald-700 text-white text-sm font-semibold rounded-xl hover:bg-emerald-800 disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {loadingData ? <><i className="ph ph-spinner animate-spin"></i> Calculando...</> : <><i className="ph ph-arrows-clockwise"></i> CALCULAR CIERRE INTEGRAL V7</>}
+                  </button>
+                  <button onClick={() => setIsEditable(!isEditable)} className="px-4 py-2.5 bg-amber-600 text-white rounded-xl text-sm">
+                    <i className={`ph ph-${isEditable ? 'lock' : 'pencil-simple'}`}></i> {isEditable ? 'Bloquear edición' : 'Permitir edición manual'}
+                  </button>
+                  <button onClick={() => router.push('/administracion/conciliacion-bancaria')} className="px-4 py-2.5 border rounded-xl text-sm">Ir a Conciliación Bancaria (IA)</button>
                 </div>
               </div>
 
-              {/* RESULTADOS */}
-              <div className="bg-slate-100 p-6 rounded-2xl">
-                <h3 className="font-semibold text-slate-800 mb-4 text-lg text-center">RESULTADOS</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="bg-white p-4 rounded-xl border border-slate-200">
-                    <p className="text-sm text-slate-500 mb-1">Kg de la Semana</p>
-                    <p className={`text-2xl font-bold ${resultadoKg >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                      {kgDeLaSemana.toFixed(2)} kg
-                    </p>
-                  </div>
-                  <div className={`p-4 rounded-xl border-2 ${esUtilidad ? 'bg-emerald-50 border-emerald-300' : 'bg-red-50 border-red-300'}`}>
-                    <p className="text-sm text-slate-600 mb-1">Utilidad / Pérdida</p>
-                    <p className={`text-3xl font-black ${esUtilidad ? 'text-emerald-700' : 'text-red-700'}`}>
-                      {fmt(resultadoDinero)}
-                    </p>
-                    <p className={`text-sm font-bold mt-1 ${esUtilidad ? 'text-emerald-600' : 'text-red-600'}`}>
-                      {esUtilidad ? '✓ UTILIDAD' : '✗ PÉRDIDA'}
-                    </p>
-                  </div>
+              {/* TABS V8 */}
+              <div className="border-b border-slate-200">
+                <div className="flex flex-wrap gap-1 -mb-px">
+                  {TABS.map(t => (
+                    <button
+                      key={t.id}
+                      onClick={() => setActiveTab(t.id)}
+                      className={`px-4 py-2 text-sm font-medium border-b-2 transition-all ${activeTab === t.id ? 'border-emerald-600 text-emerald-700' : 'border-transparent text-slate-600 hover:text-slate-800'}`}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
                 </div>
+              </div>
+
+              {/* CONTENIDO DE LAS 6 PESTAÑAS */}
+              <div className="pt-2 min-h-[420px]">
+                {/* 1. PRODUCCIÓN */}
+                {activeTab === 'produccion' && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div className="bg-white border rounded-xl p-3"><div className="text-xs text-slate-500">KG Recibidos</div><div className="text-2xl font-bold">{(integralData?.produccion?.kg_recibidos || form.totalEntradasFrutaKg || 0).toLocaleString()}</div></div>
+                      <div className="bg-white border rounded-xl p-3"><div className="text-xs text-slate-500">KG Lotificados</div><div className="text-2xl font-bold">{(integralData?.produccion?.kg_lotificados || form.totalCargasKg || 0).toLocaleString()}</div></div>
+                      <div className="bg-white border rounded-xl p-3"><div className="text-xs text-slate-500">Calidad A</div><div className="text-2xl font-bold text-emerald-700">{(integralData?.produccion?.calidad_a || 0).toLocaleString()}</div></div>
+                      <div className="bg-white border rounded-xl p-3"><div className="text-xs text-slate-500">Calidad B</div><div className="text-2xl font-bold">{(integralData?.produccion?.calidad_b || 0).toLocaleString()}</div></div>
+                      <div className="bg-white border rounded-xl p-3"><div className="text-xs text-slate-500">Proceso</div><div className="text-2xl font-bold">{(integralData?.produccion?.proceso || form.totalProcesoKg || 0).toLocaleString()}</div></div>
+                      <div className="bg-white border rounded-xl p-3"><div className="text-xs text-slate-500">Desecho</div><div className="text-2xl font-bold">{(integralData?.produccion?.desecho || form.totalDesechoKg || 0).toLocaleString()}</div></div>
+                      <div className="bg-white border rounded-xl p-3"><div className="text-xs text-slate-500">Merma</div><div className="text-2xl font-bold text-amber-700">{(integralData?.produccion?.merma || 0).toLocaleString()}</div></div>
+                      <div className="bg-white border rounded-xl p-3"><div className="text-xs text-slate-500">Tarimas Producidas</div><div className="text-2xl font-bold">{(integralData?.produccion?.tarimas_producidas || 0)}</div></div>
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold mb-2">Rendimiento por Lote (confirmado)</div>
+                      <div className="overflow-auto max-h-64 border rounded">
+                        <table className="w-full text-xs">
+                          <thead className="bg-slate-100"><tr><th className="p-1 text-left">Lote</th><th>Productor</th><th className="text-right">Recibidos</th><th className="text-right">Lotif.</th><th className="text-right">A</th><th className="text-right">Proceso</th><th className="text-right">Merma</th></tr></thead>
+                          <tbody>
+                            {(integralData?.produccion?.rendimiento_lotes || []).slice(0,12).map((r,i) => (
+                              <tr key={i} className="border-t"><td className="p-1">{r.lot_number}</td><td>{r.producer}</td><td className="text-right">{parseFloat(r.kg_recibidos||0).toFixed(0)}</td><td className="text-right">{parseFloat(r.kg_lotificado||0).toFixed(0)}</td><td className="text-right">{parseFloat(r.a||0).toFixed(0)}</td><td className="text-right">{parseFloat(r.proceso||0).toFixed(0)}</td><td className="text-right text-amber-600">{parseFloat(r.merma||0).toFixed(0)}</td></tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. INVENTARIOS */}
+                {activeTab === 'inventarios' && (
+                  <div className="space-y-4">
+                    <div className="text-xs text-emerald-700 font-medium">Fórmula Materiales: INICIAL + ENTRADAS - CONSUMOS + AJUSTES_AUTORIZADOS</div>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                      <div className="bg-white p-3 border rounded"><div className="text-xs">Fruta Inicial</div><div className="font-bold">{(integralData?.inventarios?.fruta_inicial || 0).toFixed(0)} kg</div></div>
+                      <div className="bg-white p-3 border rounded"><div className="text-xs">Fruta Final</div><div className="font-bold">{(integralData?.inventarios?.fruta_final || 0).toFixed(0)} kg</div></div>
+                      <div className="bg-white p-3 border rounded"><div className="text-xs">Tarimas Disponibles / Embarcadas</div><div className="font-bold">{(integralData?.inventarios?.tarimas_disponibles || 0)} / {(integralData?.inventarios?.tarimas_embarcadas || 0)}</div></div>
+                      <div className="bg-emerald-50 p-3 border rounded col-span-2 md:col-span-3">
+                        <div>Materiales Final = { (integralData?.inventarios?.materiales_final || form.valorInventarioMateriales || 0).toFixed(2) }</div>
+                        <div className="text-[10px] mt-1">Entradas (aunque no pagadas): {(integralData?.inventarios?.materiales_entradas||0).toFixed(2)} • Consumos: {(integralData?.inventarios?.materiales_consumidos||0).toFixed(2)}</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 3. COSTOS Y GASTOS */}
+                {activeTab === 'costos' && (
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    {[
+                      ['Costo efectivo fruta', integralData?.costos_gastos?.costo_efectivo_fruta],
+                      ['Cuadrillas', integralData?.costos_gastos?.cuadrillas],
+                      ['Fletes comerciales', integralData?.costos_gastos?.fletes_comerciales],
+                      ['Materiales consumidos', integralData?.costos_gastos?.materiales_consumidos],
+                      ['Nómina', integralData?.costos_gastos?.nomina],
+                      ['Gastos bancarios', integralData?.costos_gastos?.gastos_bancarios],
+                      ['Otros', integralData?.costos_gastos?.otros],
+                    ].map(([label, val], i) => (
+                      <div key={i} className="bg-white border p-3 rounded"><div className="text-xs text-slate-500">{label}</div><div className="text-xl font-semibold">{parseFloat(val || 0).toLocaleString()}</div></div>
+                    ))}
+                    <div className="text-xs col-span-2 text-slate-500">Los materiales en inventario no se registran como gasto de producción hasta su consumo (salvo autorización contable).</div>
+                  </div>
+                )}
+
+                {/* 4. BANCOS Y COBRANZA */}
+                {activeTab === 'bancos' && (
+                  <div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                      <div className="bg-white p-3 border rounded"><div className="text-xs">Abonos (banco)</div><div className="font-bold text-emerald-700">{(integralData?.bancos_cobranza?.abonos_banco || 0).toFixed(2)}</div></div>
+                      <div className="bg-white p-3 border rounded"><div className="text-xs">Cargos (banco)</div><div className="font-bold text-red-600">{(integralData?.bancos_cobranza?.cargos_banco || 0).toFixed(2)}</div></div>
+                      <div className="bg-white p-3 border rounded"><div className="text-xs">Cobros Clientes</div><div className="font-bold">{(integralData?.bancos_cobranza?.cobros_clientes || 0).toFixed(2)}</div></div>
+                      <div className="bg-white p-3 border rounded"><div className="text-xs">Pagos Productores</div><div className="font-bold">{(integralData?.bancos_cobranza?.pagos_productores || 0).toFixed(2)}</div></div>
+                    </div>
+                    <button onClick={() => router.push('/administracion/conciliacion-bancaria')} className="text-sm px-4 py-1.5 bg-slate-800 text-white rounded">Revisar movimientos bancarios con TECAVO IA →</button>
+                    <div className="text-xs mt-2 text-slate-500">Los cobros actualizan cuentas por cobrar. Los pagos cancelan obligaciones (no generan nuevo gasto).</div>
+                  </div>
+                )}
+
+                {/* 5. RENTABILIDAD */}
+                {activeTab === 'rentabilidad' && (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="bg-white p-4 border rounded"><div>Ingresos Netos Reconocidos</div><div className="text-3xl font-black">{(integralData?.rentabilidad?.ingresos_netos || 0).toFixed(2)}</div></div>
+                    <div className="bg-white p-4 border rounded"><div>Costo de Ventas</div><div className="text-3xl font-black text-red-700">{(integralData?.rentabilidad?.costo_ventas || 0).toFixed(2)}</div></div>
+                    <div className="bg-emerald-50 p-4 border rounded"><div>Utilidad Bruta</div><div className="text-3xl font-black text-emerald-700">{(integralData?.rentabilidad?.utilidad_bruta || 0).toFixed(2)}</div></div>
+                    <div className="text-xs col-span-3">Costo de tarimas vendidas usa costo histórico de producción. Fruta en inventario no se carga a costo de ventas.</div>
+                  </div>
+                )}
+
+                {/* 6. CONCILIACIÓN */}
+                {activeTab === 'conciliacion' && (
+                  <div>
+                    <div className="mb-3 flex items-center gap-2">
+                      <span className="font-semibold">Comparaciones automáticas (no modifica otros módulos)</span>
+                      <span className={`text-xs px-2 py-0.5 rounded ${conciliacionStatus === 'conciliado' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{conciliacionStatus}</span>
+                    </div>
+                    <div className="space-y-2 text-sm">
+                      {(integralData?.conciliacion?.diferencias || []).map((d, idx) => (
+                        <div key={idx} className="flex justify-between border p-2 rounded bg-white">
+                          <span>{d.clave}</span>
+                          <span className={Math.abs(d.valor) > 100 ? 'text-red-600 font-medium' : ''}>{parseFloat(d.valor || 0).toFixed(2)}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="text-xs mt-3">Asigne incidencias al departamento responsable. Cierre definitivo requiere autorización si hay diferencias materiales.</div>
+                  </div>
+                )}
+              </div>
+
+              {/* RESULTADOS RÁPIDOS (siempre visibles) */}
+              <div className="bg-slate-100 p-4 rounded-2xl flex flex-wrap gap-6 items-center">
+                <div>
+                  <div className="text-xs text-slate-500">Total Ingresos</div>
+                  <div className="font-bold text-lg text-emerald-700">{fmt(totalIngresosDinero)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Total Egresos</div>
+                  <div className="font-bold text-lg text-red-700">{fmt(totalEgresosDinero)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Resultado</div>
+                  <div className={`font-black text-xl ${esUtilidad ? 'text-emerald-700' : 'text-red-700'}`}>{fmt(resultadoDinero)}</div>
+                </div>
+                <div className="text-xs text-slate-500">Estado: {conciliacionStatus} • {form.status}</div>
               </div>
 
               {/* Notas */}
@@ -1236,15 +980,16 @@ export default function CierresPage() {
                 </button>
               </div>
 
-              {/* Flujo de cierre: botones de acción senior */}
+              {/* V8 FLUJO DE CIERRE INTEGRAL */}
               {editing && (
                 <div className="pt-3 border-t border-slate-100 flex flex-wrap gap-2 text-sm">
-                  <span className="text-slate-500 self-center mr-2">Flujo de Cierre:</span>
-                  <button onClick={() => quickStatusChange('abierto')} className="px-3 py-1.5 rounded-lg border hover:bg-slate-50">Reabrir</button>
-                  <button onClick={() => quickStatusChange('pendiente_aprobacion')} className="px-3 py-1.5 rounded-lg border hover:bg-amber-50 text-amber-700">Enviar a Aprobación</button>
-                  <button onClick={() => quickStatusChange('aprobado')} className="px-3 py-1.5 rounded-lg border hover:bg-emerald-50 text-emerald-700">Aprobar</button>
-                  <button onClick={() => quickStatusChange('cerrado')} className="px-3 py-1.5 rounded-lg bg-slate-800 text-white hover:bg-black">Cerrar Semana (bloquear)</button>
-                  <span className="text-[10px] text-slate-400 self-center ml-2">Estado actual: {form.status}</span>
+                  <span className="text-slate-500 self-center mr-2">Flujo V7/V8:</span>
+                  <button onClick={() => { setConciliacionStatus('borrador'); quickStatusChange('abierto'); }} className="px-3 py-1.5 rounded-lg border">Borrador</button>
+                  <button onClick={() => { setConciliacionStatus('en_conciliacion'); quickStatusChange('pendiente_aprobacion'); }} className="px-3 py-1.5 rounded-lg border hover:bg-amber-50">En Conciliación</button>
+                  <button onClick={() => performApprovalAction('aprobar')} className="px-3 py-1.5 rounded-lg border hover:bg-emerald-50 text-emerald-700">Pendiente Autorización</button>
+                  <button onClick={() => performApprovalAction('cerrar')} className="px-3 py-1.5 rounded-lg bg-emerald-700 text-white">CERRAR (guardar snapshot)</button>
+                  <button onClick={() => performApprovalAction('reabrir')} className="px-3 py-1.5 rounded-lg border">Reabrir</button>
+                  <span className="text-[10px] text-slate-400 self-center ml-2">Estado: {form.status} • {conciliacionStatus}</span>
                 </div>
               )}
             </div>
