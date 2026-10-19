@@ -1,16 +1,15 @@
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
+import { isSuperAdmin, sanitizeForNonSuper } from "@/app/api/utils/super-admin";
 
 export async function GET() {
   try {
-    const history = await sql`
-      SELECT * FROM load_history 
-      ORDER BY load_date DESC, created_at DESC
-    `;
-    return NextResponse.json(history);
-  } catch (error) {
-    console.error('Error fetching load history:', error);
-    return NextResponse.json({ error: 'Error al obtener historial' }, { status: 500 });
+    const isSuper = await isSuperAdmin();
+    const rows = await sql`SELECT * FROM load_history ORDER BY load_date DESC LIMIT 300`;
+    const safe = (rows || []).map(r => sanitizeForNonSuper(r, isSuper));
+    return NextResponse.json(safe);
+  } catch (e) {
+    return NextResponse.json({ error: 'Error' }, { status: 500 });
   }
 }
 

@@ -124,15 +124,13 @@ export default function LandingPage() {
   const dashboardRoutes = {
     campo: '/acopios',
     operaciones: '/embarques',
-    administrador: '/administracion',
-    superadministrador: '/superadministrador'
+    administrador: '/administracion'
   };
 
   const credentialByGroup = {
     campo: 'campo',
     operaciones: 'operaciones',
-    administrador: 'administrador',
-    superadministrador: 'superadministrador'
+    administrador: 'administrador'
   };
 
   const openCredentialPrompt = (access) => {
@@ -163,17 +161,12 @@ export default function LandingPage() {
         const loggedUser = data.user || {};
         const loggedIsSuper = !!(loggedUser.is_super_admin || loggedUser.admin_role === 'superadministrador');
 
-        if (k === 'superadministrador' && !loggedIsSuper) {
-          setCredError('Estas credenciales no tienen acceso de Superadministrador');
-          return;
-        }
-
         const credential = credentialByGroup[k] || k;
         const mRes = await fetch(`/api/menu?credential=${credential}`, { credentials: 'include' });
         const groups = mRes.ok ? await mRes.json().catch(() => []) : [];
         const mods = Array.isArray(groups) ? groups.flatMap(g => (g.modules || []).filter(mm => mm.is_active !== false)) : [];
 
-        if (k !== 'superadministrador' && mods.length === 0) {
+        if (mods.length === 0 && !loggedIsSuper) {
           setCredError('Este usuario no tiene módulos asignados para esta área');
           return;
         }
@@ -226,7 +219,7 @@ export default function LandingPage() {
           ))}
         </div>
 
-        {/* Central: Del Campo con Amor + SUPERADMINISTRADOR (full access freely) */}
+        {/* Central branding + portals */}
         <div className="mt-8 text-center">
           <img 
             src="https://app-cdn.appgen.com/220e1bc6-4350-453d-b566-60b6f97e03e9/assets/uploaded_1785362498521_qyfd2.jpeg" 
@@ -235,13 +228,7 @@ export default function LandingPage() {
           />
           <div className="text-emerald-800 font-medium tracking-[1.5px] text-sm mb-2">Del Campo con Amor</div>
 
-          <button
-            onClick={() => openCredentialPrompt({ key: 'superadministrador', label: 'Superadministrador', desc: 'Navegación completa y libre en todo el sistema' })}
-            className="px-6 py-1.5 text-xs font-semibold tracking-[2px] text-white bg-emerald-800 hover:bg-emerald-900 rounded-full transition shadow"
-          >
-            SUPERADMINISTRADOR
-          </button>
-          <p className="text-[10px] text-slate-500 mt-2 tracking-wide">Acceso total al sistema • navega libremente por todo</p>
+          <p className="text-[10px] text-slate-500 mt-2 tracking-wide">Acceso por grupos asignados. Usuarios Superadministrador acceden con sus credenciales y tienen visibilidad completa de todos los módulos y datos.</p>
           <a href="/portal-productores" className="inline-block mt-2 text-xs text-emerald-700 underline">Acceso para productores (folio de orden)</a>
           <a href="/portal-cliente" className="inline-block mt-1 text-xs text-emerald-700 underline">Portal de Clientes (Número + PIN)</a>
           <a href="/portal-transporter" className="inline-block mt-1 text-xs text-emerald-700 underline">Portal Transportistas</a>
@@ -267,9 +254,7 @@ export default function LandingPage() {
             <div className="mb-5">
               <div className="text-2xl font-semibold tracking-tight">{selectedCredential.label}</div>
               <p className="text-sm text-slate-500 mt-1">
-                {selectedCredential.key === 'superadministrador' 
-                  ? 'Ingresa credenciales de Superadministrador. Acceso completo y libre a todo el sistema.' 
-                  : 'Ingresa correo y PIN (4 dígitos) asignado en Superadministrador para este grupo.'}
+                Ingresa correo y PIN (4 dígitos) asignado. Los Superadministradores tienen acceso completo a todos los módulos y datos una vez autenticados.
               </p>
             </div>
 

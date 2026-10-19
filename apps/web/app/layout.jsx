@@ -33,7 +33,7 @@ function LayoutContent({ children }) {
     if (p.includes('/acopios') || p.includes('corte') || p.includes('orchard') || p.includes('huerta') || p.includes('visita')) return '/acopios';
     if (p.includes('/embarques') || p.includes('produccion') || p.includes('lote') || p.includes('combustible') || p.includes('cuadrilla') || p.includes('box')) return '/embarques';
     if (p.includes('/administracion') || p.includes('nomina') || p.includes('cartera') || p.includes('gasto') || p.includes('cierre') || p.includes('expense')) return '/administracion';
-    if (p.includes('superadministrador')) return '/superadministrador';
+    if (p.includes('superadministrador') || p.includes('administracion')) return p.includes('super') ? '/superadministrador' : '/administracion';
     return '/acopios';
   };
 

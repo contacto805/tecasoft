@@ -109,8 +109,28 @@ export async function GET(request) {
     const currentUser = await getSessionUser();
     const isSuperUser = !!(currentUser?.is_super_admin || currentUser?.admin_role === 'superadministrador');
 
+    // Supers (by membership flag) always get full access - independent group, no module assignment needed
+    if (isSuperUser) {
+      const allGroups = await sql`
+        SELECT 
+          mg.id, mg.group_name, mg.group_order, mg.is_active,
+          COALESCE(json_agg(json_build_object(
+            'id', mm.id, 'group_id', mm.group_id, 'module_name', mm.module_name,
+            'module_route', mm.module_route, 'module_icon', mm.module_icon,
+            'module_order', mm.module_order, 'is_active', mm.is_active,
+            'group_access', COALESCE(mm.group_access, '[]'::jsonb)
+          )) FILTER (WHERE mm.id IS NOT NULL), '[]') as modules
+        FROM menu_groups mg
+        LEFT JOIN menu_modules mm ON mg.id = mm.group_id AND mm.is_active = true
+        WHERE mg.is_active = true
+        GROUP BY mg.id, mg.group_name, mg.group_order, mg.is_active
+        ORDER BY mg.group_order ASC
+      `;
+      return NextResponse.json(allGroups || []);
+    }
+
     let permissionSet = null;
-    if (currentUser && !isSuperUser && !includeAll) {
+    if (currentUser && !includeAll) {
       const permissions = await sql`
         SELECT module_name
         FROM user_permissions
@@ -120,7 +140,7 @@ export async function GET(request) {
     }
 
     let effectiveCred = useCred;
-    if (!effectiveCred && currentUser && !isSuperUser) {
+    if (!effectiveCred && currentUser) {
       effectiveCred = normalizeCredential(currentUser.admin_role || '');
     }
 
@@ -189,7 +209,6 @@ export async function GET(request) {
     `;
 
     if (includeAll) return NextResponse.json(groups);
-    if (useCred === 'superadministrador' && !isSuperUser) return NextResponse.json([]);
 
     const filtered = (groups || []).map(group => {
       const modules = (group.modules || [])

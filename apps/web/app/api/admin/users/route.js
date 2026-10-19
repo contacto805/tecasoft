@@ -60,6 +60,16 @@ export async function POST(request) {
       );
     }
 
+    const callerIsSuper = await (async () => {
+      // lightweight check
+      const { getCurrentUser } = await import('@/app/api/utils/super-admin');
+      const u = await getCurrentUser();
+      return !!(u && (u.is_super_admin || u.admin_role === 'superadministrador'));
+    })();
+    if ((!!is_super_admin || (admin_role||'').toLowerCase()==='superadministrador') && !callerIsSuper) {
+      return NextResponse.json({ error: 'Solo Superadministrador puede crear usuarios Superadministrador' }, { status: 403 });
+    }
+
     const roleValue = is_super_admin ? 'superadministrador' : (admin_role || 'administrador');
 
     // Generate UUID for new user

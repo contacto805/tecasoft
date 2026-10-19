@@ -1,45 +1,43 @@
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
+import { getCurrentUser, isSuperAdmin, sanitizeForNonSuper } from "@/app/api/utils/super-admin";
 
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
-    const folio = searchParams.get('folio');
-    const producer = searchParams.get('producer');
-    const limit = searchParams.get('limit');
+    const lotId = searchParams.get("lotId");
+    const status = searchParams.get("status");
+    const callerIsSuper = await isSuperAdmin();
 
-    let query;
-    if (folio) {
-      query = sql`
-        SELECT co.*, 
-               ps.id as payment_schedule_id, ps.folio as payment_folio, ps.scheduled_payment_date, ps.status as payment_status,
-               ps.amount as scheduled_amount, ps.payment_proof_url
-        FROM cutting_orders co
-        LEFT JOIN payment_schedule ps ON ps.lot_id = co.lot_id OR (ps.producer_name = co.producer_name AND ps.fruit_reception_date = co.cutting_date)
-        WHERE UPPER(co.folio) = UPPER(${folio})
-        ORDER BY co.created_at DESC
-        LIMIT 1
-      `;
-    } else if (producer) {
+    let query = sql`
+      SELECT * FROM cutting_orders 
+      ORDER BY created_at DESC 
+      LIMIT 200
+    `;
+
+    if (lotId) {
       query = sql`
         SELECT * FROM cutting_orders 
-        WHERE producer_name ILIKE ${'%' + producer + '%'}
-        ORDER BY created_at DESC 
-        ${limit ? sql`LIMIT ${parseInt(limit)}` : sql``}
+        WHERE lot_id = ${lotId}
+        ORDER BY created_at DESC
       `;
-    } else {
+    }
+
+    if (status) {
       query = sql`
         SELECT * FROM cutting_orders 
-        ORDER BY created_at DESC 
-        ${limit ? sql`LIMIT ${parseInt(limit)}` : sql`LIMIT 200`}
+        WHERE status = ${status}
+        ORDER BY created_at DESC
+        LIMIT 100
       `;
     }
 
     const orders = await query;
-    return NextResponse.json(orders || []);
+    const safe = (orders || []).map(o => sanitizeForNonSuper(o, callerIsSuper));
+    return NextResponse.json(safe);
   } catch (error) {
-    console.error('Error in GET /api/cutting-orders:', error);
-    return NextResponse.json([]);
+    console.error("Error fetching cutting orders:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
 

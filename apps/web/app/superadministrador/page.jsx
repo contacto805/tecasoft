@@ -1354,8 +1354,8 @@ const [iaConnected, setIaConnected] = useState(null);
                 <Grid3X3 size={20} />
               </div>
               <div>
-                <div className="font-semibold text-2xl tracking-tight">Panel Superadministrador</div>
-                <div className="text-xs text-emerald-700 -mt-0.5">Acceso completo • Edición total • Asignar grupos y módulos • Autorizar usuarios y PINs</div>
+                <div className="font-semibold text-2xl tracking-tight">Administración • Superadministradores</div>
+                <div className="text-xs text-emerald-700 -mt-0.5">Grupo independiente con permisos globales • Todas las secciones, datos restringidos, configuraciones y reportes completos</div>
               </div>
             </div>
             <div className="flex items-center gap-2">

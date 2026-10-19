@@ -1,5 +1,6 @@
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
+import { getCurrentUser, isSuperAdmin } from "@/app/api/utils/super-admin";
 
 // GET - Obtener todos los usuarios con sus permisos
 export async function GET(request) {
@@ -29,10 +30,15 @@ export async function GET(request) {
   }
 }
 
-// POST - Crear nuevo usuario
+// POST - Crear nuevo usuario (solo super puede crear supers)
 export async function POST(request) {
   try {
+    const callerIsSuper = await isSuperAdmin();
     const { name, email, password, is_super_admin, admin_role, modules } = await request.json();
+
+    if ((is_super_admin || (admin_role || '').toLowerCase() === 'superadministrador') && !callerIsSuper) {
+      return NextResponse.json({ error: 'Solo un Superadministrador puede asignar el grupo Superadministrador' }, { status: 403 });
+    }
 
     const roleValue = is_super_admin ? 'superadministrador' : (admin_role || 'administrador');
     const [user] = await sql`
@@ -68,13 +74,41 @@ export async function POST(request) {
   }
 }
 
-// PUT - Actualizar usuario
+// PUT - Actualizar usuario (protecciones: solo super asigna super, no auto-promover, no eliminar último super)
 export async function PUT(request) {
   try {
+    const caller = await getCurrentUser();
+    const callerIsSuper = await isSuperAdmin();
     const { userId, name, email, is_super_admin, admin_role, password } = await request.json();
 
     if (!userId) {
       return NextResponse.json({ error: 'userId es requerido' }, { status: 400 });
+    }
+
+    // Fetch target to compare
+    const [target] = await sql`SELECT id, is_super_admin, admin_role FROM "user" WHERE id = ${userId} LIMIT 1`;
+    if (!target) return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 404 });
+
+    const wantsSuper = !!(is_super_admin || (admin_role || '').toLowerCase() === 'superadministrador');
+    const currentlySuper = !!(target.is_super_admin || (target.admin_role || '').toLowerCase() === 'superadministrador');
+
+    if (wantsSuper && !callerIsSuper) {
+      return NextResponse.json({ error: 'Solo Superadministrador puede asignar o modificar pertenencia al grupo Superadministrador' }, { status: 403 });
+    }
+
+    // Prevent self-promotion if caller not already super
+    if (caller && caller.id === userId && wantsSuper && !currentlySuper && !callerIsSuper) {
+      return NextResponse.json({ error: 'No puedes auto-asignarte privilegios de Superadministrador' }, { status: 403 });
+    }
+
+    // If demoting a super, ensure not the last one
+    const becomingNonSuper = currentlySuper && !wantsSuper;
+    if (becomingNonSuper) {
+      const countRes = await sql`SELECT COUNT(*)::int as c FROM "user" WHERE is_super_admin = true OR admin_role = 'superadministrador'`;
+      const currentCount = countRes[0]?.c || 0;
+      if (currentCount <= 1) {
+        return NextResponse.json({ error: 'No se puede desactivar o remover al último Superadministrador activo' }, { status: 403 });
+      }
     }
 
     const [user] = await sql`
@@ -88,6 +122,19 @@ export async function PUT(request) {
       WHERE id = ${userId}
       RETURNING *
     `;
+
+    // Audit log for role/permission change
+    if (caller && (is_super_admin !== undefined || admin_role !== undefined)) {
+      try {
+        await sql`
+          INSERT INTO system_audit_log (user_id, user_name, user_role, module, action, entity_type, entity_id, old_value, new_value, description, timestamp)
+          VALUES (${caller.id}, ${caller.name || caller.email}, ${caller.admin_role || 'superadministrador'}, 'users', 'update_role', 'user', ${userId},
+            ${JSON.stringify({is_super_admin: target.is_super_admin, admin_role: target.admin_role})}, 
+            ${JSON.stringify({is_super_admin: user.is_super_admin, admin_role: user.admin_role})},
+            'Cambio de pertenencia a grupo Superadministrador o rol', NOW())
+        `;
+      } catch (_) {}
+    }
 
     if (password) {
       // Update or insert credential PIN row with provider filter
@@ -125,14 +172,29 @@ export async function PUT(request) {
   }
 }
 
-// DELETE - Eliminar usuario
+// DELETE - Eliminar usuario (proteger último super)
 export async function DELETE(request) {
   try {
+    const callerIsSuper = await isSuperAdmin();
+    if (!callerIsSuper) {
+      return NextResponse.json({ error: 'Solo Superadministrador puede eliminar usuarios' }, { status: 403 });
+    }
+
     const { searchParams } = new URL(request.url);
     const userId = searchParams.get('userId');
 
     if (!userId) {
       return NextResponse.json({ error: 'userId es requerido' }, { status: 400 });
+    }
+
+    // Check if target is last super
+    const [target] = await sql`SELECT is_super_admin, admin_role FROM "user" WHERE id = ${userId}`;
+    const isTargetSuper = !!(target && (target.is_super_admin || (target.admin_role||'').toLowerCase()==='superadministrador'));
+    if (isTargetSuper) {
+      const countRes = await sql`SELECT COUNT(*)::int as c FROM "user" WHERE is_super_admin = true OR admin_role = 'superadministrador'`;
+      if ((countRes[0]?.c || 0) <= 1) {
+        return NextResponse.json({ error: 'No se puede eliminar al último Superadministrador activo' }, { status: 403 });
+      }
     }
 
     // Eliminar permisos primero (safe)
@@ -146,6 +208,15 @@ export async function DELETE(request) {
 
     // Eliminar usuario
     try { await sql`DELETE FROM "user" WHERE id = ${userId}`; } catch (e) { throw e; }
+
+    // Audit
+    const caller = await getCurrentUser();
+    try {
+      await sql`
+        INSERT INTO system_audit_log (user_id, user_name, user_role, module, action, entity_type, entity_id, description, timestamp)
+        VALUES (${caller?.id || 'system'}, ${caller?.name || caller?.email || 'super'}, 'superadministrador', 'users', 'delete_user', 'user', ${userId}, 'Eliminación de usuario', NOW())
+      `;
+    } catch(_) {}
 
     return NextResponse.json({ success: true });
   } catch (error) {
