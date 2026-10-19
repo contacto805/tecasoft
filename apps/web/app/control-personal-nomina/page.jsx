@@ -438,7 +438,7 @@ export default function ControlPersonalNominaPage() {
   const goPrev = () => router.push('/brokers');
   const goNext = () => router.push('/nomina');
 
-  // Biometric attendance helpers - quick buttons are instant; for real cloud data use "Sincronizar BioTime Cloud (IP)"
+  // Marcado rápido manual; para datos reales de BioTime Cloud 2.0 usa "Sincronizar" con URL + credenciales admin
   const markBiometric = async (employee, type = 'check_in') => {
     try {
       const activeNet = biometricDevices.find(d => d.is_active && d.ip_address);
@@ -511,7 +511,7 @@ export default function ControlPersonalNominaPage() {
       });
       await loadBiometricDevices();
       setDeviceForm({ deviceName: '', deviceModel: '', deviceSerial: '', connectionType: 'network', ipAddress: '', port: '' });
-      alert('Dispositivo IP/Cloud registrado. Use Sincronizar para traer marcas del Bio Time Cloud.');
+      alert('Lector registrado. Usa Sincronizar y proporciona URL + usuario/contraseña admin de BioTime Cloud.');
     } catch (e) {
       alert('Error al registrar dispositivo');
     }
@@ -524,19 +524,20 @@ export default function ControlPersonalNominaPage() {
     
     let bioTimeUrl = target?.ip_address;
     if (!bioTimeUrl) {
-      bioTimeUrl = prompt('Ingresa la URL/IP del Bio Time Cloud 2.0 (ej. http://192.168.1.50:8080 o la URL de la nube):', '');
+      bioTimeUrl = prompt('URL base de tu Bio Time Cloud 2.0 (ej: https://tuempresa.biotimecloud.com o http://IP-del-cloud):', '');
       if (!bioTimeUrl) return;
     }
 
-    const user = prompt('Usuario (opcional, deja vacío si no requiere):', '') || '';
-    const pass = user ? (prompt('Contraseña:', '') || '') : '';
+    // Información que subes para enlazar: usuario y contraseña de administrador de BioTime Cloud (para obtener token)
+    const user = prompt('Usuario administrador de Bio Time Cloud (el de la consola):', '') || '';
+    const pass = user ? (prompt('Contraseña del administrador:', '') || '') : '';
 
     try {
       const res = await fetch('/api/payroll/biotime', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'sync_attendance',
+          action: 'sync_all',
           bioTimeUrl,
           username: user || undefined,
           password: pass || undefined,
@@ -546,7 +547,8 @@ export default function ControlPersonalNominaPage() {
       });
       const data = await res.json();
       if (res.ok) {
-        alert(`Sincronizado desde Bio Time Cloud: ${data.synced || 0} marcas nuevas.`);
+        const syncedAtt = data.attendance?.synced || data.synced || 0;
+        alert(`BioTime Cloud: empleados + ${syncedAtt} checadas reales importadas (emp_code + punch).`);
         if (target?.id) {
           await fetch('/api/biometric/devices', {
             method: 'PUT',
@@ -557,7 +559,7 @@ export default function ControlPersonalNominaPage() {
         }
         await fetchData();
       } else {
-        alert(data.error || 'No se pudo sincronizar. Verifica IP/URL y credenciales del Bio Time Cloud.');
+        alert(data.error || 'Verifica la URL base + usuario/contraseña admin de BioTime Cloud.');
       }
     } catch (e) {
       alert('Error conectando al Bio Time Cloud por IP.');
@@ -842,7 +844,7 @@ export default function ControlPersonalNominaPage() {
                     </>
                   )}
                   <button onClick={saveBiometricDevice} className="px-4 py-1 bg-slate-800 text-white rounded text-xs">+ Agregar lector</button>
-                  <div className="text-[10px] text-slate-400 ml-1 mt-0.5">Registra IP del Bio Time Cloud 2.0 • luego usa Sincronizar para traer marcas reales</div>
+                  <div className="text-[10px] text-slate-400 ml-1 mt-0.5">Registra URL/IP de BioTime Cloud • al Sync proporciona tu usuario y contraseña admin de la nube</div>
                 </div>
               </div>
             </div>
@@ -1127,17 +1129,26 @@ export default function ControlPersonalNominaPage() {
 
               <div className="space-y-5 text-slate-700">
                 <div>
-                  <div className="font-semibold mb-1 text-emerald-700">Conexión por IP a Bio Time Cloud 2.0</div>
-                  <p>Sus lectores suben las marcas directamente a Bio Time Cloud 2.0. Registre la URL o IP del servicio en un lector con tipo <strong>Red / IP</strong>. Use el botón <strong>Sincronizar BioTime Cloud (IP)</strong> para traer las marcas reales al sistema.</p>
+                  <div className="font-semibold mb-1 text-emerald-700">Conexión por IP / URL a Bio Time Cloud 2.0</div>
+                  <p>Registre la URL base de BioTime Cloud 2.0 (tipo Red/IP). Al sincronizar ingrese el usuario y contraseña de administrador para obtener el token y extraer checadas reales (emp_code + punch_time).</p>
                 </div>
 
                 <div>
-                  <div className="font-semibold mb-1 text-blue-700">Cómo vincular por IP</div>
+                  <div className="font-semibold mb-1 text-blue-700">Información que debes subir para enlazar</div>
+                  <ul className="list-disc pl-5 space-y-1 text-sm">
+                    <li><strong>URL base</strong> de tu instancia (ej. https://biotimecloud.com o https://tuempresa.biotimecloud.com o la IP del cloud)</li>
+                    <li><strong>Usuario administrador</strong> creado en la consola de BioTime Cloud</li>
+                    <li><strong>Contraseña</strong> de ese usuario (se usa solo para obtener token JWT en el backend)</li>
+                  </ul>
+                  <p className="text-xs mt-1">El sistema hace POST para token, luego GET /personnel/api/employees/ y /iclock/api/transactions/ filtrando por fechas. Emp_code debe coincidir con el ID de empleado en tu nómina.</p>
+                </div>
+
+                <div>
+                  <div className="font-semibold mb-1 text-blue-700">Pasos</div>
                   <ol className="list-decimal pl-5 space-y-1 text-sm">
-                    <li>En la sección superior de lectores, agregue un nuevo lector con <strong>Red / IP (Bio Time Cloud)</strong>.</li>
-                    <li>En el campo IP coloque la URL base del Bio Time Cloud 2.0 o la IP del servidor (ej. http://192.168.x.x:8080 o la URL de la nube).</li>
-                    <li>Si requiere usuario/contraseña del cloud, ingréselos al presionar Sincronizar.</li>
-                    <li>Presione <strong>Sincronizar BioTime Cloud (IP)</strong> — el sistema consultará el cloud y guardará las marcas reales en asistencia (con device_id y is_manual=false).</li>
+                    <li>Agrega lector con tipo Red/IP y pon la URL base en el campo IP.</li>
+                    <li>Presiona Sincronizar BioTime Cloud — ingresa usuario y contraseña admin cuando te pida.</li>
+                    <li>El sistema obtiene token, descarga empleados (por emp_code) y checadas reales (punch_time + punch_state).</li>
                   </ol>
                 </div>
 
@@ -1150,20 +1161,19 @@ export default function ControlPersonalNominaPage() {
                   <div className="font-semibold mb-1">Estado actual</div>
                   <ul className="text-xs pl-4">
                     <li>✓ Tablas biometric_devices y employee_fingerprints listas.</li>
-                    <li>✓ APIs de dispositivos y huellas funcionales.</li>
-                    <li>✓ /api/attendance soporta device_id y marcas desde cloud.</li>
-                    <li>✓ Integración con /api/payroll/biotime para sincronizar Bio Time Cloud 2.0 por IP.</li>
-                    <li>Huellas de plantilla real: aún requieren captura (puede hacerse en el cloud y sincronizarse después).</li>
+                    <li>✓ /api/payroll/biotime usa autenticación POST + endpoints exactos de BioTime Cloud 2.0 (/personnel/api/employees/, /iclock/api/transactions/)</li>
+                    <li>✓ Sincroniza checadas reales con emp_code, punch_time y punch_state.</li>
+                    <li>✓ device_id + is_manual=false en attendance_records.</li>
                   </ul>
                 </div>
 
                 <div className="text-xs text-slate-500">
-                  Al cerrar puede ver la lista de lectores arriba y usar Sincronizar para vincular las marcas subidas por sus lectores al Bio Time Cloud.
+                  Proporciona URL + usuario admin + contraseña admin de BioTime Cloud al sincronizar. Las marcas llegan en tiempo real desde los relojes a la nube.
                 </div>
               </div>
 
               <div className="mt-6 text-right text-xs text-slate-400">
-                Al cerrar esta ventana puede ver la lista de lectores en la parte superior de la tabla y registrar los dispositivos configurados.
+                Proporciona URL + usuario admin + contraseña admin de BioTime Cloud al sincronizar. Las marcas llegan en tiempo real desde los relojes a la nube.
               </div>
               <div className="text-right mt-3">
                 <button onClick={() => setShowBiometricGuide(false)} className="px-4 py-1 bg-slate-900 text-white rounded text-sm font-medium">Cerrar</button>

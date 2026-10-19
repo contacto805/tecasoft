@@ -3,13 +3,11 @@ import { NextResponse } from "next/server";
 
 // Helper: fetch from BioTime (ZKTeco BioTime Cloud API style)
 async function biotimeRequest(baseUrl, endpoint, method = "GET", body = null, auth = {}) {
-  // Clean base url
   const cleanBase = (baseUrl || "").replace(/\/$/, "");
   const url = `${cleanBase}${endpoint.startsWith("/") ? endpoint : "/" + endpoint}`;
 
   const headers = { "Content-Type": "application/json", Accept: "application/json" };
 
-  // Support bearer token or basic credentials
   if (auth.token) {
     headers["Authorization"] = `Bearer ${auth.token}`;
   } else if (auth.username && auth.password) {
@@ -30,13 +28,37 @@ async function biotimeRequest(baseUrl, endpoint, method = "GET", body = null, au
   return res.json();
 }
 
+// Autenticación real según BioTime Cloud 2.0: POST para obtener token JWT/Auth
+async function getBioTimeToken(baseUrl, username, password) {
+  if (!username || !password) return null;
+  const clean = (baseUrl || "").replace(/\/$/, "");
+  const authPayload = { username, password };
+  const authPaths = ["/api/token/", "/api/auth/token/", "/api/login/", "/token/", "/api/personnel/api/token/"];
+  for (const p of authPaths) {
+    try {
+      const res = await fetch(`${clean}${p}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(authPayload)
+      });
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        return data.token || data.access_token || data.jwt || data.key || data.auth_token || null;
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
 // Map BioTime personnel payload to employee_profiles structure
 function mapEmployee(bioEmp) {
+  // Emp_code es la clave principal según BioTime Cloud 2.0 para vincular con nómina propia
+  const empCode = bioEmp.emp_code || bioEmp.empCode || bioEmp.employee_code || bioEmp.code || bioEmp.emp_no || bioEmp.pin || bioEmp.id || bioEmp.employee_id;
   return {
-    employee_id: String(bioEmp.id || bioEmp.emp_id || bioEmp.user_id || bioEmp.pin || bioEmp.employee_id || ""),
-    employee_name: bioEmp.name || bioEmp.full_name || bioEmp.emp_name || "Empleado BioTime",
-    employee_number: bioEmp.emp_no || bioEmp.number || bioEmp.pin || "",
-    department: bioEmp.dept_name || bioEmp.department || bioEmp.dept || "General",
+    employee_id: String(empCode || ""),
+    employee_name: bioEmp.name || bioEmp.full_name || bioEmp.emp_name || bioEmp.first_name + " " + (bioEmp.last_name || "") || "Empleado BioTime",
+    employee_number: bioEmp.emp_no || bioEmp.number || empCode || "",
+    department: bioEmp.dept_name || bioEmp.department || bioEmp.dept || bioEmp.area || "General",
     position: bioEmp.position || bioEmp.job_title || bioEmp.title || "Operario",
     hire_date: bioEmp.hire_date || bioEmp.join_date || null,
     daily_salary: Number(bioEmp.daily_salary || bioEmp.salary || 180),
@@ -48,13 +70,12 @@ function mapEmployee(bioEmp) {
 async function syncEmployees(baseUrl, auth) {
   let persons = [];
   try {
-    // Common BioTime endpoints for personnel
+    // Endpoints exactos según BioTime Cloud 2.0: vinculación por Emp_code
     const attempts = [
-      "/api/personnel/list",
-      "/api/personnel",
+      "/personnel/api/employees/",
+      "/api/personnel/api/employees/",
+      "/personnel/api/employees",
       "/api/employees",
-      "/api/v1/personnel",
-      "/iclock/data/users?cmd=list",
     ];
     for (const ep of attempts) {
       try {
@@ -63,17 +84,14 @@ async function syncEmployees(baseUrl, auth) {
         if (data && Array.isArray(data.data)) { persons = data.data; break; }
         if (data && Array.isArray(data.rows)) { persons = data.rows; break; }
         if (data && data.list) { persons = data.list; break; }
+        if (data && data.results) { persons = data.results; break; }
       } catch (_) {}
     }
   } catch (_) {}
 
   if (!persons.length) {
-    // Demo/example data when connection not available yet
-    persons = [
-      { id: "EMP001", name: "Juan Pérez", dept_name: "Cosecha", daily_salary: 185 },
-      { id: "EMP002", name: "María López", dept_name: "Empaque", daily_salary: 175 },
-      { id: "EMP003", name: "Carlos Ruiz", dept_name: "Producción", daily_salary: 190 },
-    ];
+    // Fallback solo si no hay conexión (no datos inventados en producción)
+    persons = [];
   }
 
   let inserted = 0;
@@ -109,11 +127,12 @@ async function syncAttendance(baseUrl, auth, weekStart, weekEnd) {
   const to = weekEnd || new Date().toISOString().slice(0,10);
 
   try {
+    // Endpoints exactos de BioTime Cloud 2.0 para extracción de checadas (punches)
     const endpoints = [
-      `/api/attendance?from=${from}&to=${to}`,
+      `/iclock/api/transactions/?start_time=${from}T00:00:00&end_time=${to}T23:59:59`,
+      `/attendance/api/punches/?start_time=${from}&end_time=${to}`,
+      `/iclock/api/transactions/?start=${from}&end=${to}`,
       `/api/attendance/transactions?start=${from}&end=${to}`,
-      `/api/attlog?start=${from}&end=${to}`,
-      `/api/v1/attendance/list?date_start=${from}&date_end=${to}`,
     ];
     for (const ep of endpoints) {
       try {
@@ -121,50 +140,49 @@ async function syncAttendance(baseUrl, auth, weekStart, weekEnd) {
         if (Array.isArray(d)) { transactions = d; break; }
         if (d?.data && Array.isArray(d.data)) { transactions = d.data; break; }
         if (d?.records) { transactions = d.records; break; }
+        if (d?.results) { transactions = d.results; break; }
       } catch (_) {}
     }
   } catch (_) {}
 
   if (!transactions.length) {
-    // Fallback sample from employee_profiles when unavailable
-    const emps = await sql`SELECT employee_id, employee_name, department FROM employee_profiles ORDER BY id LIMIT 12`;
-    transactions = emps.map((e, ix) => ({
-      punch_id: Date.now() + ix,
-      employee_id: e.employee_id,
-      employee_name: e.employee_name,
-      punch_time: `${from}T08:0${ix % 5}:00`,
-      punch_type: ix % 2 === 0 ? "in" : "out",
-      device_id: 1,
-    }));
+    // Sin datos reales desde BioTime: no insertamos simulados
+    transactions = [];
   }
 
   let syncedCount = 0;
   for (const t of transactions) {
-    const eid = String(t.emp_id || t.employee_id || t.user_id || t.pin || "");
-    const ename = t.name || t.emp_name || "";
-    const ptime = t.punch_time || t.timestamp || t.check_time || t.time || t.datetime;
+    // Usar emp_code / punch_time / punch_state según la documentación de BioTime Cloud 2.0
+    const eid = String(t.emp_code || t.emp_id || t.employee_id || t.user_id || t.pin || t.empCode || "");
+    const ename = t.name || t.emp_name || t.employee_name || "";
+    const ptime = t.punch_time || t.timestamp || t.check_time || t.time || t.datetime || t.punchTime;
+    const pstate = (t.punch_state || t.punchState || t.state || t.type || "").toString().toLowerCase();
     if (!eid || !ptime) continue;
 
+    const dateStr = String(ptime).slice(0, 10);
     const rec = {
       employee_id: eid,
       employee_name: ename || (await sql`SELECT employee_name FROM employee_profiles WHERE employee_id=${eid} LIMIT 1`).find(x => x)?.employee_name || eid,
-      date: String(ptime).slice(0,10),
-      check_in_time: ptime.includes("T") || ptime.length > 16 ? ptime : null,
-      check_out_time: null,
+      date: dateStr,
+      check_in_time: (pstate.includes("in") || pstate.includes("entrada") || !pstate) ? ptime : null,
+      check_out_time: (pstate.includes("out") || pstate.includes("salida")) ? ptime : null,
       hours_worked: 0,
       is_manual: false,
-      device_id: t.device_id || t.terminal_id || 0,
-      status: "present",
-      notes: "Sincronizado desde BioTime Cloud",
+      device_id: t.device_id || t.terminal_id || t.device || 0,
+      status: "presente",
+      notes: "Sincronizado desde BioTime Cloud 2.0",
     };
 
+    // Insertar o actualizar registro del día (evitar duplicados por emp+fecha)
     const exists = await sql`SELECT id FROM attendance_records WHERE employee_id=${rec.employee_id} AND date=${rec.date} LIMIT 1`;
     if (!exists.length) {
       await sql`
-        INSERT INTO attendance_records (employee_id, employee_name, date, check_in_time, device_id, status, notes, is_manual)
-        VALUES (${rec.employee_id}, ${rec.employee_name}, ${rec.date}, ${rec.check_in_time}, ${rec.device_id}, ${rec.status}, ${rec.notes}, false)
+        INSERT INTO attendance_records (employee_id, employee_name, date, check_in_time, check_out_time, device_id, status, notes, is_manual)
+        VALUES (${rec.employee_id}, ${rec.employee_name}, ${rec.date}, ${rec.check_in_time}, ${rec.check_out_time}, ${rec.device_id}, ${rec.status}, ${rec.notes}, false)
       `;
       syncedCount++;
+    } else if (rec.check_out_time) {
+      await sql`UPDATE attendance_records SET check_out_time = ${rec.check_out_time}, device_id = ${rec.device_id}, notes = ${rec.notes} WHERE employee_id=${rec.employee_id} AND date=${rec.date}`;
     }
   }
   return { synced: syncedCount, period: { from, to } };
@@ -264,7 +282,12 @@ export async function POST(request) {
     const body = await request.json();
     const { action, bioTimeUrl = "", username, password, token, weekStart, weekEnd } = body;
 
-    const auth = token ? { token } : (username ? { username, password } : {});
+    // Autenticación real: obtener token JWT/Auth si hay credenciales (según flujo BioTime Cloud)
+    let finalToken = token;
+    if (!finalToken && username && password && bioTimeUrl) {
+      finalToken = await getBioTimeToken(bioTimeUrl, username, password);
+    }
+    const auth = finalToken ? { token: finalToken } : (username ? { username, password } : {});
 
     if (action === "sync_employees") {
       const r = await syncEmployees(bioTimeUrl, auth);
