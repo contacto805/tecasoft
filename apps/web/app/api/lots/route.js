@@ -53,7 +53,9 @@ export async function POST(request) {
       broker_name,
       broker_phone,
       freight_paid = false,
-      crew_paid = false
+      crew_paid = false,
+      orchard_registry = '',
+      guide_folio = ''
     } = await request.json();
     
     // Validación de campos requeridos
@@ -171,7 +173,9 @@ export async function POST(request) {
         broker_name,
         broker_phone,
         freight_paid,
-        crew_paid
+        crew_paid,
+        orchard_registry,
+        guide_folio
       )
       VALUES (
         ${trimmedLotNumber},
@@ -192,7 +196,9 @@ export async function POST(request) {
         ${broker_name || null},
         ${broker_phone || null},
         ${freight_paid || false},
-        ${crew_paid || false}
+        ${crew_paid || false},
+        ${orchard_registry ? orchard_registry.trim() : null},
+        ${guide_folio ? guide_folio.trim() : null}
       )
       RETURNING *
     `;

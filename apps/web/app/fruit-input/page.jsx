@@ -20,6 +20,8 @@ export default function FruitInputPage() {
     orchardName: '',
     municipality: '',
     fruitPrice: '',
+    orchardRegistry: '',
+    guideFolio: '',
     collectorName: '',
     commissionAmount: '',
     paymentDays: '',
@@ -207,6 +209,8 @@ export default function FruitInputPage() {
         commissionAmount: (ord.agreed_commission != null ? ord.agreed_commission : (prev.commissionAmount || '')),
         fruitPrice: (ord.agreed_price_per_kg != null ? ord.agreed_price_per_kg : (prev.fruitPrice || '')),
         paymentDays: ord.payment_days != null ? ord.payment_days : (prev.paymentDays || '7'),
+        orchardRegistry: ord.orchard_registry || prev.orchardRegistry || '',
+        guideFolio: ord.guide_folio || prev.guideFolio || '',
       }));
 
       if (ord.lot_id) {
@@ -220,6 +224,9 @@ export default function FruitInputPage() {
               lotNumber: linkedLot.lot_number,
               producer: linkedLot.producer || prev.producer,
               orchardName: linkedLot.orchard_name || prev.orchardName,
+              orchardRegistry: linkedLot.orchard_registry || prev.orchardRegistry || '',
+              guideFolio: linkedLot.guide_folio || prev.guideFolio || '',
+              fruitPrice: (linkedLot.fruit_price != null ? linkedLot.fruit_price : prev.fruitPrice),
             }));
             setLotId(linkedLot.id);
             setLotCreated(true);
@@ -632,9 +639,6 @@ export default function FruitInputPage() {
     if (!currentLot.date) {
       errors.push('Fecha');
     }
-    if (!currentLot.fruitPrice || isNaN(parseFloat(currentLot.fruitPrice)) || parseFloat(currentLot.fruitPrice) <= 0) {
-      errors.push('Precio de fruta (debe ser mayor a 0)');
-    }
     if (!currentLot.collectorName || !currentLot.collectorName.trim()) {
       errors.push('Acopiador');
     }
@@ -652,7 +656,7 @@ export default function FruitInputPage() {
         municipality: currentLot.municipality,
         fruit_type: 'Aguacate',
         date: currentLot.date,
-        fruit_price: parseFloat(currentLot.fruitPrice),
+        fruit_price: parseFloat(currentLot.fruitPrice) || 0,
         collector_name: currentLot.collectorName,
         commission_amount: parseFloat(currentLot.commissionAmount) || 0,
         payment_days: parseInt(currentLot.paymentDays) || 7,
@@ -661,7 +665,9 @@ export default function FruitInputPage() {
         freight_paid: currentLot.freightPaid,
         crew_paid: currentLot.crewPaid,
         broker_name: currentLot.brokerName || currentLot.collectorName,
-        broker_phone: currentLot.brokerPhone || ''
+        broker_phone: currentLot.brokerPhone || '',
+        orchard_registry: currentLot.orchardRegistry || '',
+        guide_folio: currentLot.guideFolio || ''
       };
       // *** ASIGNACIÓN PERFECTA DE TRAZABILIDAD: vincular lote con folio de orden de corte + comisión a corredor ***
       if (selectedCuttingOrderId) {
@@ -1603,13 +1609,24 @@ export default function FruitInputPage() {
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-700">Precio Pactado ($/kg) *</label>
+                <label className="text-sm font-medium text-slate-700">Registro de Huerta</label>
                 <input 
-                  type="number" 
-                  step="0.01"
-                  value={currentLot.fruitPrice}
-                  onChange={(e) => setCurrentLot({ ...currentLot, fruitPrice: e.target.value })}
-                  placeholder="Ej. 45.50"
+                  type="text" 
+                  value={currentLot.orchardRegistry || ''}
+                  onChange={(e) => setCurrentLot({ ...currentLot, orchardRegistry: e.target.value })}
+                  placeholder="Ej. REG-HU-12345"
+                  disabled={lotCreated}
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-green-500/20 focus:border-green-500 outline-none disabled:bg-slate-50 disabled:text-slate-600" 
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-700">Folio de Guía</label>
+                <input 
+                  type="text" 
+                  value={currentLot.guideFolio || ''}
+                  onChange={(e) => setCurrentLot({ ...currentLot, guideFolio: e.target.value })}
+                  placeholder="Ej. GUI-2025-001"
                   disabled={lotCreated}
                   className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-green-500/20 focus:border-green-500 outline-none disabled:bg-slate-50 disabled:text-slate-600" 
                 />
