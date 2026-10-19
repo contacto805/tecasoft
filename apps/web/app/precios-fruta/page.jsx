@@ -110,6 +110,8 @@ export default function PreciosFrutaPage() {
   const [isSimulatorOpen, setIsSimulatorOpen] = useState(false);
   const [simulador, setSimulador] = useState({ precioFruta: 0, utilidadKg: 0, utilidadPct: 0, pallets: 24, cajasPorPallet: 156, kgPorCaja: 6, flete: 80000, tipoCambio: 17.2 });
   const [showMatrix, setShowMatrix] = useState(false);
+  const [cajaTipo, setCajaTipo] = useState('10');
+  const [preciosCajas, setPreciosCajas] = useState({ '6': 0, '10': 0 });
 
   // BLOQUE 08: DOS SENTIDOS + NEGOCIACIÓN EN DESTINO (optimización calculadora comercial sobre Excel ref)
   const [modoDosSentidos, setModoDosSentidos] = useState('campo_a_destino'); // A: campo→destino (break even/recom), B: destino→campo (presupuesto)
@@ -230,7 +232,7 @@ export default function PreciosFrutaPage() {
     } catch(e) { setProyeccionVsReal({ error: 'Datos limitados o lote sin lotificación confirmada.' }); }
   }
 
-  useEffect(() => { loadCalibres(); loadCostos(); loadPublicados(); loadCampoLatest(); checkSuper(); loadTablaEditable(); loadDetalleCostos(); loadDestinos(); loadConceptos(); }, []);
+  useEffect(() => { loadCalibres(); loadCostos(); loadPublicados(); loadCampoLatest(); checkSuper(); loadTablaEditable(); loadDetalleCostos(); loadDestinos(); loadConceptos(); loadPreciosCajas(); }, []);
 
   useEffect(() => {
     if (selectedDestinoId) {
@@ -238,6 +240,27 @@ export default function PreciosFrutaPage() {
       calcularCostoDestino(selectedDestinoId, 0, 0);
     }
   }, [selectedDestinoId]);
+
+  // Auto-apply default PREC/KG for caja from inventory when prices load or destino changes
+  useEffect(() => {
+    if ((preciosCajas['6'] || preciosCajas['10']) && selectedDestinoId) {
+      const hasCaja = (destinoValores.length ? destinoValores : conceptos).some(r => ((r.concepto && r.concepto.nombre) || r.nombre || '').toLowerCase().includes('caja'));
+      if (hasCaja) {
+        const tipo = (preciosCajas['10'] > 0 ? '10' : '6');
+        const kgSize = tipo === '6' ? 6 : 10;
+        const boxP = parseFloat(preciosCajas[tipo] || 0);
+        // set per the row
+        setDestinoValores(prev => prev.map(v => {
+          const nm = ((v.concepto && v.concepto.nombre) || v.nombre || '').toLowerCase();
+          if (nm.includes('caja')) {
+            return { ...v, precio_unitario: boxP };
+          }
+          return v;
+        }));
+        if (cajaTipo !== tipo) setCajaTipo(tipo);
+      }
+    }
+  }, [preciosCajas, selectedDestinoId]);
 
   async function checkSuper() {
     try {
@@ -345,6 +368,24 @@ export default function PreciosFrutaPage() {
     try {
       const r = await fetch('/api/precios-fruta/costo-conceptos');
       if (r.ok) setConceptos(await r.json() || []);
+    } catch (_) {}
+  }
+
+  async function loadPreciosCajas() {
+    try {
+      const r = await fetch('/api/materials');
+      if (r.ok) {
+        const mats = await r.json();
+        const findCaja = (kg) => mats.find(m => {
+          const n = (m.material_name || '').toLowerCase();
+          return n.includes('caja') && (n.includes(kg + 'kg') || n.includes(kg + ' kg') || (n.includes(kg) && !n.includes((kg==='6'?'10':'6'))));
+        })?.cost_per_unit || 0;
+        const c6 = parseFloat(findCaja('6')) || 0;
+        const c10 = parseFloat(findCaja('10')) || 0;
+        setPreciosCajas({ '6': c6, '10': c10 });
+        if (c10 > 0) setCajaTipo('10');
+        else if (c6 > 0) setCajaTipo('6');
+      }
     } catch (_) {}
   }
   async function loadDestinoValores(destId) {
@@ -1054,15 +1095,42 @@ export default function PreciosFrutaPage() {
                     {(destinoValores.length ? destinoValores : conceptos).slice(0,12).map((v, idx) => {
                       const row = destinoValores[idx] || v;
                       const concepto = row.concepto || row;
+                      const nombre = (concepto.nombre || row.nombre || '').toLowerCase();
+                      const isCaja = nombre.includes('caja');
                       const cant = row.cantidad || (row.nombre === 'Flete terrestre' ? 1 : row.nombre === 'Tarima' ? 24 : 1);
                       const pu = row.precio_unitario || concepto.precio_unitario || 0;
-                      const costoKg = destinoCostResult?.desglose?.find(x => x.nombre === concepto.nombre)?.costo_kg || (pu / (destinoCostResult?.kg_totales || 22464));
+                      let costoKg = destinoCostResult?.desglose?.find(x => x.nombre === concepto.nombre)?.costo_kg || (pu / (destinoCostResult?.kg_totales || 22464));
+                      if (isCaja) {
+                        const kgSize = cajaTipo === '6' ? 6 : 10;
+                        const boxP = parseFloat(preciosCajas[cajaTipo] || pu || 0);
+                        costoKg = boxP / kgSize;
+                      }
                       return (
                         <tr key={idx} className="border-b">
                           <td className="pl-2 py-1 font-medium">{concepto.nombre || row.nombre}</td>
                           <td className="text-center"><input type="number" className="w-14 border text-center" value={cant} onChange={e => actualizarValorConcepto(row, 'cantidad', e.target.value)} /></td>
                           <td className="text-center text-[10px]">{concepto.tipo_calculo || row.tipo_calculo || 'POR_UNIDAD'}</td>
-                          <td className="text-center"><input type="number" step="0.01" className="w-20 border text-right" value={pu} onChange={e => actualizarValorConcepto(row, 'precio_unitario', e.target.value)} /></td>
+                          <td className="text-center">
+                            {isCaja ? (
+                              <select
+                                value={cajaTipo}
+                                onChange={e => {
+                                  const tipo = e.target.value;
+                                  setCajaTipo(tipo);
+                                  const kgSize = tipo === '6' ? 6 : 10;
+                                  const boxP = parseFloat(preciosCajas[tipo] || 0);
+                                  // set PREC.MXN to full box price from inventory; PREC/KG will show boxP / kgSize
+                                  actualizarValorConcepto(row, 'precio_unitario', boxP);
+                                }}
+                                className="border text-xs px-1 py-0.5 w-28"
+                              >
+                                <option value="10">Caja 10 Kg</option>
+                                <option value="6">Caja 6 Kg</option>
+                              </select>
+                            ) : (
+                              <input type="number" step="0.01" className="w-20 border text-right" value={pu} onChange={e => actualizarValorConcepto(row, 'precio_unitario', e.target.value)} />
+                            )}
+                          </td>
                           <td className="text-center font-black tabular-nums">{Number(costoKg || 0).toFixed(4)}</td>
                           <td className="text-[10px] text-slate-500">{concepto.categoria}</td>
                         </tr>

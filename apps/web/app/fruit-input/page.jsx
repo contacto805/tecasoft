@@ -23,6 +23,8 @@ export default function FruitInputPage() {
     orchardRegistry: '',
     guideFolio: '',
     collectorName: '',
+    brokerName: '',
+    brokerPhone: '',
     commissionAmount: '',
     paymentDays: '',
     date: new Date().toISOString().split('T')[0],
