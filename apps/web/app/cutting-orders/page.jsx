@@ -929,7 +929,7 @@ export default function CuttingOrdersPage() {
               <div className="space-y-3">
                 {orders.map((order, idx) => (
                   <div 
-                    key={order.folio || order.id || idx}
+                    key={order.id || order.folio || idx}
                     className="p-4 bg-slate-50 rounded-xl border border-slate-100 hover:border-brand-300 transition-colors"
                   >
                     <div className="flex items-start justify-between">
