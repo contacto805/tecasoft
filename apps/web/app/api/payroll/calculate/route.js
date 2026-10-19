@@ -187,6 +187,48 @@ export async function POST(request) {
         }
       }
 
+      // Apply to loan balances + preserve full payment history (employee_loan_payments)
+      // This deducts from total préstamos/adelantos once the weekly payroll is processed
+      for (const ln of empLoans) {
+        const wDed = parseFloat(ln.descuento_semanal) || 0;
+        if (wDed <= 0) continue;
+
+        // Idempotent: do not duplicate payment for same loan in same week
+        const already = await sql`
+          SELECT id FROM employee_loan_payments 
+          WHERE loan_id = ${ln.id} AND fecha BETWEEN ${week_start_date} AND ${week_end_date}
+          LIMIT 1
+        `;
+        if (already.length > 0) continue;
+
+        const pfolio = `ABO-PR-${new Date().getFullYear()}-${String(ln.id).padStart(4,'0')}`;
+        await sql`
+          INSERT INTO employee_loan_payments (loan_id, monto, fecha, semana, anno, concepto, applied_by, folio)
+          VALUES (
+            ${ln.id}, ${wDed}, ${week_start_date}, 
+            EXTRACT(WEEK FROM ${week_start_date}::date), 
+            EXTRACT(YEAR FROM ${week_start_date}::date),
+            ${'Descuento semanal por nómina (Asistencia • Préstamos y Adelantos)'},
+            'Sistema (pago semanal automático)', ${pfolio}
+          )
+        `;
+
+        // Recompute remaining and reduce the total in Préstamos y Adelantos
+        const paidQ = await sql`SELECT COALESCE(SUM(monto), 0) as total_paid FROM employee_loan_payments WHERE loan_id = ${ln.id}`;
+        const paid = parseFloat(paidQ[0]?.total_paid || 0);
+        const orig = parseFloat(ln.amount || ln.monto_original || 0);
+        const newRemaining = Math.max(0, orig - paid);
+
+        await sql`
+          UPDATE employee_loans 
+          SET remaining_balance = ${newRemaining},
+              status = ${newRemaining <= 0 ? 'liquidado' : 'activo'},
+              paid_at = ${newRemaining <= 0 ? new Date().toISOString() : null},
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ${ln.id}
+        `;
+      }
+
       // SAVE NEW MODEL: payroll_attendance_calculations (trace) - include unified loan deductions
       await sql`
         INSERT INTO payroll_attendance_calculations (

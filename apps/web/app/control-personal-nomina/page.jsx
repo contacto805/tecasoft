@@ -159,15 +159,38 @@ export default function ControlPersonalNominaPage() {
         };
       });
       
-      setAttendance(merged);
-
       // Calculate stats with weekly extra bonuses
       const present = merged.filter(e => ['presente', 'retardo'].includes(e.status)).length;
       const absent = merged.filter(e => !e.attendance_id || ['falta_justificada', 'falta_injustificada', 'ausente'].includes(e.status)).length;
       const weekHours = merged.reduce((sum, e) => sum + Number(e.hours_worked || 0), 0);
       const weekPayroll = merged.reduce((sum, e) => sum + getEffectivePayment(e), 0);
       const weekBonuses = merged.reduce((sum, e) => sum + (Number(e.extra_bonus || 0)), 0);
-      const weekDeductions = 0; // future
+
+      // Load loans and compute weekly deductions from Préstamos y Adelantos section
+      const loansRes = await fetch('/api/prestamos');
+      const loansData = loansRes.ok ? await loansRes.json() : [];
+      const activeLoansData = Array.isArray(loansData) ? loansData : [];
+
+      const weekLoanMap = {};
+      let totalWeekLoanDeds = 0;
+      activeLoansData.forEach(l => {
+        const st = (l.estado || l.status || '').toLowerCase();
+        if (['liquidado','pagado','rechazado'].includes(st)) return;
+        const ded = Number(l.descuento_semanal || l.descuento_semanal_aplicado || 0);
+        if (ded > 0 && l.employee_id) {
+          weekLoanMap[l.employee_id] = (weekLoanMap[l.employee_id] || 0) + ded;
+          totalWeekLoanDeds += ded;
+        }
+      });
+
+      // Merge loan deductions into attendance for preview (deduct from pago semanal)
+      const mergedWithLoans = merged.map(emp => ({
+        ...emp,
+        loan_deduction: weekLoanMap[emp.employee_id] || 0
+      }));
+
+      setAttendance(mergedWithLoans);
+      setLoans(activeLoansData);
 
       setStats({
         activeEmployees: empData.length,
@@ -176,11 +199,8 @@ export default function ControlPersonalNominaPage() {
         weekHours: weekHours,
         weekPayroll: weekPayroll,
         weekBonuses: weekBonuses,
-        weekDeductions: weekDeductions
+        weekDeductions: Math.round(totalWeekLoanDeds * 100) / 100
       });
-
-      // Load unified loans for prestamos/adelantos section (always for traceability)
-      loadLoans();
 
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -1026,6 +1046,25 @@ export default function ControlPersonalNominaPage() {
               <div className="flex gap-2">
                 <button onClick={() => setShowLoanForm(!showLoanForm)} className="px-4 py-2 bg-emerald-700 text-white text-sm rounded-lg">+ Nuevo Préstamo / Adelanto</button>
                 <button onClick={loadLoans} className="px-3 py-2 border text-sm rounded-lg">Refrescar</button>
+                <button 
+                  onClick={async () => {
+                    const ws = getWeekStart(selectedDate);
+                    const we = getWeekEnd(selectedDate);
+                    try {
+                      await fetch('/api/payroll/calculate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ week_start_date: ws, week_end_date: we })
+                      });
+                      await loadLoans();
+                      await fetchData();
+                      alert('Descuentos semanales aplicados a Préstamos y Adelantos. Saldos actualizados y historial conservado.');
+                    } catch(e){ alert('No se pudo aplicar'); }
+                  }}
+                  className="px-3 py-2 bg-orange-600 text-white text-sm rounded-lg"
+                >
+                  Aplicar desc. semanales (actualiza saldos)
+                </button>
               </div>
             </div>
 
@@ -1088,14 +1127,14 @@ export default function ControlPersonalNominaPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {loanLoading ? <tr><td colSpan={7} className="p-3 text-center text-xs">Cargando...</td></tr> : loans.length === 0 ? <tr><td colSpan={7} className="p-6 text-center text-slate-500 text-xs">Sin préstamos registrados. Usa el formulario arriba.</td></tr> : loans.slice(0,12).map((ln, idx) => {
+                    {loanLoading ? <tr><td colSpan={7} className="p-3 text-center text-xs">Cargando...</td></tr> : loans.length === 0 ? <tr><td colSpan={7} className="p-6 text-center text-slate-500 text-xs">Sin préstamos registrados. Usa el formulario arriba.</td></tr> : loans.slice(0,12).map((ln) => {
                       const monto = Number(ln.monto_original || ln.amount || 0);
                       const desc = Number(ln.descuento_semanal || ln.descuento_semanal_aplicado || 0);
                       const saldo = Number(ln.saldo_pendiente || ln.remaining_balance || 0);
                       const st = (ln.estado || ln.status || 'pendiente').toLowerCase();
                       const isPend = st.includes('pend');
                       return (
-                        <tr key={idx} className="border-t hover:bg-slate-50">
+                        <tr key={ln.id || ln.folio || Math.random()} className="border-t hover:bg-slate-50">
                           <td className="p-2 font-mono text-xs">{ln.folio || `PR-${ln.id}`}</td>
                           <td className="p-2">{ln.employee_name}</td>
                           <td className="p-2 text-right">${monto.toLocaleString('es-MX')}</td>
@@ -1186,8 +1225,8 @@ export default function ControlPersonalNominaPage() {
         {viewMode === 'payroll' && (
           <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
             <div className="p-6 border-b border-slate-200">
-              <h2 className="text-lg font-bold text-slate-900">Pre-Nómina Semanal (incluye Bono Extra)</h2>
-              <p className="text-sm text-slate-600">Resumen de la semana {getWeekStart(selectedDate)} - {getWeekEnd(selectedDate)}. El bono extra se agrega automáticamente al total por empleado.</p>
+              <h2 className="text-lg font-bold text-slate-900">Pre-Nómina Semanal (con Préstamos y Adelantos)</h2>
+              <p className="text-sm text-slate-600">Resumen de la semana {getWeekStart(selectedDate)} - {getWeekEnd(selectedDate)}. Se descuentan automáticamente los préstamos/adelantos acordados según la sección de Préstamos y Adelantos. El historial de pagos se conserva.</p>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full">
@@ -1200,7 +1239,8 @@ export default function ControlPersonalNominaPage() {
                     <th className="px-4 py-3 text-center text-xs font-bold text-slate-700">Estado Hoy</th>
                     <th className="px-4 py-3 text-right text-xs font-bold text-slate-700">Base Día</th>
                     <th className="px-4 py-3 text-right text-xs font-bold text-green-700">+ Bono Extra</th>
-                    <th className="px-4 py-3 text-right text-xs font-bold text-slate-700">Total Semana</th>
+                    <th className="px-4 py-3 text-right text-xs font-bold text-orange-700">- Préstamo/ Adelanto</th>
+                    <th className="px-4 py-3 text-right text-xs font-bold text-slate-700">Neto Semana</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1208,7 +1248,8 @@ export default function ControlPersonalNominaPage() {
                     const daily = Number(emp.daily_salary || 0);
                     const paidToday = getEffectivePayment(emp);
                     const bono = Number(emp.extra_bonus || 0);
-                    const total = paidToday + bono;
+                    const loanDed = Number(emp.loan_deduction || 0);
+                    const net = Math.max(0, paidToday + bono - loanDed);
                     const isRetardo = emp.status === 'retardo';
                     return (
                       <tr key={emp.employee_id} className="border-b last:border-none">
@@ -1226,22 +1267,26 @@ export default function ControlPersonalNominaPage() {
                           {isRetardo && <span className="ml-1 text-[10px] text-orange-600 font-normal">-1h</span>}
                         </td>
                         <td className="px-4 py-3 text-sm text-right text-green-600 font-medium">+ ${bono.toFixed(2)}</td>
-                        <td className="px-4 py-3 text-sm text-right font-semibold">${total.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-sm text-right text-orange-700 font-medium">- ${loanDed.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-sm text-right font-semibold">${net.toFixed(2)}</td>
                       </tr>
                     );
                   })}
                 </tbody>
                 <tfoot>
                   <tr className="bg-brand-50">
-                     <td colSpan={5} className="px-4 py-3 font-semibold text-right text-sm">Totales Pre-Nómina (incluye bonos):</td>
+                     <td colSpan={5} className="px-4 py-3 font-semibold text-right text-sm">Totales Pre-Nómina (con descuentos de Préstamos y Adelantos):</td>
                     <td className="px-4 py-3 text-right font-bold">
                       ${attendance.reduce((s, e) => s + getEffectivePayment(e), 0).toFixed(2)}
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-green-700">
                       + ${Number(stats.weekBonuses || 0).toFixed(2)}
                     </td>
+                    <td className="px-4 py-3 text-right font-bold text-orange-700">
+                      - ${Number(stats.weekDeductions || 0).toFixed(2)}
+                    </td>
                     <td className="px-4 py-3 text-right font-bold text-lg">
-                      ${(attendance.reduce((s, e) => s + getEffectivePayment(e), 0) + Number(stats.weekBonuses || 0)).toFixed(2)}
+                      ${(attendance.reduce((s, e) => s + getEffectivePayment(e), 0) + Number(stats.weekBonuses || 0) - Number(stats.weekDeductions || 0)).toFixed(2)}
                     </td>
                   </tr>
                 </tfoot>
