@@ -203,9 +203,9 @@ export default function LandingPage() {
       <div className="max-w-4xl mx-auto px-6 py-10">
         <div className="text-center mb-10">
           <img 
-            src="https://app-cdn.appgen.com/220e1bc6-4350-453d-b566-60b6f97e03e9/assets/uploaded_1785010951159_ri7p2.png" 
-            alt="Tecavo Fruits" 
-            className="mx-auto h-10 sm:h-12 md:h-14 object-contain mb-2" 
+            src="https://app-cdn.appgen.com/7fb1627b-46c6-4220-bc49-ed19cb1ce959/assets/uploaded_1792434546512_fbtblk.png" 
+            alt="SoftTecavo" 
+            className="mx-auto h-20 sm:h-24 md:h-28 object-contain mb-2" 
           />
           <div className="text-emerald-700 text-sm font-semibold tracking-[2px] mb-1">TECAVO FRUITS</div>
           <h1 className="text-4xl font-semibold tracking-tighter">Acceso a Módulos</h1>
