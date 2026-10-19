@@ -142,6 +142,7 @@ export default function EmpleadosPage() {
 
       closeModal();
       await loadEmployees();
+      alert(editingEmployee ? 'Cambios guardados correctamente' : 'Empleado creado correctamente');
     } catch (err) {
       alert('Error: ' + (err.message || 'No se pudo guardar el empleado'));
     } finally {
