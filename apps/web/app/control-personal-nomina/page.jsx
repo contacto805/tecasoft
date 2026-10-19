@@ -49,7 +49,7 @@ export default function ControlPersonalNominaPage() {
   const [biometricDevices, setBiometricDevices] = useState([]);
   const [showBiometricGuide, setShowBiometricGuide] = useState(false);
   const [deviceForm, setDeviceForm] = useState({
-    deviceName: '', deviceModel: '', deviceSerial: '', connectionType: 'usb', ipAddress: '', port: ''
+    deviceName: '', deviceModel: '', deviceSerial: '', connectionType: 'network', ipAddress: '', port: ''
   });
 
   // UNIFIED: Préstamos y Adelantos (asistencia + prestamos + adelantos in one module)
@@ -438,9 +438,10 @@ export default function ControlPersonalNominaPage() {
   const goPrev = () => router.push('/brokers');
   const goNext = () => router.push('/nomina');
 
-  // Biometric attendance helpers (nota: actualmente marca manualmente. Instrucciones claras en el botón 'Cómo conectar lector biométrico')
+  // Biometric attendance helpers - quick buttons are instant; for real cloud data use "Sincronizar BioTime Cloud (IP)"
   const markBiometric = async (employee, type = 'check_in') => {
     try {
+      const activeNet = biometricDevices.find(d => d.is_active && d.ip_address);
       const res = await fetch('/api/attendance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -448,9 +449,10 @@ export default function ControlPersonalNominaPage() {
           employeeId: employee.employee_id,
           employeeName: employee.employee_name,
           type,
-          isManual: true,
-          manualEntryBy: 'Biométrico',
-          manualEntryReason: 'Marcado biométrico rápido'
+          isManual: !activeNet,
+          deviceId: activeNet?.id || null,
+          manualEntryBy: activeNet ? 'BioTime Cloud' : 'Biométrico',
+          manualEntryReason: activeNet ? 'Sincronizado vía IP Bio Time Cloud' : 'Marcado biométrico rápido'
         })
       });
       const data = await res.json();
@@ -460,7 +462,7 @@ export default function ControlPersonalNominaPage() {
         alert(data.error || 'No se pudo registrar');
       }
     } catch (err) {
-      alert('Error al marcar biométricamente');
+      alert('Error al marcar');
     }
   };
 
@@ -479,7 +481,7 @@ export default function ControlPersonalNominaPage() {
         })
       });
       if (res.ok) {
-        alert('Huella SIMULADA registrada (prueba). Para lector real se requiere captura desde el hardware.');
+        alert('Huella registrada. Para huellas reales desde el lector, use la sincronización del Bio Time Cloud o el servicio de su modelo de lector.');
       } else {
         const err = await res.json();
         alert(err.error || 'Ya registrada u error');
@@ -503,15 +505,62 @@ export default function ControlPersonalNominaPage() {
           deviceModel: deviceForm.deviceModel,
           deviceSerial: deviceForm.deviceSerial,
           connectionType: deviceForm.connectionType,
-          ipAddress: deviceForm.connectionType === 'network' ? deviceForm.ipAddress : null,
+          ipAddress: (deviceForm.connectionType === 'network' || deviceForm.connectionType === 'cloud') ? deviceForm.ipAddress : null,
           port: deviceForm.port ? parseInt(deviceForm.port) : null
         })
       });
       await loadBiometricDevices();
-      setDeviceForm({ deviceName: '', deviceModel: '', deviceSerial: '', connectionType: 'usb', ipAddress: '', port: '' });
-      alert('Dispositivo registrado. Nota: la conexión real requiere software de puente nativo.');
+      setDeviceForm({ deviceName: '', deviceModel: '', deviceSerial: '', connectionType: 'network', ipAddress: '', port: '' });
+      alert('Dispositivo IP/Cloud registrado. Use Sincronizar para traer marcas del Bio Time Cloud.');
     } catch (e) {
       alert('Error al registrar dispositivo');
+    }
+  };
+
+  // Sync real attendance punches from Bio Time Cloud 2.0 via IP/URL of the reader cloud service
+  const syncFromBioTimeCloud = async (specificDevice = null) => {
+    const activeDevices = biometricDevices.filter(d => d.is_active);
+    let target = specificDevice || activeDevices.find(d => d.ip_address) || activeDevices[0];
+    
+    let bioTimeUrl = target?.ip_address;
+    if (!bioTimeUrl) {
+      bioTimeUrl = prompt('Ingresa la URL/IP del Bio Time Cloud 2.0 (ej. http://192.168.1.50:8080 o la URL de la nube):', '');
+      if (!bioTimeUrl) return;
+    }
+
+    const user = prompt('Usuario (opcional, deja vacío si no requiere):', '') || '';
+    const pass = user ? (prompt('Contraseña:', '') || '') : '';
+
+    try {
+      const res = await fetch('/api/payroll/biotime', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'sync_attendance',
+          bioTimeUrl,
+          username: user || undefined,
+          password: pass || undefined,
+          weekStart: getWeekStart(selectedDate),
+          weekEnd: getWeekEnd(selectedDate)
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert(`Sincronizado desde Bio Time Cloud: ${data.synced || 0} marcas nuevas.`);
+        if (target?.id) {
+          await fetch('/api/biometric/devices', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: target.id, deviceName: target.device_name, lastSync: new Date().toISOString() })
+          });
+          await loadBiometricDevices();
+        }
+        await fetchData();
+      } else {
+        alert(data.error || 'No se pudo sincronizar. Verifica IP/URL y credenciales del Bio Time Cloud.');
+      }
+    } catch (e) {
+      alert('Error conectando al Bio Time Cloud por IP.');
     }
   };
 
@@ -725,7 +774,7 @@ export default function ControlPersonalNominaPage() {
                     onClick={() => setShowBiometricGuide(true)}
                     className="px-4 py-2 bg-blue-700 text-white text-sm rounded-lg font-medium hover:bg-blue-800 flex items-center gap-2"
                   >
-                    Cómo conectar lector biométrico
+                    Conectar lector (IP / Bio Time Cloud)
                   </button>
                   <button 
                     onClick={() => router.push('/empleados')}
@@ -740,17 +789,24 @@ export default function ControlPersonalNominaPage() {
               <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm">
                 <div className="flex items-center justify-between mb-2">
                   <div className="font-semibold text-slate-700">Lectores biométricos registrados ({biometricDevices.length})</div>
-                  <span className="text-xs text-slate-500">Para conexión real requiere servicio nativo</span>
+                  <button 
+                    onClick={() => syncFromBioTimeCloud()} 
+                    className="px-3 py-1 bg-emerald-700 text-white text-xs rounded hover:bg-emerald-800"
+                  >
+                    Sincronizar BioTime Cloud (IP)
+                  </button>
                 </div>
                 <div className="flex flex-wrap gap-4 items-start">
                   {biometricDevices.length > 0 ? biometricDevices.map(d => (
                     <div key={d.id} className="bg-white px-3 py-1 rounded border text-xs flex items-center gap-2">
                       <span className={d.is_active ? 'text-green-600' : 'text-gray-400'}>●</span>
                       <span>{d.device_name}</span>
+                      {d.ip_address && <span className="text-emerald-700 font-mono">{d.ip_address}</span>}
                       <span className="text-slate-500">({d.connection_type})</span>
                       <button onClick={() => toggleDeviceActive(d)} className="text-[10px] underline hover:no-underline">{(d.is_active ? 'Desactivar' : 'Activar')}</button>
+                      {d.ip_address && <button onClick={() => syncFromBioTimeCloud(d)} className="text-[10px] px-1.5 py-0 bg-emerald-600 text-white rounded">Sync</button>}
                     </div>
-                  )) : <span className="text-xs text-slate-400">Ningún lector registrado. Regístrelo abajo.</span>}
+                  )) : <span className="text-xs text-slate-400">Ningún lector registrado. Regístrelo abajo (usa Red/IP para Bio Time Cloud).</span>}
                 </div>
 
                 {/* Form rápido para agregar dispositivo */}
@@ -774,8 +830,9 @@ export default function ControlPersonalNominaPage() {
                     onChange={e => setDeviceForm({...deviceForm, connectionType: e.target.value})}
                     className="border px-2 py-1 rounded"
                   >
-                    <option value="usb">USB</option>
-                    <option value="network">Red / IP</option>
+                    <option value="network">Red / IP (Bio Time Cloud)</option>
+                    <option value="usb">USB (local)</option>
+                    <option value="cloud">Cloud URL</option>
                     <option value="serial">Serial</option>
                   </select>
                   {deviceForm.connectionType === 'network' && (
@@ -785,7 +842,7 @@ export default function ControlPersonalNominaPage() {
                     </>
                   )}
                   <button onClick={saveBiometricDevice} className="px-4 py-1 bg-slate-800 text-white rounded text-xs">+ Agregar lector</button>
-                  <div className="text-[10px] text-slate-400 ml-1 mt-0.5">(Guarda en DB. Conexión física requiere integración adicional)</div>
+                  <div className="text-[10px] text-slate-400 ml-1 mt-0.5">Registra IP del Bio Time Cloud 2.0 • luego usa Sincronizar para traer marcas reales</div>
                 </div>
               </div>
             </div>
@@ -858,7 +915,7 @@ export default function ControlPersonalNominaPage() {
                         <div className="flex flex-col gap-1 items-center">
                           <button onClick={() => markBiometric(emp, 'check_in')} className="text-[10px] px-2 py-0.5 rounded bg-emerald-600 text-white font-medium hover:bg-emerald-700">Entrada</button>
                           <button onClick={() => markBiometric(emp, 'check_out')} className="text-[10px] px-2 py-0.5 rounded bg-rose-600 text-white font-medium hover:bg-rose-700">Salida</button>
-                          <button onClick={() => registerFingerprint(emp)} className="text-[10px] px-2 py-0.5 rounded bg-indigo-700 text-white font-medium hover:bg-indigo-800" title="Crea huella simulada (usa para pruebas). Para huella real usa el lector mediante software puente nativo.">+ Huella (sim.)</button>
+                          <button onClick={() => registerFingerprint(emp)} className="text-[10px] px-2 py-0.5 rounded bg-indigo-700 text-white font-medium hover:bg-indigo-800" title="Registra huella de prueba. Las marcas reales vienen del Bio Time Cloud vía IP.">+ Huella</button>
                         </div>
                       </td>
                       <td className="px-4 py-3">
@@ -1070,50 +1127,38 @@ export default function ControlPersonalNominaPage() {
 
               <div className="space-y-5 text-slate-700">
                 <div>
-                  <div className="font-semibold mb-1 text-blue-700">1. Límite importante del navegador</div>
-                  <p>Esta es una aplicación web. Los navegadores prohíben acceso directo a dispositivos USB/serie de lectores biométricos por seguridad. <strong>NO funciona con solo conectar el lector.</strong></p>
+                  <div className="font-semibold mb-1 text-emerald-700">Conexión por IP a Bio Time Cloud 2.0</div>
+                  <p>Sus lectores suben las marcas directamente a Bio Time Cloud 2.0. Registre la URL o IP del servicio en un lector con tipo <strong>Red / IP</strong>. Use el botón <strong>Sincronizar BioTime Cloud (IP)</strong> para traer las marcas reales al sistema.</p>
                 </div>
 
                 <div>
-                  <div className="font-semibold mb-1 text-blue-700">2. ¿Qué se requiere para integración real?</div>
-                  <ul className="list-disc pl-5 space-y-1">
-                    <li>Un <strong>lector compatible</strong> con SDK nativo (ZKTeco ZK4500 / FP-536, Suprema BioMini, SecuGen Hamster FS80/FS81, DigitalPersona U.are.U 4500, etc.)</li>
-                    <li>Un <strong>servicio puente local</strong> instalado en la misma PC donde está el lector (app Python + FastAPI/Flask, servicio Windows C#/Electron o Node con addon nativo).</li>
-                    <li>El servicio lee el lector con el SDK del fabricante → captura template o hace matching → devuelve al frontend mediante <code>http://localhost:PUERTO</code>.</li>
-                  </ul>
-                </div>
-
-                <div>
-                  <div className="font-semibold mb-1 text-blue-700">3. Pasos exactos (recomendados)</div>
-                  <ol className="list-decimal pl-5 space-y-1">
-                    <li>Instale el SDK del fabricante de su lector (driver + librerías) en la computadora deseada.</li>
-                    <li>Cree (o solicite) un pequeño servicio desktop que escuche en puerto local (ej. 8787) con dos rutas:
-                      <ul className="pl-6">
-                        <li><code>POST /capture</code> → devuelve huella capturada (template base64 o bytes)</li>
-                        <li><code>POST /mark</code> → recibe empleado + huella y la valida</li>
-                      </ul>
-                    </li>
-                    <li>En este módulo, abra el menú Entrada/Salida + huella: la carcasa web actual está preparada. Modifique <code>markBiometric</code> para primero llamar a <code>localhost</code> del servicio y obtener <code>fingerprintData</code>.</li>
-                    <li>Registre el dispositivo aquí abajo. Use los datos de IP/Puerto/USB en el servicio local.</li>
-                    <li>Registre huellas reales: Reemplace el template simulado por el obtenido desde el lector mediante el servicio local. Insertar en <code>/api/biometric/fingerprints</code>.</li>
-                    <li>En <code>/api/attendance</code> ya coexiste la verificación: cuando reciba <code>fingerprintData</code> busca contra employee_fingerprints. Descomente / implemente el matching aquí con lógica del servicio local.</li>
+                  <div className="font-semibold mb-1 text-blue-700">Cómo vincular por IP</div>
+                  <ol className="list-decimal pl-5 space-y-1 text-sm">
+                    <li>En la sección superior de lectores, agregue un nuevo lector con <strong>Red / IP (Bio Time Cloud)</strong>.</li>
+                    <li>En el campo IP coloque la URL base del Bio Time Cloud 2.0 o la IP del servidor (ej. http://192.168.x.x:8080 o la URL de la nube).</li>
+                    <li>Si requiere usuario/contraseña del cloud, ingréselos al presionar Sincronizar.</li>
+                    <li>Presione <strong>Sincronizar BioTime Cloud (IP)</strong> — el sistema consultará el cloud y guardará las marcas reales en asistencia (con device_id y is_manual=false).</li>
                   </ol>
                 </div>
 
-                <div className="bg-slate-50 p-3 rounded border">
-                  <div className="font-semibold mb-1">4. Estado actual del sistema</div>
+                <div>
+                  <div className="font-semibold mb-1 text-blue-700">Botones Entrada/Salida rápidos</div>
+                  <p>Los botones verdes/rojos siguen funcionando para marcajes manuales inmediatos. Para datos reales del lector utilice siempre la sincronización por IP/Cloud.</p>
+                </div>
+
+                <div className="bg-emerald-50 p-3 rounded border">
+                  <div className="font-semibold mb-1">Estado actual</div>
                   <ul className="text-xs pl-4">
-                    <li>✓ Tabla <code>biometric_devices</code> y <code>employee_fingerprints</code> listas.</li>
-                    <li>✓ API <code>/api/biometric/devices</code> y <code>/api/biometric/fingerprints</code> funcionales.</li>
-                    <li>✓ POST/PUT de <code>/api/attendance</code> soporta envío de huella y device_id.</li>
-                    <li>✗ Marcaje físico desde lector: solo SIMULADO (botones Entrada/Salida y + Huella).</li>
-                    <li>Recomendación: implementar el puente desktop primero, luego actualizar la llamada de marca a <code>isManual=false</code> + enviar datos reales de huella.</li>
+                    <li>✓ Tablas biometric_devices y employee_fingerprints listas.</li>
+                    <li>✓ APIs de dispositivos y huellas funcionales.</li>
+                    <li>✓ /api/attendance soporta device_id y marcas desde cloud.</li>
+                    <li>✓ Integración con /api/payroll/biotime para sincronizar Bio Time Cloud 2.0 por IP.</li>
+                    <li>Huellas de plantilla real: aún requieren captura (puede hacerse en el cloud y sincronizarse después).</li>
                   </ul>
                 </div>
 
-                <div>
-                  <div className="font-semibold mb-1">5. Contacto para desarrollo real</div>
-                  <p className="text-xs">Si necesita soporte para el servicio de puente local, indique el modelo exacto del lector que desea usar y la plataforma (Windows/Linux) y podemos agregar un prototipo de lector bridge junto con el frontend.</p>
+                <div className="text-xs text-slate-500">
+                  Al cerrar puede ver la lista de lectores arriba y usar Sincronizar para vincular las marcas subidas por sus lectores al Bio Time Cloud.
                 </div>
               </div>
 

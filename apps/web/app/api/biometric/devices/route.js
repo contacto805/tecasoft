@@ -74,7 +74,8 @@ export async function PUT(request) {
       connectionType, 
       ipAddress, 
       port,
-      isActive 
+      isActive,
+      lastSync
     } = await request.json();
 
     if (!id) {
@@ -90,6 +91,7 @@ export async function PUT(request) {
           ip_address = ${ipAddress || null},
           port = ${port ? parseInt(port) : null},
           is_active = ${isActive !== undefined ? isActive : true},
+          last_sync = ${lastSync || null},
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ${parseInt(id)}
       RETURNING *
