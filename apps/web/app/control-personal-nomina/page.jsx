@@ -89,10 +89,10 @@ export default function ControlPersonalNominaPage() {
 
   // Use new engine fields (effective_hours + jornada_pagable + discount_amount)
   const getEffectivePayment = (emp) => {
-    const daily = parseFloat(emp.daily_salary || 0) || 0;
+    const daily = Number(emp.daily_salary || 0) || 0;
     if (emp.jornada_pagable === 'turno_completo') return daily;
     if (emp.jornada_pagable === 'medio_turno') return daily * 0.5;
-    const eff = parseFloat(emp.effective_hours || emp.hours_worked || 0);
+    const eff = Number(emp.effective_hours || emp.hours_worked || 0);
     if (eff >= 7.8) return daily;
     if (eff >= 3.8) return daily * 0.5;
     return 0;
@@ -149,13 +149,13 @@ export default function ControlPersonalNominaPage() {
           late_minutes: record?.late_minutes || 0,
           retardo_minutes: record?.retardo_minutes || 0,
           early_exit_minutes: record?.early_exit_minutes || 0,
-          discount_amount: parseFloat(record?.discount_amount || 0),
+          discount_amount: Number(record?.discount_amount || 0),
           jornada_pagable: record?.jornada_pagable || null,
           schedule_type: record?.schedule_type || emp.schedule_type || 'fijo',
           jornada_type: record?.jornada_type || emp.jornada_type || 'completa',
           status: record?.status || 'ausente',
           observations: record?.observations || '',
-          extra_bonus: parseFloat(bonusRec?.amount || 0)
+          extra_bonus: Number(bonusRec?.amount || 0)
         };
       });
       
@@ -164,19 +164,19 @@ export default function ControlPersonalNominaPage() {
       // Calculate stats with weekly extra bonuses
       const present = merged.filter(e => ['presente', 'retardo'].includes(e.status)).length;
       const absent = merged.filter(e => !e.attendance_id || ['falta_justificada', 'falta_injustificada', 'ausente'].includes(e.status)).length;
-      const weekHours = merged.reduce((sum, e) => sum + parseFloat(e.hours_worked || 0), 0);
-      const weekPayroll = merged.reduce((sum, e) => sum + getEffectivePayment(e), 0).toFixed(2);
-      const weekBonuses = merged.reduce((sum, e) => sum + (parseFloat(e.extra_bonus || 0)), 0);
+      const weekHours = merged.reduce((sum, e) => sum + Number(e.hours_worked || 0), 0);
+      const weekPayroll = merged.reduce((sum, e) => sum + getEffectivePayment(e), 0);
+      const weekBonuses = merged.reduce((sum, e) => sum + (Number(e.extra_bonus || 0)), 0);
       const weekDeductions = 0; // future
 
       setStats({
         activeEmployees: empData.length,
         presentToday: present,
         absentToday: absent,
-        weekHours: weekHours.toFixed(2),
+        weekHours: weekHours,
         weekPayroll: weekPayroll,
-        weekBonuses: weekBonuses.toFixed(2),
-        weekDeductions: weekDeductions.toFixed(2)
+        weekBonuses: weekBonuses,
+        weekDeductions: weekDeductions
       });
 
       // Load unified loans for prestamos/adelantos section (always for traceability)
@@ -211,7 +211,7 @@ export default function ControlPersonalNominaPage() {
       const isRetardo = newStatus === 'retardo';
       let updatedLocal = { ...employee, status: newStatus };
       if (isRetardo) {
-        const curH = parseFloat(employee.hours_worked || 0) || 8;
+        const curH = Number(employee.hours_worked || 0) || 8;
         updatedLocal.hours_worked = Math.max(0, (curH - 1)).toFixed(2);
         updatedLocal.late_minutes = 60;
       } else if (employee.status === 'retardo' && newStatus !== 'retardo') {
@@ -279,7 +279,7 @@ export default function ControlPersonalNominaPage() {
           if (updated.check_in_time && updated.check_out_time) {
             const checkIn = new Date(`${selectedDate}T${updated.check_in_time}`);
             const checkOut = new Date(`${selectedDate}T${updated.check_out_time}`);
-            const hours = (checkOut - checkIn) / (1000 * 60 * 60);
+            const hours = (checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60);
             updated.hours_worked = Math.max(0, hours).toFixed(2);
           }
           return updated;
@@ -329,7 +329,7 @@ export default function ControlPersonalNominaPage() {
 
   // Gestión de Bono Extra (por empleado - se suma a la semana)
   const updateLocalBonus = (employeeId, amount) => {
-    const parsed = Math.max(0, parseFloat(amount) || 0);
+    const parsed = Math.max(0, Number(amount) || 0);
     setAttendance(prev => prev.map(e =>
       e.employee_id === employeeId ? { ...e, extra_bonus: parsed } : e
     ));
@@ -468,7 +468,7 @@ export default function ControlPersonalNominaPage() {
 
   const registerFingerprint = async (employee) => {
     try {
-      const template = 'sim-' + btoa(employee.employee_id + Date.now());
+      const template = 'sim-' + btoa(String(employee.employee_id) + Date.now());
       const res = await fetch('/api/biometric/fingerprints', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -748,17 +748,17 @@ export default function ControlPersonalNominaPage() {
 
             <div className="bg-white rounded-lg border border-slate-200 p-6 shadow-sm">
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Costo Nómina</p>
-              <p className="text-3xl font-bold text-brand-600">${parseFloat(stats.weekPayroll).toLocaleString('es-MX', {minimumFractionDigits: 2})}</p>
+              <p className="text-3xl font-bold text-brand-600">${Number(stats.weekPayroll || 0).toLocaleString('es-MX', {minimumFractionDigits: 2})}</p>
             </div>
 
             <div className="bg-white rounded-lg border border-slate-200 p-6 shadow-sm">
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Bonos</p>
-              <p className="text-3xl font-bold text-green-600">${parseFloat(stats.weekBonuses).toLocaleString('es-MX', {minimumFractionDigits: 2})}</p>
+              <p className="text-3xl font-bold text-green-600">${Number(stats.weekBonuses || 0).toLocaleString('es-MX', {minimumFractionDigits: 2})}</p>
             </div>
 
             <div className="bg-white rounded-lg border border-slate-200 p-6 shadow-sm">
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Descuentos</p>
-              <p className="text-3xl font-bold text-orange-600">${parseFloat(stats.weekDeductions).toLocaleString('es-MX', {minimumFractionDigits: 2})}</p>
+              <p className="text-3xl font-bold text-orange-600">${Number(stats.weekDeductions || 0).toLocaleString('es-MX', {minimumFractionDigits: 2})}</p>
             </div>
           </div>
         </div>
@@ -896,15 +896,15 @@ export default function ControlPersonalNominaPage() {
                           className="px-2 py-1 border border-slate-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
                         />
                       </td>
-                      <td className="px-4 py-3 text-sm font-medium text-slate-900">{(emp.effective_hours || emp.hours_worked || 0).toFixed ? (emp.effective_hours || emp.hours_worked || 0).toFixed(2) : (emp.effective_hours || emp.hours_worked || 0)}</td>
+                      <td className="px-4 py-3 text-sm font-medium text-slate-900">{Number(emp.effective_hours || emp.hours_worked || 0).toFixed(2)}</td>
                       <td className="px-4 py-3 text-xs">{emp.jornada_pagable || emp.jornada_type || '-'}</td>
-                      <td className="px-4 py-3 text-xs text-orange-700 font-medium">{emp.discount_amount > 0 ? '-$' + parseFloat(emp.discount_amount).toFixed(0) : ''}</td>
+                      <td className="px-4 py-3 text-xs text-orange-700 font-medium">{emp.discount_amount > 0 ? '-$' + Number(emp.discount_amount || 0).toFixed(0) : ''}</td>
                       <td className="px-4 py-3">
                         <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={parseFloat(emp.extra_bonus) || 0}
+                           type="number"
+                           step={0.01}
+                           min={0}
+                           value={Number(emp.extra_bonus || 0)}
                           onChange={(e) => updateLocalBonus(emp.employee_id, e.target.value)}
                           onBlur={() => saveExtraBonus(emp.employee_id, emp.employee_name, emp.department, emp.extra_bonus)}
                           className="w-20 px-2 py-0.5 text-right border border-slate-300 rounded text-xs text-green-700 font-medium focus:outline-none focus:ring-1 focus:ring-emerald-500"
@@ -972,13 +972,13 @@ export default function ControlPersonalNominaPage() {
                     <tr key={emp.employee_id} className="border-b border-slate-100">
                       <td className="px-4 py-3 text-sm font-medium text-slate-900">{emp.employee_name}</td>
                       <td className="px-4 py-3 text-sm text-slate-700">{emp.department || '-'} / {emp.position || '-'}</td>
-                      <td className="px-4 py-3 text-sm text-slate-700">${parseFloat(emp.daily_salary || 0).toFixed(2)}</td>
+                      <td className="px-4 py-3 text-sm text-slate-700">${Number(emp.daily_salary || 0).toFixed(2)}</td>
                       <td className="px-4 py-3">
-                        <input 
-                          type="number" 
-                          step="0.01" 
-                          min="0" 
-                          value={emp.extra_bonus || 0} 
+                         <input 
+                           type="number" 
+                           step={0.01} 
+                           min={0} 
+                           value={emp.extra_bonus || 0}
                           onChange={(e) => updateLocalBonus(emp.employee_id, e.target.value)}
                           onBlur={() => saveExtraBonus(emp.employee_id, emp.employee_name, emp.department, emp.extra_bonus)}
                           className="w-full px-3 py-1.5 text-right border border-slate-300 rounded-lg text-green-700 font-medium focus:ring-brand-500"
@@ -996,14 +996,14 @@ export default function ControlPersonalNominaPage() {
                     </tr>
                   ))}
                   {attendance.length === 0 && (
-                    <tr><td colSpan="5" className="px-4 py-6 text-center text-slate-600">No hay empleados activos.</td></tr>
+                    <tr><td colSpan={5} className="px-4 py-6 text-center text-slate-600">No hay empleados activos.</td></tr>
                   )}
                 </tbody>
                 <tfoot className="bg-slate-50">
                   <tr>
-                    <td className="px-4 py-3 text-sm font-semibold" colSpan="3">Total Bonos Extra Semana</td>
+                    <td className="px-4 py-3 text-sm font-semibold" colSpan={3}>Total Bonos Extra Semana</td>
                     <td className="px-4 py-3 text-right font-bold text-green-700">
-                      ${attendance.reduce((s, e) => s + parseFloat(e.extra_bonus || 0), 0).toFixed(2)}
+                      ${attendance.reduce((s, e) => s + Number(e.extra_bonus || 0), 0).toFixed(2)}
                     </td>
                     <td></td>
                   </tr>
@@ -1054,8 +1054,8 @@ export default function ControlPersonalNominaPage() {
                     try {
                       await fetch('/api/prestamos', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
                         employee_id: newLoan.employee_id, employee_name: newLoan.employee_name || 'Empleado',
-                        amount: parseFloat(newLoan.amount), type: newLoan.type, reason: newLoan.reason || 'Préstamo/adelanto desde Asistencia',
-                        fecha_prestamo: newLoan.fecha_prestamo, descuento_semanal: parseFloat(newLoan.descuento_semanal)||0, num_semanas: parseInt(newLoan.num_semanas)||4
+                        amount: Number(newLoan.amount), type: newLoan.type, reason: newLoan.reason || 'Préstamo/adelanto desde Asistencia',
+                        fecha_prestamo: newLoan.fecha_prestamo, descuento_semanal: Number(newLoan.descuento_semanal)||0, num_semanas: parseInt(newLoan.num_semanas)||4
                       })});
                       setShowLoanForm(false);
                       setNewLoan({employee_id:'',employee_name:'',amount:'',type:'prestamo',reason:'',descuento_semanal:'',num_semanas:'',fecha_prestamo:new Date().toISOString().split('T')[0]});
@@ -1086,10 +1086,10 @@ export default function ControlPersonalNominaPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {loanLoading ? <tr><td colSpan="7" className="p-3 text-center text-xs">Cargando...</td></tr> : loans.length === 0 ? <tr><td colSpan="7" className="p-6 text-center text-slate-500 text-xs">Sin préstamos registrados. Usa el formulario arriba.</td></tr> : loans.slice(0,12).map((ln, idx) => {
-                      const monto = parseFloat(ln.monto_original || ln.amount || 0);
-                      const desc = parseFloat(ln.descuento_semanal || ln.descuento_semanal_aplicado || 0);
-                      const saldo = parseFloat(ln.saldo_pendiente || ln.remaining_balance || 0);
+                    {loanLoading ? <tr><td colSpan={7} className="p-3 text-center text-xs">Cargando...</td></tr> : loans.length === 0 ? <tr><td colSpan={7} className="p-6 text-center text-slate-500 text-xs">Sin préstamos registrados. Usa el formulario arriba.</td></tr> : loans.slice(0,12).map((ln, idx) => {
+                      const monto = Number(ln.monto_original || ln.amount || 0);
+                      const desc = Number(ln.descuento_semanal || ln.descuento_semanal_aplicado || 0);
+                      const saldo = Number(ln.saldo_pendiente || ln.remaining_balance || 0);
                       const st = (ln.estado || ln.status || 'pendiente').toLowerCase();
                       const isPend = st.includes('pend');
                       return (
@@ -1195,9 +1195,9 @@ export default function ControlPersonalNominaPage() {
                 </thead>
                 <tbody>
                   {attendance.map((emp) => {
-                    const daily = parseFloat(emp.daily_salary || 0);
+                    const daily = Number(emp.daily_salary || 0);
                     const paidToday = getEffectivePayment(emp);
-                    const bono = parseFloat(emp.extra_bonus || 0);
+                    const bono = Number(emp.extra_bonus || 0);
                     const total = paidToday + bono;
                     const isRetardo = emp.status === 'retardo';
                     return (
@@ -1223,15 +1223,15 @@ export default function ControlPersonalNominaPage() {
                 </tbody>
                 <tfoot>
                   <tr className="bg-brand-50">
-                    <td colSpan="5" className="px-4 py-3 font-semibold text-right text-sm">Totales Pre-Nómina (incluye bonos):</td>
+                     <td colSpan={5} className="px-4 py-3 font-semibold text-right text-sm">Totales Pre-Nómina (incluye bonos):</td>
                     <td className="px-4 py-3 text-right font-bold">
                       ${attendance.reduce((s, e) => s + getEffectivePayment(e), 0).toFixed(2)}
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-green-700">
-                      + ${parseFloat(stats.weekBonuses).toFixed(2)}
+                      + ${Number(stats.weekBonuses || 0).toFixed(2)}
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-lg">
-                      ${(attendance.reduce((s, e) => s + getEffectivePayment(e), 0) + parseFloat(stats.weekBonuses || 0)).toFixed(2)}
+                      ${(attendance.reduce((s, e) => s + getEffectivePayment(e), 0) + Number(stats.weekBonuses || 0)).toFixed(2)}
                     </td>
                   </tr>
                 </tfoot>
