@@ -162,6 +162,10 @@ export async function PUT(request) {
       return NextResponse.json({ error: 'Empleado no encontrado' }, { status: 404 });
     }
 
+    const workDaysValue = updates.workDays
+      ? JSON.stringify(updates.workDays)
+      : (current.work_days ? (typeof current.work_days === 'string' ? current.work_days : JSON.stringify(current.work_days)) : null);
+
     const [employee] = await sql`
       UPDATE employee_profiles
       SET 
@@ -177,7 +181,7 @@ export async function PUT(request) {
         payment_type = ${updates.paymentType ?? current.payment_type},
         work_schedule_start = ${updates.workScheduleStart ?? current.work_schedule_start},
         work_schedule_end = ${updates.workScheduleEnd ?? current.work_schedule_end},
-        work_days = ${(updates.workDays || null) ?? current.work_days},
+        work_days = ${workDaysValue},
         is_active = ${updates.isActive !== undefined ? updates.isActive : current.is_active},
         notes = ${updates.notes ?? current.notes},
         updated_at = CURRENT_TIMESTAMP
