@@ -843,102 +843,18 @@ export default function FruitInputPage() {
         <title>Etiqueta - ${currentLot.lotNumber}</title>
         <style>
           @page { size: 4in 3in; margin: 0; }
-          body { 
-            font-family: Arial, sans-serif; 
-            margin: 0;
-            padding: 10mm;
-            width: 4in;
-            height: 3in;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-          }
-          .header { 
-            text-align: center; 
-            font-weight: bold; 
-            font-size: 16pt;
-            border-bottom: 2px solid #000;
-            padding-bottom: 3mm;
-          }
-          .info { 
-            font-size: 12pt; 
-            margin: 3mm 0;
-          }
-          .info div {
-            margin: 2mm 0;
-          }
-          .label { 
-            font-weight: bold;
-            display: inline-block;
-            width: 40%;
-          }
-          .barcode {
-            text-align: center;
-            font-size: 24pt;
-            font-family: 'Libre Barcode 128', monospace;
-            margin-top: 3mm;
-          }
+          body { font-family: Arial, sans-serif; margin: 0; padding: 5mm; width: 4in; height: 3in; }
+          .title { font-weight: bold; font-size: 14pt; text-align: center; border-bottom: 1px solid #000; padding-bottom: 2mm; }
+          .row { font-size: 11pt; margin: 2mm 0; }
         </style>
       </head>
       <body>
-        <div class="header">
-          <div class="company-name">TECAVO FRUITS SOFT</div>
-          <div class="report-title">Reporte Semanal de Ingresos de Fruta</div>
-          <div class="date-range">${new Date(startDate).toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' })} - ${new Date(endDate).toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
-        </div>
-
-        <table>
-          <thead>
-            <tr>
-              <th class="text-center">Fecha</th>
-              <th>Lote</th>
-              <th>Huerta</th>
-              <th>Productor</th>
-              <th>Acopiador</th>
-              <th class="text-right">Kilos</th>
-              <th class="text-right">Precio/kg</th>
-              <th class="text-right">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${data.lots.map((lot) => `
-              <tr>
-                <td class="text-center">${new Date(lot.date).toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' })}</td>
-                <td><strong>${lot.lot_number}</strong></td>
-                <td>${lot.orchard_name || '-'}</td>
-                <td>${lot.producer || '-'}</td>
-                <td>${lot.collector_name || '-'}</td>
-                <td class="text-right">${parseFloat(lot.total_kg || 0).toFixed(2)} kg</td>
-                <td class="text-right">${parseFloat(lot.fruit_price || 0).toFixed(2)}</td>
-                <td class="text-right"><strong>${parseFloat(lot.total_value || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-
-        <div class="totals">
-          <div class="totals-row">
-            <span class="totals-label">Total de Lotes:</span>
-            <span><strong>${data.totals.totalLots}</strong></span>
-          </div>
-          <div class="totals-row">
-            <span class="totals-label">Total de Cajas:</span>
-            <span><strong>${data.totals.totalBoxes}</strong></span>
-          </div>
-          <div class="totals-row">
-            <span class="totals-label">Total de Kilogramos:</span>
-            <span><strong>${data.totals.totalKg.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg</strong></span>
-          </div>
-          <div class="totals-row grand-total">
-            <span class="totals-label">VALOR TOTAL:</span>
-            <span>${data.totals.totalValue.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-          </div>
-        </div>
-
-        <div class="footer">
-          <p>Reporte generado el ${new Date().toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' })} a las ${new Date().toLocaleTimeString('es-MX')}</p>
-          <p>Tecavo Fruits Soft - Sistema de Gestión Agroindustrial</p>
-        </div>
+        <div class="title">TECAVO FRUITS</div>
+        <div class="row">Lote: ${currentLot.lotNumber}</div>
+        <div class="row">Cajas: ${weighing.boxes || ''}</div>
+        <div class="row">Peso Bruto: ${weighing.gross_weight || ''} kg</div>
+        <div class="row">Peso Neto: ${weighing.net_weight || ''} kg</div>
+        <div class="row" style="text-align:center; font-family: monospace; font-size: 16pt; margin-top: 4mm;">*${currentLot.lotNumber}*</div>
       </body>
       </html>
     `);
@@ -947,7 +863,7 @@ export default function FruitInputPage() {
     setTimeout(() => {
       printWindow.print();
       printWindow.close();
-    }, 500);
+    }, 300);
   };
 
   // Print intake note (media carta, 2 copias)
