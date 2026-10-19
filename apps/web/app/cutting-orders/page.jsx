@@ -280,7 +280,8 @@ export default function CuttingOrdersPage() {
   const downloadPDF = async () => {
     if (!submittedOrder) return;
     const element = document.getElementById('order-print-content');
-    const canvas = await html2canvas(element, { backgroundColor: '#ffffff', scale: 2 });
+    if (!element) return;
+    const canvas = await html2canvas(element, { backgroundColor: '#ffffff', scale: 2, useCORS: true, logging: false });
     const imgData = canvas.toDataURL('image/jpeg', 0.95);
     const pdf = new jsPDF({
       orientation: 'portrait',
@@ -296,11 +297,14 @@ export default function CuttingOrdersPage() {
   const downloadJPG = async () => {
     if (!submittedOrder) return;
     const element = document.getElementById('order-print-content');
-    const canvas = await html2canvas(element, { backgroundColor: '#ffffff', scale: 2 });
+    if (!element) return;
+    const canvas = await html2canvas(element, { backgroundColor: '#ffffff', scale: 2, useCORS: true, logging: false });
     const link = document.createElement('a');
     link.href = canvas.toDataURL('image/jpeg', 0.95);
     link.download = `Orden-Corte-${submittedOrder.folio}.jpg`;
+    document.body.appendChild(link);
     link.click();
+    document.body.removeChild(link);
   };
 
   const handleSendViaWhatsApp = async () => {
@@ -380,17 +384,22 @@ export default function CuttingOrdersPage() {
 
   const downloadExistingOrder = async (order) => {
     setSubmittedOrder(order);
+    setShowPrintModal(true);
     setTimeout(async () => {
       const element = document.getElementById('order-print-content');
-      if (!element) return alert('No pudo generar el documento');
-      const canvas = await html2canvas(element, { backgroundColor: '#ffffff', scale: 2 });
-      const imgData = canvas.toDataURL('image/jpeg', 0.95);
-      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-      const imgWidth = 210;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      pdf.addImage(imgData, 'JPEG', 0, 0, imgWidth, imgHeight);
-      pdf.save(`Orden-Corte-${order.folio}.pdf`);
-    }, 120);
+      if (!element) {
+        setShowPrintModal(false);
+        return;
+      }
+      const canvas = await html2canvas(element, { backgroundColor: '#ffffff', scale: 2, useCORS: true, logging: false });
+      const link = document.createElement('a');
+      link.href = canvas.toDataURL('image/jpeg', 0.95);
+      link.download = `Orden-Corte-${order.folio}.jpg`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => setShowPrintModal(false), 80);
+    }, 320);
   };
 
   const resendExistingOrder = async (order) => {
@@ -992,9 +1001,9 @@ export default function CuttingOrdersPage() {
                             <button
                               onClick={() => downloadExistingOrder(order)}
                               className="px-2 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium"
-                              title="Descargar orden"
+                              title="Descargar JPG"
                             >
-                              Descargar
+                              JPG
                             </button>
                             <button
                               onClick={() => resendExistingOrder(order)}
