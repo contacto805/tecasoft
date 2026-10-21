@@ -281,6 +281,20 @@ export async function PUT(request) {
       return NextResponse.json(updated);
     }
 
+    if (action === 'clear') {
+      const [updated] = await sql`
+        UPDATE pallet_output_summary
+        SET 
+          warehouse_slot = NULL,
+          ubicacion_actual = NULL,
+          estado = 'PENDIENTE_UBICACION',
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ${id}
+        RETURNING *
+      `;
+      return NextResponse.json(updated);
+    }
+
     const result = await sql`
       UPDATE pallet_output_summary
       SET 
