@@ -41,16 +41,22 @@ export default function EmbarquesPage() {
   const [showLabelModal, setShowLabelModal] = useState(false);
   const [showNotaDrawer, setShowNotaDrawer] = useState(false);
   const [showEmpacadoraModal, setShowEmpacadoraModal] = useState(false);
+  const [showLoadMapModal, setShowLoadMapModal] = useState(false);
 
   const [loading, setLoading] = useState(true);
 
-  // Editable empacadora config (prellenado editable)
+  // Centralized corporate config (single source from app-config + branding, used by mapa de carga, nota y hoja de venta)
+  const [corporateConfig, setCorporateConfig] = useState({});
+
+  // Editable empacadora config (prellenado editable) — centralized source used by all print templates
   const [empacadora, setEmpacadora] = useState({
     companyName: branding?.companyName || 'EMPAQUE TECAVO',
     address: branding?.address || 'Carretera a Huerta s/n, Michoacán',
     phone: '(443) 000-0000',
     rfc: 'EMP123456ABC',
-    logoUrl: branding?.logo_url || null
+    logoUrl: branding?.logo_url || null,
+    website: 'www.tecavofruits.com',
+    email: ''
   });
 
   // Current nota draft fields
@@ -202,6 +208,51 @@ export default function EmbarquesPage() {
       }
     }
     loadNextFolio();
+  }, []);
+
+  // Load centralized corporate config (used by mapa de carga, nota de venta y hoja de venta)
+  useEffect(() => {
+    const loadCorporate = async () => {
+      try {
+        const [cfgRes, brandRes] = await Promise.all([
+          fetch('/api/app-config'),
+          fetch('/api/branding')
+        ]);
+        const cfg = cfgRes.ok ? await cfgRes.json() : {};
+        const brand = brandRes.ok ? await brandRes.json() : {};
+        const company = cfg.company || {};
+        const loadedCorp = {
+          name: company.name || brand.company_name || 'TECAVO FRUITS',
+          legal_name: company.legal_name || 'Tecavo Fruits S de RL de CV',
+          address: company.address || brand.address || 'Carretera a Huerta s/n, Michoacán',
+          phone: company.phone || '',
+          email: company.email || '',
+          web: company.web || 'www.tecavofruits.com',
+          rfc: company.rfc || '',
+          sader: company.sader || saderRegistro,
+          logo_url: company.logo_url || brand.logo_url || empacadora.logoUrl || null
+        };
+        setCorporateConfig(loadedCorp);
+        // sync into empacadora for edit/preview consistency
+        setEmpacadora(prev => ({
+          ...prev,
+          companyName: loadedCorp.name,
+          address: loadedCorp.address,
+          phone: loadedCorp.phone || prev.phone,
+          rfc: loadedCorp.rfc || prev.rfc,
+          logoUrl: loadedCorp.logo_url || prev.logoUrl,
+          website: loadedCorp.web,
+          email: loadedCorp.email
+        }));
+      } catch (_) {
+        setCorporateConfig({
+          name: 'TECAVO FRUITS', legal_name: 'Tecavo Fruits S de RL de CV',
+          address: 'Carretera a Huerta s/n, Michoacán', phone: '', email: '', web: 'www.tecavofruits.com',
+          rfc: '', sader: saderRegistro, logo_url: null
+        });
+      }
+    };
+    loadCorporate();
   }, []);
 
   // Functions DRAG AND DROP — identical almacén grid, piso lista + trailer 2-cols
@@ -578,7 +629,7 @@ export default function EmbarquesPage() {
   const saveEmpacadora = async (newData) => {
     setEmpacadora(newData);
     setShowEmpacadoraModal(false);
-    // Persist to global branding (so logo / emp data is on ALL tickets, notas, documents on system)
+    // Persist to global branding (single source used by mapa de carga, nota y hoja de venta)
     try {
       await fetch('/api/branding', {
         method: 'POST',
@@ -588,7 +639,9 @@ export default function EmbarquesPage() {
           address: newData.address,
           phone: newData.phone,
           rfc: newData.rfc,
-          logo_url: newData.logoUrl
+          logo_url: newData.logoUrl,
+          website: newData.website,
+          email: newData.email
         })
       });
     } catch(e){ /* persist best effort */ }
@@ -663,15 +716,18 @@ export default function EmbarquesPage() {
     // Use assignment resolve link to get correct template per module/output
     let tplStyle = null;
     try { const rr=await fetch('/api/document-templates/resolve?module=embarques&output_type=nota'); tplStyle=await rr.json(); }catch(_){}
-    const effectiveLogo = tplStyle?.logo_url || empacadora.logoUrl || branding?.logo_url || branding?.logoUrl;
-    let y = drawCompanyHeader(doc, {
+    const effectiveLogo = tplStyle?.logo_url || corporateConfig.logo_url || empacadora.logoUrl || branding?.logo_url || branding?.logoUrl;
+    const corpHeader = {
       ...branding,
-      companyName: empacadora.companyName || branding?.companyName,
-      address: empacadora.address,
-      phone: empacadora.phone,
-      rfc: empacadora.rfc,
-      logo_url: effectiveLogo
-    }, 15, tplStyle);
+      companyName: corporateConfig.name || empacadora.companyName || branding?.companyName,
+      address: corporateConfig.address || empacadora.address,
+      phone: corporateConfig.phone || empacadora.phone,
+      rfc: corporateConfig.rfc || empacadora.rfc,
+      logo_url: effectiveLogo,
+      email: corporateConfig.email,
+      web: corporateConfig.web
+    };
+    let y = drawCompanyHeader(doc, corpHeader, 15, tplStyle);
 
     // Custom design keeps its panels after header if wanted, or continue — keep the visual flow
     y = Math.max(y + 10, 100);
@@ -682,15 +738,17 @@ export default function EmbarquesPage() {
     doc.setFillColor(229, 168, 76);
     doc.rect(243, Math.max(y-70, 28), 349, 72, 'F');
 
+    const cName = corporateConfig.name || empacadora.companyName || 'TECAVO FRUITS';
+    const cAddr = (corporateConfig.address || empacadora.address || 'Km 4.5 Carretera Tacámbaro- Pátzcuaro').substring(0,55);
     doc.setTextColor(30, 93, 34);
     doc.setFontSize(14);
-    doc.text(empacadora.companyName || 'TECAVO FRUITS', 28, Math.max(y-51, 39));
+    doc.text(cName, 28, Math.max(y-51, 39));
     doc.setFontSize(7);
-    doc.text('S de RL de CV', 28, Math.max(y-41, 49));
-    doc.text((empacadora.address || 'Km 4.5 Carretera Tacámbaro- Pátzcuaro').substring(0,55), 28, Math.max(y-30, 60));
+    doc.text(corporateConfig.legal_name || 'S de RL de CV', 28, Math.max(y-41, 49));
+    doc.text(cAddr, 28, Math.max(y-30, 60));
     doc.setTextColor(255);
     doc.setFontSize(7);
-    doc.text((empacadora.companyName || 'TECAVO FRUITS S de RL de CV').substring(0,38), 251, Math.max(y-55, 34));
+    doc.text((cName + ' ' + (corporateConfig.legal_name || '')).substring(0,38), 251, Math.max(y-55, 34));
 
     // Continue calculations from y
 
@@ -1097,6 +1155,128 @@ export default function EmbarquesPage() {
     return (liveTotal + extraTotal).toFixed(2);
   };
 
+  // MAPA DE CARGA generator (plantilla imprimible) — usa datos reales del trailer actual (embarque seleccionado)
+  const generateLoadMapData = () => {
+    const list = trailerPalletsList;
+    const totalCajas = list.reduce((s,p)=>s+(p.boxes||0),0);
+    const totalKg = list.reduce((s,p)=>s+Math.round(p.kilos||0),0);
+    const totalTar = list.length;
+    return { list, totalCajas, totalKg, totalTar };
+  };
+
+  const printLoadMap = () => {
+    const { list, totalCajas, totalKg, totalTar } = generateLoadMapData();
+    const win = window.open('', '', 'height=720,width=1100');
+    const corp = corporateConfig || {};
+    const cName = corp.name || empacadora.companyName || 'TECAVO FRUITS';
+    const cAddr = corp.address || empacadora.address || '';
+    const cSader = corp.sader || saderRegistro;
+    const cWeb = corp.web || empacadora.website || '';
+    const cEmail = corp.email || empacadora.email || '';
+    const cLogo = corp.logo_url || empacadora.logoUrl || '';
+    const html = `
+      <html><head><title>Mapa de Carga — ${facturaFolio || ''}</title>
+      <style>
+        @media print { @page { size: A4 landscape; margin: 6mm; } }
+        body { font-family: system-ui, Arial, sans-serif; color:#111; margin:0; padding:8px; background:#fff; }
+        .hdr { display:flex; gap:10px; align-items:flex-start; border-bottom:3px solid #0E4A22; padding-bottom:6px; margin-bottom:6px; }
+        .trailer { display:grid; grid-template-columns:1fr 1fr; gap:3px; border:4px solid #0E4A22; background:#0f172a; padding:4px; max-width:980px; }
+        .slot { border:1px solid #166534; background:#dcfce7; padding:3px 4px; font-size:8px; min-height:42px; color:#111; }
+        .slot.empty { background:#f1f5f9; border-color:#94a3b8; color:#475569; }
+        .meta { font-size:10px; margin:4px 0 8px; }
+        .legend { font-size:9px; display:flex; gap:14px; margin-top:6px; }
+        .small { font-size:8px; color:#444; }
+      </style></head><body>
+        <div class="hdr">
+          ${cLogo ? `<img src="${cLogo}" style="height:40px;max-width:120px;" />` : ''}
+          <div style="flex:1">
+            <div style="font-size:15px;font-weight:800;color:#0E4A22;">${cName}</div>
+            <div style="font-size:9px;">${corp.legal_name || 'Tecavo Fruits S de RL de CV'} • ${cAddr}</div>
+            <div style="font-size:8px;">SADER: ${cSader} • Tel: ${corp.phone || empacadora.phone || ''} • ${cWeb} • ${cEmail}</div>
+          </div>
+          <div style="text-align:right;font-size:9px;">
+            <div style="font-weight:700;">MAPA DE CARGA</div>
+            <div>Folio: ${facturaFolio || '—'}</div>
+            <div>${new Date().toLocaleDateString('es-MX')}</div>
+          </div>
+        </div>
+        <div class="meta"><b>Cliente:</b> ${selectedCustomer?.customer_name || '—'} → ${selectedCustomer?.destination || '—'} &nbsp; <b>Unidad:</b> ${termoPlates || trailerPlates || '—'} &nbsp; <b>Operador:</b> ${driverName || '—'}</div>
+        <div style="font-weight:700;margin-bottom:4px;">ACOMODO VISUAL DEL TRÁILER (frente = lado chofer; fondo = puertas)</div>
+        <div class="trailer">
+          <div>
+            <div style="background:#0f172a;color:#fff;font-size:8px;padding:1px 4px;">LADO CHOFER</div>
+            ${Array.from({length:14}).map((_,i) => {
+              const p = trailerSlots[i];
+              const num = getSlotNumber(i);
+              return p ? `<div class="slot"><b>Pos ${num}</b> ${p.lot_number} ${p.caliber}/${p.class_name}<br/>${p.boxes}c ${Math.round(p.kilos)}kg ${p.cold_date? '• Frío '+p.cold_date : ''}</div>` : `<div class="slot empty">Pos ${num} — vacío</div>`;
+            }).join('')}
+          </div>
+          <div>
+            <div style="background:#0f172a;color:#fff;font-size:8px;padding:1px 4px;">LADO CONTRARIO</div>
+            ${Array.from({length:14}).map((_,i) => {
+              const idx=14+i; const p = trailerSlots[idx];
+              const num = getSlotNumber(idx);
+              return p ? `<div class="slot"><b>Pos ${num}</b> ${p.lot_number} ${p.caliber}/${p.class_name}<br/>${p.boxes}c ${Math.round(p.kilos)}kg ${p.cold_date? '• Frío '+p.cold_date : ''}</div>` : `<div class="slot empty">Pos ${num} — vacío</div>`;
+            }).join('')}
+          </div>
+        </div>
+        <div style="margin-top:4px;font-size:9px;">PUERTAS DE TERMO (salida de carga)</div>
+        <div class="legend">
+          <div><span style="background:#166534;display:inline-block;width:10px;height:10px;border:1px solid #0E4A22;"></span> Ocupado (datos del embarque)</div>
+          <div><span style="background:#f1f5f9;display:inline-block;width:10px;height:10px;border:1px solid #94a3b8;"></span> Disponible</div>
+        </div>
+        <div style="margin-top:6px;font-size:10px;">Totales: ${totalTar} tarimas • ${totalCajas} cajas • ${totalKg} kg</div>
+        <div class="small">Este mapa reproduce exactamente las posiciones registradas en el módulo de Embarques. Sin inventar ubicaciones.</div>
+      </body></html>`;
+    win.document.write(html);
+    win.document.close();
+    setTimeout(()=>{ try{win.print();}catch(e){} }, 280);
+  };
+
+  const downloadLoadMapPDF = async () => {
+    const { default: jsPDF } = await import('jspdf');
+    const { list, totalCajas, totalKg, totalTar } = generateLoadMapData();
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+    const corp = corporateConfig || {};
+    const cName = corp.name || empacadora.companyName || 'TECAVO FRUITS';
+    let y = 28;
+    doc.setFillColor(14,74,34); doc.rect(0,0,842,26,'F');
+    doc.setTextColor(255); doc.setFontSize(13);
+    doc.text(cName, 18, 17);
+    doc.setFontSize(8); doc.text(`${corp.address||''} | SADER ${corp.sader||saderRegistro} | ${corp.web||''} ${corp.email||''}`, 18, 23);
+    doc.setTextColor(0); y=42;
+    doc.setFontSize(11); doc.text('MAPA DE CARGA — ACOMODO EXACTO DEL TRÁILER', 18, y);
+    y+=12; doc.setFontSize(9);
+    doc.text(`Folio: ${facturaFolio||'—'}  Cliente: ${selectedCustomer?.customer_name||'—'} → ${selectedCustomer?.destination||''}  Unidad: ${termoPlates||trailerPlates||'—'}  Operador: ${driverName||'—'}`, 18, y);
+    y+=16;
+    // Simple grid representation
+    list.forEach((p, idx) => {
+      const col = idx < 14 ? 0 : 1;
+      const row = idx % 14;
+      const x = 18 + col * 400;
+      const yy = y + row * 15;
+      doc.setDrawColor(14,74,34); doc.setFillColor(220,252,231);
+      doc.rect(x, yy-3, 380, 13, 'FD');
+      doc.setFontSize(7); doc.setTextColor(0);
+      const num = getSlotNumber(idx<14?idx:14+ (idx-14) );
+      doc.text(`Pos ${num}: ${p.lot_number} ${p.caliber} ${p.class_name} | ${p.boxes}c ${Math.round(p.kilos)}kg`, x+3, yy+6);
+    });
+    y += 14*15 + 14;
+    doc.setFontSize(9); doc.text(`TOTALES: ${totalTar} tarimas • ${totalCajas} cajas • ${totalKg} kg`, 18, y);
+    y+=12; doc.setFontSize(7); doc.text('Leyenda: posiciones ocupadas fieles al registro de Embarques. No se alteran existencias ni acomodo.', 18, y);
+    doc.save(`mapa_carga_${facturaFolio || 'embarque'}.pdf`);
+  };
+
+  // Used cold slots for blue highlight in mapa de frío (derivado de tarimas del embarque actual en trailer)
+  const getUsedColdSlots = () => {
+    const used = new Set();
+    trailerPalletsList.forEach(p => {
+      if (p && p._origAlmacenSlot) used.add(p._origAlmacenSlot);
+      if (p && p.ubicacion) used.add(String(p.ubicacion).toUpperCase());
+    });
+    return used;
+  };
+
   const applyCaliberTableToNota = () => {
     const allRows = [...liveCaliberRows];
     // add extras not in live
@@ -1382,6 +1562,12 @@ export default function EmbarquesPage() {
                 <div className="font-bold flex items-center gap-2 text-sm" style={{color:'#000'}}><span>❄️</span> <span>Mapa de Almacén (Frío)</span></div>
                 <div className="text-[10px] px-2 py-0.5 bg-emerald-50 rounded" style={{color:'#000'}}>{Object.keys(warehouseSlots).filter(k => warehouseSlots[k]).length} tarimas</div>
               </div>
+              {/* Leyenda actualizada para resaltar ubicaciones usadas por el embarque actual (azul) */}
+              <div className="flex gap-3 text-[9px] mb-1 px-1" style={{color:'#222'}}>
+                <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 bg-blue-600 border border-blue-800"></span> Utilizado en embarque actual</span>
+                <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 bg-emerald-50 border border-emerald-300"></span> Ocupado (disponible)</span>
+                <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 bg-slate-50 border border-slate-200"></span> Vacío</span>
+              </div>
 
               {/* Replica exacta del grid del módulo almacén (cols A B C, filas 1-13) */}
               <div className="overflow-x-auto">
@@ -1404,10 +1590,12 @@ export default function EmbarquesPage() {
                     {[1,2,3,4,5,6,7,8,9,10,11,12,13].map(row => (
                       <React.Fragment key={`ar-${row}`}>
                         <div className="text-center font-medium text-[9px] text-black py-[1px]">F{row}</div>
-                        {['A','B','C'].map(col => {
+                            {['A','B','C'].map(col => {
                           const slotId = `${col}-${row}`;
                           const slotP = warehouseSlots[slotId];
                           const occupied = !!slotP;
+                          const usedSlots = getUsedColdSlots();
+                          const isUsedInCurrentLoad = occupied && usedSlots.has(slotId);
                           return (
                             <div
                               key={slotId}
@@ -1422,17 +1610,17 @@ export default function EmbarquesPage() {
                                 const loc = findPalletByUid(uid);
                                 movePallet(uid, loc, null, slotId);
                               }}
-                                  className={`border rounded p-1 h-[46px] overflow-hidden cursor-grab ${occupied ? 'bg-emerald-50 border-emerald-300' : 'bg-slate-50 border-slate-200'} relative`}
-                              title={occupied ? `${slotP.lot_number} ${slotP.caliber}` : 'Vacío'}
+                                  className={`border rounded p-1 h-[46px] overflow-hidden cursor-grab relative ${isUsedInCurrentLoad ? 'bg-blue-600 border-blue-800 text-white' : occupied ? 'bg-emerald-50 border-emerald-300' : 'bg-slate-50 border-slate-200'}`}
+                              title={occupied ? `${slotP.lot_number} ${slotP.caliber} ${isUsedInCurrentLoad ? '• UTILIZADO EN ESTE EMBARQUE' : ''}` : 'Vacío'}
                               draggable={!!occupied}
                               onDragStart={occupied ? (e) => onDragStart(e, slotP, { type:'almacen', slotId }) : () => {}}
                             >
-                              <div className="text-[8px] font-bold leading-none text-emerald-900" style={{color:'#000'}}>{slotId}</div>
+                              <div className={`text-[8px] font-bold leading-none ${isUsedInCurrentLoad ? 'text-white' : 'text-emerald-900'}`} style={{color: isUsedInCurrentLoad ? '#fff' : '#000'}}>{slotId}</div>
                               {occupied ? (
                                 <>
-                                  <div className="text-[8px] font-semibold truncate" style={{color:'#000'}}>{slotP.lot_number}</div>
-                                  <div className="text-[9px] leading-none font-black" style={{color:'#000'}}>{slotP.caliber}/{slotP.class_name}</div>
-                                  <div className="text-[9px] font-bold" style={{color:'#065f46'}}>{slotP.boxes}c</div>
+                                  <div className={`text-[8px] font-semibold truncate ${isUsedInCurrentLoad ? 'text-white' : ''}`} style={{color: isUsedInCurrentLoad ? '#fff' : '#000'}}>{slotP.lot_number}</div>
+                                  <div className={`text-[9px] leading-none font-black ${isUsedInCurrentLoad ? 'text-white' : ''}`} style={{color: isUsedInCurrentLoad ? '#fff' : '#000'}}>{slotP.caliber}/{slotP.class_name}</div>
+                                  <div className={`text-[9px] font-bold ${isUsedInCurrentLoad ? 'text-blue-100' : ''}`} style={{color: isUsedInCurrentLoad ? '#dbeafe' : '#065f46'}}>{slotP.boxes}c {isUsedInCurrentLoad ? '• UTILIZADO' : ''}</div>
                                 </>
                               ) : <div className="text-[8px]" style={{color:'#444'}}>vacío</div>}
                             </div>
@@ -1484,6 +1672,7 @@ export default function EmbarquesPage() {
                 </div>
                 {/* Block 16: búsqueda folio/fecha/cliente/lote (conserva, usa fuente única load_history) */}
                 <input placeholder="Buscar folio/fecha/cliente" className="border px-2 py-1 text-xs rounded w-40" onKeyDown={async (e)=>{ if(e.key==='Enter' && e.target.value){ try{ const r=await fetch('/api/load-history'); const all=await r.json(); const q=e.target.value.toLowerCase(); const hit=(all||[]).find(h=> String(h.factura_folio||'').toLowerCase().includes(q) || String(h.customer_name||'').toLowerCase().includes(q) || String(h.load_date||'').includes(q)); if(hit) alert('Encontrado: '+ (hit.factura_folio||hit.id) +' '+hit.customer_name+' '+hit.load_date+' (ver en reportes/cierres para detalle completo)'); }catch(_){} } }} />
+                <button onClick={async ()=>{ try{ const r=await fetch('/api/load-history?limit=5'); const loads=await r.json(); const id = prompt('ID de load (de load_history) para cargar mapa de embarque anterior:'); if(!id) return; const mapRes=await fetch(`/api/trailer-map?loadId=${id}`); const slots=mapRes.ok?await mapRes.json():[]; if(!slots.length){alert('Sin posiciones guardadas para ese load');return;} const newT = Array.from({length:28},()=>null); slots.forEach((s,ii)=>{ if(s.slot_position){ const pos = parseInt(s.slot_position)-1; if(pos>=0&&pos<28) newT[pos]={lot_number:s.lot_number||'L', caliber:s.caliber, class_name:s.class_name, boxes:s.boxes, kilos:s.kilos, uid:'past-'+ii, _origAlmacenSlot:null }; } }); setTrailerSlots(newT); alert('Mapa de embarque anterior cargado para vista previa (solo lectura para documentos).'); }catch(e){alert('No se pudo cargar');} }} className="text-[10px] px-2 py-0.5 border rounded">Cargar embarque anterior</button>
                 <div className="ml-auto flex flex-wrap gap-2 text-xs">
                   <input value={driverName} onChange={e=>setDriverName(e.target.value)} placeholder="Chofer" className="border px-2 py-1 rounded" />
                   <input value={tractoPlates} onChange={e=>setTractoPlates(e.target.value)} placeholder="Placas Tracto" className="border px-2 py-1 rounded" />
@@ -1706,6 +1895,12 @@ export default function EmbarquesPage() {
                   style={{ background: branding?.primary_color || '#0E4A22' }}
                 >📄 Generar Nota de Venta</button>
 
+                <button
+                  onClick={() => { if (trailerPalletsList.length === 0) return; setShowLoadMapModal(true); }}
+                  disabled={trailerPalletsList.length === 0}
+                  className="border px-4 py-2 rounded-xl text-sm font-medium bg-white hover:bg-slate-50"
+                >🗺️ Generar Mapa de Carga</button>
+
                 <button onClick={confirmarCarga} className="bg-emerald-600 px-5 py-2 text-sm rounded-xl text-white font-medium">✓ Confirmar Carga y Guardar</button>
 
                 {/* Block 16: documento transporte fiel (usa templates existentes, no asume CFDI/Carta Porte, respeta datos del embarque) */}
@@ -1872,10 +2067,10 @@ export default function EmbarquesPage() {
           <div className="bg-white rounded-2xl p-6 max-w-sm w-full">
             <div className="font-semibold mb-4">Editar datos de la empacadora</div>
             <div className="space-y-3 text-sm">
-              {['companyName', 'address', 'phone', 'rfc'].map(f => (
+              {['companyName', 'address', 'phone', 'rfc', 'website', 'email'].map(f => (
                 <div key={f}>
-                  <label className="block text-[11px] mb-px">{f}</label>
-                  <input value={empacadora[f]} onChange={e => setEmpacadora({ ...empacadora, [f]: e.target.value })} className="border px-3 py-1.5 w-full rounded" />
+                  <label className="block text-[11px] mb-px">{f === 'website' ? 'Página web' : f === 'email' ? 'Correo' : f}</label>
+                  <input value={empacadora[f] || ''} onChange={e => setEmpacadora({ ...empacadora, [f]: e.target.value })} className="border px-3 py-1.5 w-full rounded" />
                 </div>
               ))}
               <div>
@@ -1926,23 +2121,23 @@ export default function EmbarquesPage() {
                 >
                   ✕
                 </button>
-                {/* HEADER TECAVO + logo panel */}
+                {/* HEADER CORPORATIVO UNIFICADO (usa config centralizada — logo + datos completos para nota, mapa y hoja de venta) */}
                 <div className="flex mb-1" style={{height: 98}}>
                   <div className="flex-1 flex items-center bg-[#C6E08F] border border-[#84a85c] px-2" style={{ background: '#C6E08F' }}>
-                    {empacadora.logoUrl && (
-                      <img src={empacadora.logoUrl} alt="Logo" style={{ maxHeight: '52px', marginRight: '6px' }} />
+                    {(corporateConfig.logo_url || empacadora.logoUrl) && (
+                      <img src={corporateConfig.logo_url || empacadora.logoUrl} alt="Logo" style={{ maxHeight: '52px', marginRight: '6px' }} />
                     )}
                     <div style={{fontSize:'8px', lineHeight:'1.05', wordBreak:'break-word'}}>
-                      <div style={{ fontSize: '13px', fontWeight: 700, color: '#000' }}>TECAVO FRUITS</div>
-                      <div style={{ color: '#000', fontSize: '7.5px' }}>S de RL de CV</div>
-                      <div style={{ fontSize: '7px', color: '#111', lineHeight: '1.0' }}>Km 4.5 Carretera Tacámbaro- Pátzcuaro • C.P 61654 B Testerazo, Michoacán</div>
+                      <div style={{ fontSize: '13px', fontWeight: 700, color: '#000' }}>{corporateConfig.name || empacadora.companyName || 'TECAVO FRUITS'}</div>
+                      <div style={{ color: '#000', fontSize: '7.5px' }}>{corporateConfig.legal_name || 'S de RL de CV'}</div>
+                      <div style={{ fontSize: '7px', color: '#111', lineHeight: '1.0' }}>{corporateConfig.address || empacadora.address} {corporateConfig.sader ? '• SADER '+corporateConfig.sader : ''}</div>
                     </div>
                   </div>
                   <div className="w-[54%] bg-[#E5A84C] px-2 py-1 font-semibold border border-[#c78e3f] text-[7px] leading-[1.0]" style={{ background: '#E5A84C', color: '#000', wordBreak:'break-word' }}>
-                    TECAVO FRUITS S de RL de CV<br />
-                    Km 4.5 Carretera Tacámbaro- Pátzcuaro<br />
-                    C.P 61654 B Testerazo, Tacámbaro Michoacán<br />
-                    www.tecavofruits.com • contacto@tecavofruits.com
+                    {(corporateConfig.name || empacadora.companyName)}<br />
+                    {corporateConfig.address || empacadora.address}<br />
+                    {corporateConfig.web || 'www.tecavofruits.com'} • {corporateConfig.email || 'contacto@tecavofruits.com'}<br />
+                    Tel: {corporateConfig.phone || empacadora.phone || ''}
                   </div>
                 </div>
 
@@ -2149,6 +2344,55 @@ export default function EmbarquesPage() {
                   <button onClick={() => setShowNotaDrawer(false)} className="px-3 py-1 text-sm">Cerrar</button>
                 </div>
               </div>
+          </div>
+        </div>
+      )}
+
+      {/* MAPA DE CARGA MODAL — vista previa imprimible + PDF. Representa exactamente el acomodo del trailer actual */}
+      {showLoadMapModal && (
+        <div onClick={() => setShowLoadMapModal(false)} className="fixed inset-0 bg-black/70 z-[85] flex items-center justify-center p-4">
+          <div onClick={e=>e.stopPropagation()} className="bg-white w-full max-w-[1080px] rounded-2xl overflow-hidden shadow-2xl">
+            <div className="px-5 py-3 bg-emerald-900 text-white flex items-center justify-between text-sm">
+              <span className="font-semibold">🗺️ MAPA DE CARGA — Vista Previa (acomodo exacto del embarque)</span>
+              <button onClick={() => setShowLoadMapModal(false)} className="text-white/90 hover:text-white">✕</button>
+            </div>
+            <div className="p-5">
+              <div className="text-[11px] text-slate-600 mb-2">Datos tomados del tráiler actual. Se conserva la distribución, orden y posiciones registradas.</div>
+              {/* Visual compact trailer map for preview */}
+              <div className="border-4 border-emerald-900 bg-slate-900 p-3 rounded">
+                <div className="text-white text-[10px] mb-1 font-bold tracking-wider">LADO CHOFER — FRENTE</div>
+                <div className="grid grid-cols-2 gap-1 mb-2">
+                  {[0,1].map(side => (
+                    <div key={side} className="grid grid-rows-7 gap-1">
+                      {(trailerSlots.slice(side*14, side*14+14)).map((p, i) => {
+                        const realIdx = side*14 + i;
+                        const num = getSlotNumber(realIdx);
+                        return p ? (
+                          <div key={i} className="bg-emerald-100 text-emerald-950 border border-emerald-700 rounded px-2 py-0.5 text-[9px] leading-tight">
+                            <span className="font-black">#{num}</span> {p.lot_number} {p.caliber} {p.boxes}c {Math.round(p.kilos)}kg
+                          </div>
+                        ) : <div key={i} className="bg-slate-700 text-slate-300 border border-slate-500 rounded px-2 py-0.5 text-[9px]">#{num} vacío</div>;
+                      })}
+                    </div>
+                  ))}
+                </div>
+                <div className="text-center text-white text-[10px] font-bold tracking-[2px] bg-black py-px">PUERTAS DE TERMO</div>
+              </div>
+
+              {/* Legend + totals */}
+              <div className="flex items-center gap-4 mt-3 text-xs">
+                <div className="flex items-center gap-1"><span className="w-3 h-3 inline-block bg-emerald-100 border border-emerald-700"></span> Ocupado</div>
+                <div className="flex items-center gap-1"><span className="w-3 h-3 inline-block bg-slate-700"></span> Disponible</div>
+                <div className="ml-auto font-semibold">Tarimas: {trailerPalletsList.length} • Cajas: {trailerPalletsList.reduce((a,b)=>a+(b.boxes||0),0)} • Kg: {trailerPalletsList.reduce((a,b)=>a+Math.round(b.kilos||0),0)}</div>
+              </div>
+              <div className="text-[10px] text-slate-500 mt-1">Cliente: {selectedCustomer?.customer_name || '—'} | Destino: {selectedCustomer?.destination || '—'} | Folio: {facturaFolio}</div>
+            </div>
+            <div className="p-4 border-t bg-slate-50 flex gap-2">
+              <button onClick={printLoadMap} className="px-4 py-2 bg-white border rounded-lg text-sm font-medium">🖨️ Imprimir (horizontal)</button>
+              <button onClick={downloadLoadMapPDF} className="px-4 py-2 bg-emerald-700 text-white rounded-lg text-sm font-medium">Descargar PDF</button>
+              <button onClick={() => setShowLoadMapModal(false)} className="ml-auto px-4 py-2 text-sm">Cerrar</button>
+            </div>
+            <div className="px-4 pb-3 text-[9px] text-slate-500">Todos los datos provienen del embarque actual. Generar documento no modifica existencias ni el acomodo guardado.</div>
           </div>
         </div>
       )}
