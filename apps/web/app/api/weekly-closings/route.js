@@ -207,7 +207,7 @@ async function calcularCierreIntegral(startDate, endDate) {
     costoVentasPendiente = true;
   }
   costoVentas = parseFloat(costoVentas.toFixed(2));
-  const costoVentasLabel = costoVentasPendiente && costoVentas === 0 ? 'COSTO PENDIENTE DE DETERMINACIÓN' : costoVentas;
+  const costoVentasLabel = costoVentasPendiente && costoVentas === 0 ? 'COSTO PENDIENTE DE DETERMINACIÓN' : String(costoVentas);
 
   const utilidadBruta = calculateUtility(ingresosNetos, { costo_ventas: costoVentas }, 'bruta');
   const margenBruto = calculateMargin(utilidadBruta, ingresosNetos);

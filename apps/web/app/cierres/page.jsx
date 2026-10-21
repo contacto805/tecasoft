@@ -158,6 +158,7 @@ export default function CierresPage() {
       totalEntradasFrutaKg: c.total_entradas_fruta_kg || '',
       totalDesechoKg: c.total_desecho_kg || '',
       totalProcesoKg: c.total_proceso_kg || '',
+      totalFletes: c.total_fletes_dinero || '',
       notes: c.notes || '',
       status: c.status || 'abierto',
       recordedBy: c.recorded_by || '',
