@@ -725,7 +725,8 @@ export default function EmbarquesPage() {
       rfc: corporateConfig.rfc || empacadora.rfc,
       logo_url: effectiveLogo,
       email: corporateConfig.email,
-      web: corporateConfig.web
+      web: corporateConfig.web,
+      primary_color: '#134D29'
     };
     let y = drawCompanyHeader(doc, corpHeader, 15, tplStyle);
 
@@ -1177,56 +1178,60 @@ export default function EmbarquesPage() {
     const html = `
       <html><head><title>Mapa de Carga — ${facturaFolio || ''}</title>
       <style>
-        @media print { @page { size: A4 landscape; margin: 6mm; } }
-        body { font-family: system-ui, Arial, sans-serif; color:#111; margin:0; padding:8px; background:#fff; }
-        .hdr { display:flex; gap:10px; align-items:flex-start; border-bottom:3px solid #0E4A22; padding-bottom:6px; margin-bottom:6px; }
-        .trailer { display:grid; grid-template-columns:1fr 1fr; gap:3px; border:4px solid #0E4A22; background:#0f172a; padding:4px; max-width:980px; }
-        .slot { border:1px solid #166534; background:#dcfce7; padding:3px 4px; font-size:8px; min-height:42px; color:#111; }
-        .slot.empty { background:#f1f5f9; border-color:#94a3b8; color:#475569; }
-        .meta { font-size:10px; margin:4px 0 8px; }
-        .legend { font-size:9px; display:flex; gap:14px; margin-top:6px; }
-        .small { font-size:8px; color:#444; }
+        @media print { @page { size: letter landscape; margin: 12mm; } }
+        body { font-family: Arial, system-ui, sans-serif; color:#17332A; margin:0; padding:0; background:#fff; }
+        .hdr { display:flex; gap:10px; align-items:flex-start; border-bottom:4px solid #134D29; padding-bottom:8px; margin-bottom:8px; }
+        .logo { height:42px; max-width:140px; }
+        .title { font-size:18px; font-weight:800; color:#134D29; }
+        .trailer { display:grid; grid-template-columns:1fr 1fr; gap:4px; border:5px solid #134D29; background:#F3F6F2; padding:6px; max-width:100%; }
+        .slot { border:1px solid #A9CAE6; background:#D9ECFF; padding:4px 5px; font-size:9px; min-height:48px; color:#124D78; }
+        .slot.empty { background:#F3F6F2; border-color:#D9E1DA; color:#607168; }
+        .slot.used::after { content:' Utilizado'; font-size:7px; color:#124D78; font-weight:600; }
+        .meta { font-size:10px; margin:4px 0 6px; color:#17332A; }
+        .legend { font-size:9px; display:flex; gap:16px; margin-top:8px; padding:4px; background:#F3F6F2; border:1px solid #D9E1DA; }
+        .small { font-size:8px; color:#607168; }
+        .corporate { font-size:8px; color:#607168; line-height:1.1; }
       </style></head><body>
         <div class="hdr">
-          ${cLogo ? `<img src="${cLogo}" style="height:40px;max-width:120px;" />` : ''}
+          ${cLogo ? `<img src="${cLogo}" class="logo" />` : '<div style="font-weight:800;font-size:16px;color:#134D29;">TECAVO FRUITS</div>'}
           <div style="flex:1">
-            <div style="font-size:15px;font-weight:800;color:#0E4A22;">${cName}</div>
-            <div style="font-size:9px;">${corp.legal_name || 'Tecavo Fruits S de RL de CV'} • ${cAddr}</div>
-            <div style="font-size:8px;">SADER: ${cSader} • Tel: ${corp.phone || empacadora.phone || ''} • ${cWeb} • ${cEmail}</div>
+            <div style="font-size:14px;font-weight:700;color:#134D29;">${cName}</div>
+            <div class="corporate">${cAddr}</div>
+            <div class="corporate">SADER: ${cSader} • Web: ${cWeb} • Tel: ${corp.phone || empacadora.phone || ''} • ${cEmail}</div>
           </div>
-          <div style="text-align:right;font-size:9px;">
-            <div style="font-weight:700;">MAPA DE CARGA</div>
-            <div>Folio: ${facturaFolio || '—'}</div>
-            <div>${new Date().toLocaleDateString('es-MX')}</div>
+          <div style="text-align:right;">
+            <div class="title">MAPA DE CARGA</div>
+            <div style="font-size:10px;color:#17332A;">Folio: ${facturaFolio || '—'} • ${new Date().toLocaleDateString('es-MX')}</div>
           </div>
         </div>
-        <div class="meta"><b>Cliente:</b> ${selectedCustomer?.customer_name || '—'} → ${selectedCustomer?.destination || '—'} &nbsp; <b>Unidad:</b> ${termoPlates || trailerPlates || '—'} &nbsp; <b>Operador:</b> ${driverName || '—'}</div>
-        <div style="font-weight:700;margin-bottom:4px;">ACOMODO VISUAL DEL TRÁILER (frente = lado chofer; fondo = puertas)</div>
+        <div class="meta"><b>Cliente:</b> ${selectedCustomer?.customer_name || '—'} → ${selectedCustomer?.destination || '—'} &nbsp;|&nbsp; <b>Unidad:</b> ${termoPlates || trailerPlates || '—'} &nbsp;|&nbsp; <b>Placas:</b> ${tractoPlates || ''} / ${termoPlates || ''} &nbsp;|&nbsp; <b>Operador:</b> ${driverName || '—'}</div>
+        <div style="font-weight:700;margin-bottom:4px;font-size:11px;color:#134D29;">ACOMODO EXACTO DEL TRÁILER (FRENTE = lado chofer; PUERTAS = fondo)</div>
         <div class="trailer">
           <div>
-            <div style="background:#0f172a;color:#fff;font-size:8px;padding:1px 4px;">LADO CHOFER</div>
+            <div style="background:#134D29;color:#fff;font-size:8px;padding:1px 4px;text-align:center;">LADO CHOFER — FRENTE</div>
             ${Array.from({length:14}).map((_,i) => {
               const p = trailerSlots[i];
               const num = getSlotNumber(i);
-              return p ? `<div class="slot"><b>Pos ${num}</b> ${p.lot_number} ${p.caliber}/${p.class_name}<br/>${p.boxes}c ${Math.round(p.kilos)}kg ${p.cold_date? '• Frío '+p.cold_date : ''}</div>` : `<div class="slot empty">Pos ${num} — vacío</div>`;
+              return p ? `<div class="slot used"><b>Pos ${num}</b> ${p.lot_number} ${p.caliber}/${p.class_name}<br/>${p.boxes}c ${Math.round(p.kilos)}kg ${p.cold_date? '• Frío '+p.cold_date : ''}</div>` : `<div class="slot empty">Pos ${num} — Disponible</div>`;
             }).join('')}
           </div>
           <div>
-            <div style="background:#0f172a;color:#fff;font-size:8px;padding:1px 4px;">LADO CONTRARIO</div>
+            <div style="background:#134D29;color:#fff;font-size:8px;padding:1px 4px;text-align:center;">LADO CONTRARIO</div>
             ${Array.from({length:14}).map((_,i) => {
               const idx=14+i; const p = trailerSlots[idx];
               const num = getSlotNumber(idx);
-              return p ? `<div class="slot"><b>Pos ${num}</b> ${p.lot_number} ${p.caliber}/${p.class_name}<br/>${p.boxes}c ${Math.round(p.kilos)}kg ${p.cold_date? '• Frío '+p.cold_date : ''}</div>` : `<div class="slot empty">Pos ${num} — vacío</div>`;
+              return p ? `<div class="slot used"><b>Pos ${num}</b> ${p.lot_number} ${p.caliber}/${p.class_name}<br/>${p.boxes}c ${Math.round(p.kilos)}kg ${p.cold_date? '• Frío '+p.cold_date : ''}</div>` : `<div class="slot empty">Pos ${num} — Disponible</div>`;
             }).join('')}
           </div>
         </div>
-        <div style="margin-top:4px;font-size:9px;">PUERTAS DE TERMO (salida de carga)</div>
+        <div style="margin-top:3px;font-size:8px;color:#9E391F;font-weight:600;">PUERTAS DE TERMO (salida de carga)</div>
         <div class="legend">
-          <div><span style="background:#166534;display:inline-block;width:10px;height:10px;border:1px solid #0E4A22;"></span> Ocupado (datos del embarque)</div>
-          <div><span style="background:#f1f5f9;display:inline-block;width:10px;height:10px;border:1px solid #94a3b8;"></span> Disponible</div>
+          <div><span style="background:#D9ECFF;border:1px solid #A9CAE6;display:inline-block;width:12px;height:12px;margin-right:3px;"></span> Utilizado (datos reales del embarque)</div>
+          <div><span style="background:#F3F6F2;border:1px solid #D9E1DA;display:inline-block;width:12px;height:12px;margin-right:3px;"></span> Disponible</div>
         </div>
-        <div style="margin-top:6px;font-size:10px;">Totales: ${totalTar} tarimas • ${totalCajas} cajas • ${totalKg} kg</div>
-        <div class="small">Este mapa reproduce exactamente las posiciones registradas en el módulo de Embarques. Sin inventar ubicaciones.</div>
+        <div style="margin-top:6px;font-size:10px;color:#17332A;">Totales: ${totalTar} tarimas • ${totalCajas} cajas • ${totalKg} kg neto • Espacios disponibles: ${28 - totalTar}</div>
+        <div class="small">Este mapa reproduce EXACTAMENTE las posiciones, orden y orientación guardadas en Embarques. Sin reacomodo ni datos inventados.</div>
+        <div style="margin-top:10px;border-top:1px solid #D9E1DA;padding-top:6px;font-size:8px;color:#607168;display:flex;justify-content:space-between;"><div>TECAVO FRUITS — Mapa de Carga</div><div>Página 1/1</div></div>
       </body></html>`;
     win.document.write(html);
     win.document.close();
@@ -1564,7 +1569,7 @@ export default function EmbarquesPage() {
               </div>
               {/* Leyenda actualizada para resaltar ubicaciones usadas por el embarque actual (azul) */}
               <div className="flex gap-3 text-[9px] mb-1 px-1" style={{color:'#222'}}>
-                <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 bg-blue-600 border border-blue-800"></span> Utilizado en embarque actual</span>
+                <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 bg-[#D9ECFF] border border-[#A9CAE6]"></span> <strong style={{color:'#124D78'}}>Utilizado</strong> (en embarque actual)</span>
                 <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 bg-emerald-50 border border-emerald-300"></span> Ocupado (disponible)</span>
                 <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 bg-slate-50 border border-slate-200"></span> Vacío</span>
               </div>
@@ -1610,8 +1615,8 @@ export default function EmbarquesPage() {
                                 const loc = findPalletByUid(uid);
                                 movePallet(uid, loc, null, slotId);
                               }}
-                                  className={`border rounded p-1 h-[46px] overflow-hidden cursor-grab relative ${isUsedInCurrentLoad ? 'bg-blue-600 border-blue-800 text-white' : occupied ? 'bg-emerald-50 border-emerald-300' : 'bg-slate-50 border-slate-200'}`}
-                              title={occupied ? `${slotP.lot_number} ${slotP.caliber} ${isUsedInCurrentLoad ? '• UTILIZADO EN ESTE EMBARQUE' : ''}` : 'Vacío'}
+                                  className={`border rounded p-1 h-[46px] overflow-hidden cursor-grab relative ${isUsedInCurrentLoad ? 'bg-[#D9ECFF] border-[#A9CAE6] text-[#124D78]' : occupied ? 'bg-emerald-50 border-emerald-300' : 'bg-slate-50 border-slate-200'}`}
+                              title={occupied ? `${slotP.lot_number} ${slotP.caliber} ${isUsedInCurrentLoad ? 'Utilizado EN ESTE EMBARQUE' : ''}` : 'Vacío'}
                               draggable={!!occupied}
                               onDragStart={occupied ? (e) => onDragStart(e, slotP, { type:'almacen', slotId }) : () => {}}
                             >
@@ -1620,7 +1625,7 @@ export default function EmbarquesPage() {
                                 <>
                                   <div className={`text-[8px] font-semibold truncate ${isUsedInCurrentLoad ? 'text-white' : ''}`} style={{color: isUsedInCurrentLoad ? '#fff' : '#000'}}>{slotP.lot_number}</div>
                                   <div className={`text-[9px] leading-none font-black ${isUsedInCurrentLoad ? 'text-white' : ''}`} style={{color: isUsedInCurrentLoad ? '#fff' : '#000'}}>{slotP.caliber}/{slotP.class_name}</div>
-                                  <div className={`text-[9px] font-bold ${isUsedInCurrentLoad ? 'text-blue-100' : ''}`} style={{color: isUsedInCurrentLoad ? '#dbeafe' : '#065f46'}}>{slotP.boxes}c {isUsedInCurrentLoad ? '• UTILIZADO' : ''}</div>
+                                  <div className={`text-[9px] font-bold ${isUsedInCurrentLoad ? 'text-blue-100' : ''}`} style={{color: isUsedInCurrentLoad ? '#dbeafe' : '#065f46'}}>{slotP.boxes}c {isUsedInCurrentLoad ? 'Utilizado' : ''}</div>
                                 </>
                               ) : <div className="text-[8px]" style={{color:'#444'}}>vacío</div>}
                             </div>
@@ -2111,35 +2116,23 @@ export default function EmbarquesPage() {
                 <button onClick={() => setShowNotaDrawer(false)} className="font-semibold text-black hover:text-red-600 text-xl leading-none px-1" aria-label="Cerrar">✕</button>
               </div>
 
-              {/* NOTA VISIBLE PREVIEW CARTA - EXACTO al formato proporcionado */}
-              <div id="nota-preview" className="bg-white mx-auto p-3 relative" style={{ maxWidth: '780px', minHeight: '980px', margin: '6px auto', boxShadow: '0 0 1px #ddd', fontSize: '13px', border: '1px solid #ccc', color: '#000', backgroundImage: notaSvgTemplateUrl ? `url(${notaSvgTemplateUrl})` : `linear-gradient(rgba(255,255,255,0.92), rgba(255,255,255,0.92)), url(${logoPatternBg})`, backgroundRepeat: notaSvgTemplateUrl ? 'no-repeat' : 'repeat', backgroundSize: notaSvgTemplateUrl ? 'contain' : '88px auto', backgroundPosition: 'center top' }}>
-                {/* Botón cerrar esquina superior derecha */}
-                <button 
-                  onClick={() => setShowNotaDrawer(false)} 
-                  className="absolute top-2 right-2 text-xl font-extrabold text-black hover:text-red-600 bg-white border border-gray-300 rounded-full w-7 h-7 flex items-center justify-center shadow z-50 leading-none"
-                  title="Cerrar nota"
-                >
-                  ✕
-                </button>
-                {/* HEADER CORPORATIVO UNIFICADO (usa config centralizada — logo + datos completos para nota, mapa y hoja de venta) */}
-                <div className="flex mb-1" style={{height: 98}}>
-                  <div className="flex-1 flex items-center bg-[#C6E08F] border border-[#84a85c] px-2" style={{ background: '#C6E08F' }}>
-                    {(corporateConfig.logo_url || empacadora.logoUrl) && (
-                      <img src={corporateConfig.logo_url || empacadora.logoUrl} alt="Logo" style={{ maxHeight: '52px', marginRight: '6px' }} />
-                    )}
-                    <div style={{fontSize:'8px', lineHeight:'1.05', wordBreak:'break-word'}}>
-                      <div style={{ fontSize: '13px', fontWeight: 700, color: '#000' }}>{corporateConfig.name || empacadora.companyName || 'TECAVO FRUITS'}</div>
-                      <div style={{ color: '#000', fontSize: '7.5px' }}>{corporateConfig.legal_name || 'S de RL de CV'}</div>
-                      <div style={{ fontSize: '7px', color: '#111', lineHeight: '1.0' }}>{corporateConfig.address || empacadora.address} {corporateConfig.sader ? '• SADER '+corporateConfig.sader : ''}</div>
+              {/* NOTA VISIBLE PREVIEW CARTA - EXACTO al id=\"nota-preview\" className=\"bg-white mx-auto p-4 relative\" style={{ maxWidth: "780px", minHeight: "980px", margin: "6px auto", boxShadow: "0 0 1px #ddd", fontSize: "12px", border: "1px solid #D9E1DA", color: "#17332A", background: "#fff" }}>
+                <button onClick={() => setShowNotaDrawer(false)} className=\"absolute top-2 right-2 text-xl font-extrabold text-black hover:text-red-600 bg-white border border-gray-300 rounded-full w-7 h-7 flex items-center justify-center shadow z-50 leading-none\" title=\"Cerrar nota\">✕</button>
+                <div style={{borderBottom:"4px solid #134D29",paddingBottom:"6px",marginBottom:"8px"}}>
+                  <div style={{display:"flex",gap:"10px",alignItems:"flex-start"}}>
+                    {(corporateConfig.logo_url || empacadora.logoUrl) ? <img src={corporateConfig.logo_url || empacadora.logoUrl} alt=\"Logo\" style={{maxHeight:"42px",maxWidth:"130px"}} /> : <div style={{fontWeight:800,fontSize:16px,color:"#134D29"}}>TECAVO FRUITS</div>}
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:"14px",fontWeight:800,color:"#134D29"}}>{corporateConfig.name || empacadora.companyName || "TECAVO FRUITS"}</div>
+                      <div style={{fontSize:"8px",color:"#607168"}}>{corporateConfig.legal_name || "Tecavo Fruits S de RL de CV"}</div>
+                      <div style={{fontSize:"8px",color:"#17332A"}}>{corporateConfig.address || empacadora.address}</div>
+                      <div style={{fontSize:"7.5px",color:"#607168"}}>SADER: {corporateConfig.sader || saderRegistro} • {corporateConfig.web || empacadora.website} • Tel: {corporateConfig.phone || empacadora.phone} • {corporateConfig.email || empacadora.email}</div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:"16px",fontWeight:800,color:"#134D29"}}>NOTA DE VENTA</div>
+                      <div style={{fontSize:"10px",color:"#17332A"}}>Folio: {facturaFolio || "—"} • {new Date().toLocaleDateString("es-MX")}</div>
                     </div>
                   </div>
-                  <div className="w-[54%] bg-[#E5A84C] px-2 py-1 font-semibold border border-[#c78e3f] text-[7px] leading-[1.0]" style={{ background: '#E5A84C', color: '#000', wordBreak:'break-word' }}>
-                    {(corporateConfig.name || empacadora.companyName)}<br />
-                    {corporateConfig.address || empacadora.address}<br />
-                    {corporateConfig.web || 'www.tecavofruits.com'} • {corporateConfig.email || 'contacto@tecavofruits.com'}<br />
-                    Tel: {corporateConfig.phone || empacadora.phone || ''}
-                  </div>
-                </div>
+                </div>  </div>
 
                 {/* TOP INFO TABLE - CajAS PLACAS FACTURA SADER */}
                 <table className="w-full mb-px border border-[#704E23]" style={{ borderCollapse: 'collapse', fontSize: '9px' }}>

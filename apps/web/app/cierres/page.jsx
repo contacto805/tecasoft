@@ -605,11 +605,7 @@ export default function CierresPage() {
                             <p className="text-xs text-slate-500">Resultado</p>
                             <p className={`font-bold text-lg ${esUtil ? 'text-emerald-700' : 'text-red-700'}`}>{fmt(utilidad)}</p>
                           </div>
-                          <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
-                            c.status === 'cerrado' ? 'bg-slate-100 text-slate-600' : 
-                            c.status === 'aprobado' ? 'bg-emerald-100 text-emerald-700' :
-                            c.status === 'pendiente_aprobacion' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
-                          }`}>
+                          <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${c.status === 'cerrado' ? 'bg-slate-100 text-slate-600' : c.status === 'aprobado' ? 'bg-emerald-100 text-emerald-700' : c.status === 'pendiente_aprobacion' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
                             {c.estado_conciliacion || c.status || 'borrador'}
                           </span>
                           <div className="flex items-center gap-2">
@@ -745,7 +741,7 @@ export default function CierresPage() {
                         <div className="text-xs mt-1">Cobros reales - Pagos reales (no devengo)</div>
                       </div>
                       <div className="bg-emerald-50 border p-4 rounded-xl">
-                        <div className="text-xs uppercase tracking-widest text-emerald-600">Capital de Trabajo (aprox)</div>
+                        <div className="text-xs uppercase tracking-widest text-emerald-600">Capital de Trabajo (aprox.)</div>
                         <div className="text-3xl font-black mt-1">{fmt((integralData?.inventarios?.fruta_final||0) + (integralData?.inventarios?.materiales_final||0) + (integralData?.bancos_cobranza?.cobros_clientes||0))}</div>
                         <div className="text-xs mt-1">Inventario fruta + materiales + CxC (no es efectivo)</div>
                       </div>
