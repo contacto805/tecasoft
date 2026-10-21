@@ -1,4 +1,5 @@
 'use client';
+// refined startup for clean preview
 
 import "./globals.css";
 import "@/utils/route-change-detector";

@@ -2116,24 +2116,6 @@ export default function EmbarquesPage() {
                 <button onClick={() => setShowNotaDrawer(false)} className="font-semibold text-black hover:text-red-600 text-xl leading-none px-1" aria-label="Cerrar">✕</button>
               </div>
 
-              {/* NOTA VISIBLE PREVIEW CARTA - EXACTO al id=\"nota-preview\" className=\"bg-white mx-auto p-4 relative\" style={{ maxWidth: "780px", minHeight: "980px", margin: "6px auto", boxShadow: "0 0 1px #ddd", fontSize: "12px", border: "1px solid #D9E1DA", color: "#17332A", background: "#fff" }}>
-                <button onClick={() => setShowNotaDrawer(false)} className=\"absolute top-2 right-2 text-xl font-extrabold text-black hover:text-red-600 bg-white border border-gray-300 rounded-full w-7 h-7 flex items-center justify-center shadow z-50 leading-none\" title=\"Cerrar nota\">✕</button>
-                <div style={{borderBottom:"4px solid #134D29",paddingBottom:"6px",marginBottom:"8px"}}>
-                  <div style={{display:"flex",gap:"10px",alignItems:"flex-start"}}>
-                    {(corporateConfig.logo_url || empacadora.logoUrl) ? <img src={corporateConfig.logo_url || empacadora.logoUrl} alt=\"Logo\" style={{maxHeight:"42px",maxWidth:"130px"}} /> : <div style={{fontWeight:800,fontSize:16px,color:"#134D29"}}>TECAVO FRUITS</div>}
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:"14px",fontWeight:800,color:"#134D29"}}>{corporateConfig.name || empacadora.companyName || "TECAVO FRUITS"}</div>
-                      <div style={{fontSize:"8px",color:"#607168"}}>{corporateConfig.legal_name || "Tecavo Fruits S de RL de CV"}</div>
-                      <div style={{fontSize:"8px",color:"#17332A"}}>{corporateConfig.address || empacadora.address}</div>
-                      <div style={{fontSize:"7.5px",color:"#607168"}}>SADER: {corporateConfig.sader || saderRegistro} • {corporateConfig.web || empacadora.website} • Tel: {corporateConfig.phone || empacadora.phone} • {corporateConfig.email || empacadora.email}</div>
-                    </div>
-                    <div style={{textAlign:"right"}}>
-                      <div style={{fontSize:"16px",fontWeight:800,color:"#134D29"}}>NOTA DE VENTA</div>
-                      <div style={{fontSize:"10px",color:"#17332A"}}>Folio: {facturaFolio || "—"} • {new Date().toLocaleDateString("es-MX")}</div>
-                    </div>
-                  </div>
-                </div>  </div>
-
                 {/* TOP INFO TABLE - CajAS PLACAS FACTURA SADER */}
                 <table className="w-full mb-px border border-[#704E23]" style={{ borderCollapse: 'collapse', fontSize: '9px' }}>
                   <thead>
@@ -2235,7 +2217,6 @@ export default function EmbarquesPage() {
                   </div>
                 </div>
               <div className="mt-7 text-center text-[11px] font-semibold" style={{color:'#000'}}>Firma Responsable • {empacadora.companyName}</div>
-            </div>
 
             {/* SECCIÓN EDITAR: precios + cualquier dato. PRECIO UN × CAJAS = TOTAL. Suma TOTAL al pie de columna */}
               <div className="p-4 border-t bg-slate-50">
