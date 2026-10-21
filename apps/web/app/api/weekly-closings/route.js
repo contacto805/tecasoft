@@ -187,24 +187,27 @@ async function calcularCierreIntegral(startDate, endDate) {
   const ingresosNetosRes = await calculateNetIncome({ weekStart, weekEnd });
   const ingresosNetos = ingresosNetosRes.ingreso_neto || 0;
 
-  // Costo de ventas via motor (histórico por lote)
+  // Costo de ventas via motor (histórico por lote) - NUNCA estimado 65%
+  // Si no hay datos suficientes para calcular costo real, se marca explícitamente como PENDIENTE
   let costoVentas = 0;
+  let costoVentasPendiente = false;
   try {
     const loads = await sql`SELECT lot_id, total_kg FROM load_details ld JOIN load_history lh ON lh.id=ld.load_id WHERE lh.load_date BETWEEN ${weekStart} AND ${weekEnd} LIMIT 200`;
     for (const l of loads) {
       if (l.lot_id) {
         const c = await calculateIntegralLotCost(l.lot_id);
-        if (c && c.costo_kg_comercializable) {
+        if (c && c.costo_kg_comercializable > 0) {
           costoVentas += (toNum(l.total_kg) || 0) * c.costo_kg_comercializable;
+        } else {
+          costoVentasPendiente = true;
         }
       }
     }
   } catch (_) {
-    // fallback
-    const fb = await sql`SELECT COALESCE(SUM(total_amount),0) as t FROM load_history WHERE load_date BETWEEN ${weekStart} AND ${weekEnd}`;
-    costoVentas = parseFloat(fb[0]?.t || 0) * 0.65;
+    costoVentasPendiente = true;
   }
   costoVentas = parseFloat(costoVentas.toFixed(2));
+  const costoVentasLabel = costoVentasPendiente && costoVentas === 0 ? 'COSTO PENDIENTE DE DETERMINACIÓN' : costoVentas;
 
   const utilidadBruta = calculateUtility(ingresosNetos, { costo_ventas: costoVentas }, 'bruta');
   const margenBruto = calculateMargin(utilidadBruta, ingresosNetos);
@@ -266,9 +269,12 @@ async function calcularCierreIntegral(startDate, endDate) {
     rentabilidad: {
       ingresos_netos: ingresosNetos,
       costo_ventas: costoVentas,
+      costo_ventas_label: costoVentasLabel,
+      costo_ventas_pendiente: costoVentasPendiente,
       utilidad_bruta: utilidadBruta,
       margen_bruto: margenBruto || 0,
-      fuente: "financial-engine (centralizado V9)",
+      fuente: "financial-engine (centralizado V9) - sin estimaciones automáticas",
+      nota: costoVentasPendiente ? 'Algunos costos de venta usan costo histórico real; faltan datos para lotes sin costo calculado.' : null
     },
     conciliacion: {
       comparaciones: conc,

@@ -8,12 +8,14 @@ import { drawCompanyHeader } from '@/lib/company-header';
 import * as XLSX from 'xlsx';
 
 const TABS = [
-  { id: 'produccion', label: '1. PRODUCCIÓN' },
-  { id: 'inventarios', label: '2. INVENTARIOS' },
-  { id: 'costos', label: '3. COSTOS Y GASTOS' },
-  { id: 'bancos', label: '4. BANCOS Y COBRANZA' },
-  { id: 'rentabilidad', label: '5. RENTABILIDAD' },
-  { id: 'conciliacion', label: '6. CONCILIACIÓN' },
+  { id: 'resumen', label: '1. RESUMEN EJECUTIVO' },
+  { id: 'produccion', label: '2. PRODUCCIÓN' },
+  { id: 'inventarios', label: '3. INVENTARIOS' },
+  { id: 'ingresos', label: '4. INGRESOS Y VENTAS' },
+  { id: 'costos', label: '5. COSTOS Y GASTOS' },
+  { id: 'bancos', label: '6. BANCOS Y TESORERÍA' },
+  { id: 'rentabilidad', label: '7. RENTABILIDAD (CONTABLE + GERENCIAL)' },
+  { id: 'conciliacion', label: '8. CONCILIACIONES' },
 ];
 
 const fmt = (n) =>
@@ -82,8 +84,8 @@ export default function CierresPage() {
   const [selected, setSelected] = useState(null);
   const [isEditable, setIsEditable] = useState(false);
 
-  // V8 - 6 tabs + integral data
-  const [activeTab, setActiveTab] = useState('produccion');
+  // Reestructurado - 8 secciones (formato integral + distinción contable/origen)
+  const [activeTab, setActiveTab] = useState('resumen');
   const [integralData, setIntegralData] = useState(null);
   const [conciliacionStatus, setConciliacionStatus] = useState('borrador');
 
@@ -725,9 +727,36 @@ export default function CierresPage() {
                 </div>
               </div>
 
-              {/* CONTENIDO DE LAS 6 PESTAÑAS */}
+              {/* CONTENIDO DE LAS 8 SECCIONES (nuevo formato integral) */}
               <div className="pt-2 min-h-[420px]">
-                {/* 1. PRODUCCIÓN */}
+                {/* 1. RESUMEN EJECUTIVO - Contable + Flujo + Capital de trabajo */}
+                {activeTab === 'resumen' && (
+                  <div className="space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="bg-white border p-4 rounded-xl">
+                        <div className="text-xs uppercase tracking-widest text-slate-500">Utilidad Contable (Semana Operación)</div>
+                        <div className="text-3xl font-black mt-1">{fmt(integralData?.rentabilidad?.utilidad_bruta || 0)}</div>
+                        <div className="text-xs mt-1">Ventas reconocidas - Costo de ventas (devengo)</div>
+                      </div>
+                      <div className="bg-white border p-4 rounded-xl">
+                        <div className="text-xs uppercase tracking-widest text-slate-500">Flujo de Efectivo Semana</div>
+                        <div className="text-3xl font-black mt-1">{fmt((integralData?.bancos_cobranza?.abonos_banco||0) - (integralData?.bancos_cobranza?.cargos_banco||0))}</div>
+                        <div className="text-xs mt-1">Cobros reales - Pagos reales (no devengo)</div>
+                      </div>
+                      <div className="bg-emerald-50 border p-4 rounded-xl">
+                        <div className="text-xs uppercase tracking-widest text-emerald-600">Capital de Trabajo (aprox)</div>
+                        <div className="text-3xl font-black mt-1">{fmt((integralData?.inventarios?.fruta_final||0) + (integralData?.inventarios?.materiales_final||0) + (integralData?.bancos_cobranza?.cobros_clientes||0))}</div>
+                        <div className="text-xs mt-1">Inventario fruta + materiales + CxC (no es efectivo)</div>
+                      </div>
+                    </div>
+                    <div className="text-xs text-slate-500">El cierre explica dónde está el dinero: utilidad contable ≠ flujo ≠ capital de trabajo. Fruta en cámara es activo, no pérdida.</div>
+                    {integralData?.rentabilidad?.costo_ventas_pendiente && (
+                      <div className="p-3 bg-amber-50 border border-amber-200 rounded text-sm text-amber-700">⚠ {integralData?.rentabilidad?.costo_ventas_label || 'COSTO PENDIENTE DE DETERMINACIÓN'} — Algunos lotes vendidos carecen de costo histórico calculado. No se usaron estimaciones automáticas.</div>
+                    )}
+                  </div>
+                )}
+
+                {/* 2. PRODUCCIÓN (renumerada) */}
                 {activeTab === 'produccion' && (
                   <div className="space-y-4">
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -804,13 +833,40 @@ export default function CierresPage() {
                   </div>
                 )}
 
-                {/* 5. RENTABILIDAD */}
+                {/* 4. INGRESOS Y VENTAS (nuevo bloque) */}
+                {activeTab === 'ingresos' && (
+                  <div className="space-y-3 text-sm">
+                    <div className="font-semibold">Ventas Reconocidas (load_history - fruta empacada) + Ventas Proceso/Desecho (separadas)</div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-white border p-3 rounded">Cargas (empacado) ${parseFloat(integralData?.total_cargas_dinero || 0).toFixed(2)} / {parseFloat(integralData?.total_cargas_kg || 0).toFixed(0)} kg</div>
+                      <div className="bg-white border p-3 rounded">Proceso ${parseFloat(integralData?.total_ventas_proceso_dinero || 0).toFixed(2)} • Desecho ${parseFloat(integralData?.total_ventas_desecho_dinero || 0).toFixed(2)}</div>
+                    </div>
+                    <div className="text-xs">Proceso y Desecho se mantienen SEPARADOS. No se suman a ventas de fruta empacada. Merma física no genera ingreso.</div>
+                  </div>
+                )}
+
+                {/* 7. RENTABILIDAD - Distinción obligatoria: Contable (operación) vs Gerencial (semana de origen del lote) */}
                 {activeTab === 'rentabilidad' && (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="bg-white p-4 border rounded"><div>Ingresos Netos Reconocidos</div><div className="text-3xl font-black">{(integralData?.rentabilidad?.ingresos_netos || 0).toFixed(2)}</div></div>
-                    <div className="bg-white p-4 border rounded"><div>Costo de Ventas</div><div className="text-3xl font-black text-red-700">{(integralData?.rentabilidad?.costo_ventas || 0).toFixed(2)}</div></div>
-                    <div className="bg-emerald-50 p-4 border rounded"><div>Utilidad Bruta</div><div className="text-3xl font-black text-emerald-700">{(integralData?.rentabilidad?.utilidad_bruta || 0).toFixed(2)}</div></div>
-                    <div className="text-xs col-span-3">Costo de tarimas vendidas usa costo histórico de producción. Fruta en inventario no se carga a costo de ventas.</div>
+                  <div className="space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Contable */}
+                      <div className="bg-white border p-4 rounded-xl">
+                        <div className="uppercase text-xs tracking-widest text-slate-500 mb-1">RENTABILIDAD CONTABLE (Semana de Operación / Reconocimiento)</div>
+                        <div>Ingresos netos: <span className="font-bold">{(integralData?.rentabilidad?.ingresos_netos || 0).toFixed(2)}</span></div>
+                        <div>Costo de ventas: <span className="font-bold text-red-700">{(integralData?.rentabilidad?.costo_ventas || 0).toFixed(2)} {integralData?.rentabilidad?.costo_ventas_pendiente ? '(PENDIENTE DE DETERMINACIÓN)' : ''}</span></div>
+                        <div className="mt-2 text-xl font-black">Utilidad Bruta: {(integralData?.rentabilidad?.utilidad_bruta || 0).toFixed(2)}</div>
+                        <div className="text-[10px] mt-2 text-slate-500">Se registra en la semana en que ocurrió la venta/embarque (load_date). No duplica con origen.</div>
+                      </div>
+                      {/* Gerencial por origen */}
+                      <div className="bg-emerald-50 border p-4 rounded-xl">
+                        <div className="uppercase text-xs tracking-widest text-emerald-600 mb-1">RENTABILIDAD GERENCIAL (Semana de Origen del Lote)</div>
+                        <div className="text-sm">Los lotes de esta semana de producción muestran su resultado definitivo cuando se venden (aunque la venta sea en semana posterior).</div>
+                        <div className="mt-2 text-xs">Costo histórico lote → venta posterior actualiza indicadores de su semana de origen.</div>
+                        <div className="mt-3 text-xs bg-white p-2 rounded">Fuente: lot.date / production_date + load_history atribuido por tarima/lote original (sin promedio general cuando hay datos por partida).</div>
+                        {integralData?.rentabilidad?.costo_ventas_pendiente && <div className="mt-2 text-amber-700 text-xs">{integralData?.rentabilidad?.costo_ventas_label}</div>}
+                      </div>
+                    </div>
+                    <div className="text-xs text-slate-500">Una misma venta de tarimas de 3 semanas diferentes distribuye el ingreso y el costo histórico a cada semana de origen correspondiente. No se duplican los importes en reportes consolidados.</div>
                   </div>
                 )}
 
