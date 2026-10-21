@@ -100,26 +100,33 @@ export async function POST(request) {
     const user = await getSessionUser();
     const creadoPor = body.creado_por || user?.name || user?.email || 'usuario';
 
-    // Validate required
-    if (!body.vehiculo_id && !body.vehiculo_nombre) {
+    // Validate required - special handling for "entrega de dinero / vale" from mobile APK
+    const isEntregaDinero = (body.tipo_registro === 'entrega_dinero') || (!body.litros && body.importe_ticket && body.corredor_nombre);
+    if (!body.vehiculo_id && !body.vehiculo_nombre && !isEntregaDinero) {
       return NextResponse.json({ error: 'Vehículo requerido' }, { status: 400 });
     }
     if (!body.corredor_nombre && !body.corredor_id) {
       return NextResponse.json({ error: 'Corredor requerido' }, { status: 400 });
     }
-    const litros = parseFloat(body.litros);
-    const precio = parseFloat(body.precio_litro);
-    const importeTicket = parseFloat(body.importe_ticket);
-    if (!litros || litros <= 0) return NextResponse.json({ error: 'Litros debe ser mayor a 0' }, { status: 400 });
-    if (!precio || precio <= 0) return NextResponse.json({ error: 'Precio por litro debe ser mayor a 0' }, { status: 400 });
-    if (!importeTicket || importeTicket < 0) return NextResponse.json({ error: 'Importe ticket requerido' }, { status: 400 });
+    const litros = parseFloat(body.litros) || 0;
+    const precio = parseFloat(body.precio_litro) || 0;
+    const importeTicket = parseFloat(body.importe_ticket) || 0;
+    if (!isEntregaDinero) {
+      if (litros <= 0) return NextResponse.json({ error: 'Litros debe ser mayor a 0' }, { status: 400 });
+      if (precio <= 0) return NextResponse.json({ error: 'Precio por litro debe ser mayor a 0' }, { status: 400 });
+    }
+    if (importeTicket < 0) return NextResponse.json({ error: 'Importe requerido' }, { status: 400 });
 
     // Generate folio server side
     const folioData = await generateUniqueFolio();
 
     // Compute server side
-    const importeCalculado = Math.round(litros * precio * 100) / 100;
-    const diferencia = Math.round((importeCalculado - importeTicket) * 100) / 100;
+    let importeCalculado = Math.round(litros * precio * 100) / 100;
+    let diferencia = Math.round((importeCalculado - importeTicket) * 100) / 100;
+    if (isEntregaDinero) {
+      importeCalculado = importeTicket;
+      diferencia = 0;
+    }
 
     // Get vehicle info
     let vName = body.vehiculo_nombre || '';
@@ -166,7 +173,8 @@ export async function POST(request) {
         motivo_viaje, observaciones,
         comprobante_url, odometro_foto_url,
         estatus, creado_por, creado_en, version_registro,
-        documentacion_completa, estado_documental
+        documentacion_completa, estado_documental,
+        nombre_entregador, firma_corredor, tipo_registro
       ) VALUES (
         ${folioData.folio}, ${folioData.folio_anio}, ${folioData.folio_consecutivo},
         ${body.fecha_carga || new Date().toISOString().slice(0,10)}, ${body.hora_carga || null},
@@ -179,10 +187,11 @@ export async function POST(request) {
         ${body.numero_ticket || null}, ${body.numero_factura || null}, ${body.metodo_pago || 'efectivo'},
         ${body.ruta_origen || null}, ${body.ruta_destino || null}, ${body.huerta_id ? parseInt(body.huerta_id) : null},
         ${body.productor_id ? parseInt(body.productor_id) : null}, ${body.lote_id ? parseInt(body.lote_id) : null}, ${body.orden_corte_id ? parseInt(body.orden_corte_id) : null},
-        ${body.motivo_viaje || null}, ${body.observaciones || null},
+        ${body.motivo_viaje || null}, ${body.observaciones || (isEntregaDinero ? 'Entrega de dinero / vale desde APK móvil' : null)},
         ${body.comprobante_url || null}, ${body.odometro_foto_url || null},
-        ${body.estatus || 'borrador'}, ${creadoPor}, CURRENT_TIMESTAMP, 1,
-        false, ${body.numero_factura ? 'PENDIENTE_MULTIPLE' : 'PENDIENTE_TOTAL'}
+        ${body.estatus || 'pendiente'}, ${creadoPor}, CURRENT_TIMESTAMP, 1,
+        false, ${body.numero_factura ? 'PENDIENTE_MULTIPLE' : 'PENDIENTE_TOTAL'},
+        ${body.nombre_entregador || null}, ${body.firma_corredor || null}, ${body.tipo_registro || (isEntregaDinero ? 'entrega_dinero' : 'carga')}
       ) RETURNING *
     `;
 

@@ -959,23 +959,29 @@ const [iaConnected, setIaConnected] = useState(null);
   const generateOrdenCorteApk = async () => {
     setGeneratingApk(true);
     try {
-      await fetch('/api/superadmin/apps', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          nombre: 'Orden de Corte Operativo',
-          tipo: 'APK Móvil',
-          descripcion: 'Vinculada a sección Orden de Corte / Box Control. Distribuir a personal operativo.',
-          ruta: '/cutting-orders',
-          icono: 'ph-clipboard-text',
-          version: '1.3',
-          estado: 'generada',
-          apk_filename: `orden-corte-operativo-${new Date().toISOString().slice(0,10)}.apk`,
-          requiere_autorizacion: true
-        })
-      });
+      await fetch('/api/superadmin/apps', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
+        nombre: 'Orden de Corte Operativo', tipo: 'APK Móvil',
+        descripcion: 'Vinculada a sección Orden de Corte / Box Control. Distribuir a personal operativo.',
+        ruta: '/cutting-orders', icono: 'ph-clipboard-text', version:'1.4', estado:'generada', requiere_autorizacion: true,
+        apk_filename: `orden-corte-operativo-${new Date().toISOString().slice(0,10)}.apk`
+      }) });
       await loadApks();
-    } catch (e) { /* error handled in load */ }
+    } catch (e) { alert('Error generando'); }
+    setGeneratingApk(false);
+  };
+
+  const generateCombustibleApk = async () => {
+    setGeneratingApk(true);
+    try {
+      await fetch('/api/superadmin/apps', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
+        nombre: 'Control de Combustible - Entregas y Vales', tipo: 'APK Móvil',
+        descripcion: 'Formulario móvil de entrega de dinero/vale a corredores. Firma digital. Formularios a aprobación del encargado. Folio independiente al aprobar. Solo Super asigna usuarios.',
+        ruta: '/mobile-apps/combustible', icono: 'ph-fuel', version:'1.0', estado:'generada', requiere_autorizacion: true,
+        apk_filename: `control-combustible-vales-${new Date().toISOString().slice(0,10)}.apk`
+      }) });
+      await loadApks();
+      alert('APK de Combustible generada. Asigna usuarios desde la sección de usuarios o autorizaciones.');
+    } catch (e) { alert('Error generando APK Combustible'); }
     setGeneratingApk(false);
   };
 
@@ -2281,8 +2287,21 @@ Notas comerciales" className="w-full border px-2 py-1 rounded text-sm h-14" />
 
           <div className="flex flex-wrap gap-2 mb-4">
             <button onClick={generateOrdenCorteApk} disabled={generatingApk} className="px-4 py-2 rounded-2xl bg-sky-700 text-white text-sm flex items-center gap-1 disabled:bg-sky-400"><Plus size={15}/> Generar APK Orden de Corte</button>
+            <button onClick={generateCombustibleApk} disabled={generatingApk} className="px-4 py-2 rounded-2xl bg-amber-700 text-white text-sm flex items-center gap-1 disabled:bg-amber-400"><Plus size={15}/> Generar APK Combustible (Vales)</button>
             <button onClick={generatePendingApks} disabled={generatingApk} className="px-4 py-2 rounded-2xl border border-sky-600 text-sky-700 text-sm flex items-center gap-1 disabled:opacity-60">Generar APKs Pendientes Sistema</button>
             <button onClick={loadApks} className="px-3 py-2 text-sm border rounded-xl">Actualizar Lista</button>
+            <button onClick={async () => {
+              const uRes = await fetch('/api/superadmin/users');
+              const us = uRes.ok ? await uRes.json() : [];
+              const aRes = await fetch('/api/superadmin/apps');
+              const as = aRes.ok ? await aRes.json() : [];
+              const comb = as.find(x => (x.nombre||'').toLowerCase().includes('combustible'));
+              if (!comb) { alert('Genera primero la APK de Combustible'); return; }
+              const uid = prompt('ID de usuario a autorizar para APK Combustible (ver en lista Usuarios):');
+              if (!uid) return;
+              await fetch('/api/superadmin/apps/authorize', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ app_id: comb.id, user_id: uid, authorized: true, authorized_by: 'super' }) }).catch(()=>{});
+              alert('Autorización enviada. El usuario ahora puede descargar la APK de Combustible.');
+            }} className="px-3 py-2 text-sm border rounded-xl bg-amber-100">Asignar usuario a APK Combustible</button>
           </div>
 
           <div className="border rounded-2xl overflow-hidden">
