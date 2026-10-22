@@ -1,5 +1,5 @@
 'use client';
-// refined startup for clean preview
+// polished startup flow for clean preview loads
 
 import "./globals.css";
 import "@/utils/route-change-detector";
