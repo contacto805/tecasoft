@@ -711,166 +711,189 @@ export default function EmbarquesPage() {
   const exportNotaPDF = async () => {
     const { default: jsPDF } = await import('jspdf');
     const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
-    const w = 612;
 
-    // Use assignment resolve link to get correct template per module/output
+    // Letter size: 612 x 792 pt. Margins 10mm (~28pt). Usable area inside.
+    const PAGE_W = 612;
+    const PAGE_H = 792;
+    const MARGIN = 28;
+    const CONTENT_W = PAGE_W - (MARGIN * 2);
+
+    // Resolve logo from branding / corporate (official TECAVO logo)
     let tplStyle = null;
     try { const rr=await fetch('/api/document-templates/resolve?module=embarques&output_type=nota'); tplStyle=await rr.json(); }catch(_){}
-    const effectiveLogo = tplStyle?.logo_url || corporateConfig.logo_url || empacadora.logoUrl || branding?.logo_url || branding?.logoUrl;
-    const corpHeader = {
-      ...branding,
-      companyName: corporateConfig.name || empacadora.companyName || branding?.companyName,
-      address: corporateConfig.address || empacadora.address,
-      phone: corporateConfig.phone || empacadora.phone,
-      rfc: corporateConfig.rfc || empacadora.rfc,
-      logo_url: effectiveLogo,
-      email: corporateConfig.email,
-      web: corporateConfig.web,
-      primary_color: '#134D29'
-    };
-    let y = drawCompanyHeader(doc, corpHeader, 15, tplStyle);
+    const effectiveLogo = tplStyle?.logo_url || corporateConfig.logo_url || empacadora.logoUrl || branding?.logo_url || branding?.logoUrl || 'https://uploads.appgen.com/220e1bc6-4350-453d-b566-60b6f97e03e9/d0677347-fb2e-4124-b72d-5c2c58b3320c.png';
 
-    // Custom design keeps its panels after header if wanted, or continue — keep the visual flow
-    y = Math.max(y + 10, 100);
+    // Wait for logo to load before generating PDF
+    let logoData = null;
+    if (effectiveLogo) {
+      try {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        await new Promise((resolve) => {
+          img.onload = () => {
+            try {
+              const c = document.createElement('canvas');
+              c.width = img.width; c.height = img.height;
+              const ctx = c.getContext('2d');
+              ctx.drawImage(img, 0, 0);
+              logoData = c.toDataURL('image/png');
+            } catch(e){}
+            resolve();
+          };
+          img.onerror = () => resolve();
+          img.src = effectiveLogo;
+          setTimeout(resolve, 1200);
+        });
+      } catch(e){}
+    }
 
-    // Retain original visual header panels underneath the uniform one (for complete compatibility)
-    doc.setFillColor(198, 224, 143);
-    doc.rect(20, Math.max(y-70, 28), 220, 72, 'F');
-    doc.setFillColor(229, 168, 76);
-    doc.rect(243, Math.max(y-70, 28), 349, 72, 'F');
+    // === CLEAN WHITE DESIGN - Letter size, isolated from app theme ===
+    let y = MARGIN;
 
+    // White background enforced
+    doc.setFillColor(255,255,255);
+    doc.rect(0, 0, PAGE_W, PAGE_H, 'F');
+
+    // Header: Logo + Company + Folio/Date (compact)
     const cName = corporateConfig.name || empacadora.companyName || 'TECAVO FRUITS';
-    const cAddr = (corporateConfig.address || empacadora.address || 'Km 4.5 Carretera Tacámbaro- Pátzcuaro').substring(0,55);
-    doc.setTextColor(30, 93, 34);
-    doc.setFontSize(14);
-    doc.text(cName, 28, Math.max(y-51, 39));
-    doc.setFontSize(7);
-    doc.text(corporateConfig.legal_name || 'S de RL de CV', 28, Math.max(y-41, 49));
-    doc.text(cAddr, 28, Math.max(y-30, 60));
-    doc.setTextColor(255);
-    doc.setFontSize(7);
-    doc.text((cName + ' ' + (corporateConfig.legal_name || '')).substring(0,38), 251, Math.max(y-55, 34));
+    const cAddr = (corporateConfig.address || empacadora.address || 'Km 4.5 Carretera Tacámbaro-Pátzcuaro, Michoacán').substring(0,58);
+    const cPhone = corporateConfig.phone || empacadora.phone || '';
+    const cRfc = corporateConfig.rfc || empacadora.rfc || '';
 
-    // Continue calculations from y
+    // Logo (preserve proportions, max 42pt high)
+    if (logoData) {
+      try { doc.addImage(logoData, 'PNG', MARGIN, y, 42, 28); } catch(e) {}
+    } else if (effectiveLogo) {
+      try { doc.addImage(effectiveLogo, 'PNG', MARGIN, y, 42, 28); } catch(e) {}
+    }
 
-    y = Math.max(y, 102);
-    doc.setTextColor(0);
-
-    // Top info grid //
-    doc.setDrawColor(112, 78, 35);
-    doc.setFillColor(112, 78, 35); doc.rect(20, y - 3, 572, 15, 'F');
-    doc.setTextColor(255);
-    doc.setFontSize(6);
-    doc.text('CAJAS', 24, y+6); doc.text('FECHA FACTURA', 104, y+6);
-    doc.text('FACTURA', 195, y+6); doc.text('Folio', 276, y+6); doc.text('REGISTRO SADER', 340, y+6);
-
-    y += 14;
-    doc.setDrawColor(112, 78, 35);
-    doc.rect(20, y - 2, 572, 28, 'S');
-    doc.setFontSize(8);
-    doc.setTextColor(0);
-    const nc = generateNotaContent();
-    doc.text(String(nc.totalTarimas || trailerPalletsList.length), 28, y + 9);
-    doc.text(new Date().toLocaleDateString('es-MX'), 100, y + 9);
-    doc.text('Tracto', 195, y + 4);
-    doc.text(facturaFolio, 276, y + 9);
+    // Company data next to logo
+    doc.setTextColor(0,0,0);
+    doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
-    doc.text(saderRegistro, 340, y + 9);
+    doc.text(cName, MARGIN + 50, y + 10);
 
-    y += 22;
-    doc.setTextColor(0);
-    doc.text('Termo', 195, y - 2);
-    doc.text(tractoPlates || '', 22, y+11); doc.text(termoPlates || '', 80, y+11);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.text(cAddr, MARGIN + 50, y + 20);
+    if (cPhone || cRfc) doc.text(`${cPhone} ${cRfc ? 'RFC:'+cRfc : ''}`.trim(), MARGIN + 50, y + 29);
 
-    // Second info row CHOFER etc as grid
-    y += 24;
-    doc.rect(20, y - 2, 572, 26, 'S');
-    const c = selectedCustomer || {};
-    doc.setFontSize(7); doc.setFont('helvetica', 'normal');
-    doc.setTextColor(0);
-    doc.text('CHOFER', 24, y+5);
-    doc.text(driverName || '', 24, y + 17);
-    doc.text('CLIENTE', 120, y+5); doc.text(c.customer_name || '', 120, y+17);
-    doc.text('DESTINO', 230, y+5); doc.text(c.destination || '', 230, y+17);
-    doc.text('MONEDA', 340, y+5); doc.text(moneda, 340, y+17);
-    doc.text('TEL', 420, y+5); doc.text(clienteTel || c.phone || '', 420, y+17);
+    // Folio / Fecha right side
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    doc.text('NOTA DE VENTA', PAGE_W - MARGIN - 90, y + 10);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text(`Folio: ${facturaFolio || '—'}`, PAGE_W - MARGIN - 90, y + 20);
+    doc.text(`Fecha: ${new Date().toLocaleDateString('es-MX')}`, PAGE_W - MARGIN - 90, y + 29);
 
-    // Disclaimer
     y += 38;
-    doc.setFontSize(6);
-    doc.setFillColor(250, 247, 240);
-    doc.rect(20, y - 4, 572, 30, 'F');
-    doc.setDrawColor(229, 177, 103);
-    doc.rect(20, y - 4, 572, 30, 'S');
-    doc.text('El presente envío ha sido realizado por Tecavo Fruits S. de R.L. de C.V., incluyendo en este documento una descripción detallada acerca del tipo de carga. Cabe resaltar que todo el proceso se ha llevado a cabo cumpliendo estrictamente con los más altos estándares de calidad establecidos por la normativa vigente. Temp consign: ' + (temperaturaConsignacion||'—') + ' Termo:' + (termoPlates||'-'), 26, y+6);
 
-    // Big Product Table
-    y += 42;
-    doc.setFillColor(248, 163, 149);
-    doc.rect(20, y-13, 572, 13, 'F');
-    doc.setTextColor(0); doc.setFontSize(6);
-    doc.text('PRODUCTO', 24, y-4);
-    doc.text('PRESENTACIÓN', 140, y-4);
-    doc.text('TARIMAS', 235, y-4);
-    doc.text('CAJAS', 295, y-4);
-    doc.text('KILOS', 355, y-4);
-    doc.text('PRECIO UN', 420, y-4);
-    doc.text('TOTAL', 510, y-4);
+    // Thin separator
+    doc.setDrawColor(180,180,180);
+    doc.line(MARGIN, y, PAGE_W - MARGIN, y);
+    y += 8;
 
-    const editRows = notaEditItems.length > 0 ? notaEditItems : (nc.items.length ? nc.items : []);
-    y += 4;
+    // Compact info row (CHOFER, CLIENTE, etc) - 9-10pt
+    const c = selectedCustomer || {};
+    doc.setFontSize(8);
+    doc.setTextColor(0,0,0);
+    const infoLine1 = `CHOFER: ${driverName || '—'}    CLIENTE: ${c.customer_name || '—'}    DESTINO: ${c.destination || '—'}`;
+    doc.text(infoLine1, MARGIN, y);
+    y += 11;
+    const infoLine2 = `PLACAS: ${tractoPlates || '—'}/${termoPlates || '—'}    MONEDA: ${moneda}    TEL: ${clienteTel || c.phone || '—'}    SADER: ${saderRegistro}`;
+    doc.text(infoLine2, MARGIN, y);
+    y += 14;
+
+    // Light disclaimer (no dark bg)
     doc.setFontSize(7);
-    editRows.forEach((r) => {
-      doc.setTextColor(0);
-      doc.text((r.producto || '—').substring(0,28), 22, y);
-      doc.text(r.presentacion || '', 140, y);
-      doc.text(String(r.tarimas || ''), 240, y);
-      doc.text(String(r.cajas || ''), 298, y);
-      doc.text(String(r.kg || ''), 356, y);
-      doc.text(String(parseFloat(r.precio)|| '0'), 432, y);
-      doc.text(String(parseFloat(r.total)|| '0.00'), 520, y);
-      y += 12;
+    doc.setTextColor(60,60,60);
+    const disclaimer = 'El presente envío ha sido realizado por Tecavo Fruits S. de R.L. de C.V. Cumpliendo con los más altos estándares de calidad.';
+    doc.text(disclaimer, MARGIN, y);
+    y += 12;
+
+    // TABLE HEADER - very light green, dark text, thin gray borders
+    const tableStartY = y;
+    const colX = [MARGIN, MARGIN+160, MARGIN+215, MARGIN+260, MARGIN+310, MARGIN+365, MARGIN+430, MARGIN+500];
+    const colW = [155, 50, 42, 47, 52, 60, 65, 80];
+
+    doc.setFillColor(232, 245, 233); // very light green
+    doc.rect(MARGIN, y-2, CONTENT_W, 14, 'F');
+    doc.setDrawColor(170,170,170);
+    doc.rect(MARGIN, y-2, CONTENT_W, 14, 'S');
+
+    doc.setTextColor(0,0,0);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    const headers = ['PRODUCTO', 'PRES.', 'TAR.', 'CAJAS', 'KG', 'PRECIO', 'TOTAL'];
+    headers.forEach((h, i) => doc.text(h, colX[i] + 2, y + 7));
+    y += 14;
+
+    // TABLE ROWS - clean, 9pt, same data as before
+    const nc = generateNotaContent();
+    const rows = (notaEditItems.length ? notaEditItems : (nc.items.length ? nc.items : []));
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+
+    rows.forEach((r) => {
+      // row border
+      doc.setDrawColor(200,200,200);
+      doc.rect(MARGIN, y-1, CONTENT_W, 11, 'S');
+
+      doc.setTextColor(0,0,0);
+      const prod = (r.producto || '—').toString().substring(0, 32);
+      doc.text(prod, colX[0] + 2, y + 7);
+      doc.text((r.presentacion || '').toString().substring(0,10), colX[1] + 2, y + 7);
+      doc.text(String(r.tarimas || ''), colX[2] + 2, y + 7);
+      doc.text(String(r.cajas || ''), colX[3] + 2, y + 7);
+      doc.text(String(r.kg || ''), colX[4] + 2, y + 7);
+      doc.text(String(parseFloat(r.precio)||0), colX[5] + 2, y + 7);
+      doc.text(String(parseFloat(r.total)||'0.00'), colX[6] + 2, y + 7);
+      y += 11;
     });
 
-    // TOTAL row + grand SUM for TOTAL column
+    // TOTALS row - light bg
     const gTotal = getNotaGrandTotal();
+    doc.setFillColor(245, 250, 245);
+    doc.rect(MARGIN, y-1, CONTENT_W, 12, 'F');
+    doc.setDrawColor(150,150,150);
+    doc.rect(MARGIN, y-1, CONTENT_W, 12, 'S');
     doc.setFont('helvetica', 'bold');
-    doc.setFillColor(233, 241, 180);
-    doc.rect(20, y-3, 572, 14, 'F');
-    doc.text('TOTAL', 22, y + 8);
-    doc.text(String(getNotaTotalTarimas() || nc.totalTarimas || trailerPalletsList.length), 240, y + 8);
-    doc.text(String(getNotaTotalCajas() || nc.totalCajas), 298, y + 8);
-    doc.text(String(getNotaTotalKg() || nc.totalKg), 356, y + 8);
-    doc.text(gTotal, 520, y + 8);
+    doc.setTextColor(0,0,0);
+    doc.text('TOTAL', colX[0] + 2, y + 8);
+    doc.text(String(getNotaTotalTarimas() || nc.totalTarimas || trailerPalletsList.length), colX[2] + 2, y + 8);
+    doc.text(String(getNotaTotalCajas() || nc.totalCajas), colX[3] + 2, y + 8);
+    doc.text(String(getNotaTotalKg() || nc.totalKg), colX[4] + 2, y + 8);
+    doc.text(gTotal, colX[6] + 2, y + 8);
+    y += 16;
 
-    // FACTURA USD/MXN + COMMENTS
-    y += 24;
-    doc.setFillColor(229, 168, 76);
-    doc.rect(20, y, 110, 14, 'F');
-    doc.setTextColor(255, 255, 255);
-    doc.text(`USD • ${moneda === 'USD' ? '●' : ''}`, 26, y + 10);
-    doc.setFillColor(193, 125, 78);
-    doc.rect(132, y, 110, 14, 'F');
-    doc.text(`MXN • ${moneda === 'MXN' ? '●' : ''}`, 140, y + 10);
-
-    doc.setTextColor(0); 
-    doc.text('COMENTARIOS ADICIONALES', 260, y - 6);
-    doc.setDrawColor(210, 190, 130);
-    doc.rect(260, y - 2, 330, 42, 'S');
-
+    // OBSERVACIONES + FIRMAS compact
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(0,0,0);
+    doc.text('OBSERVACIONES:', MARGIN, y);
+    y += 10;
     doc.setFontSize(7);
-    doc.setTextColor(0);
-    doc.text((notaData.notes || '').substring(0,80), 264, y + 16);
+    const obs = (notaData.notes || '').substring(0, 140);
+    doc.text(obs || '—', MARGIN, y);
+    y += 18;
 
-    // Signature
-    y += 66;
-    doc.text('_________________________________', 70, y);
-    doc.text('_________________________________', 320, y);
-    doc.setFontSize(8); doc.setFont('helvetica', 'normal');
-    doc.text('Firma Empacadora / Chofer', 85, y + 10);
-    doc.text('Recibe / Firma Cliente', 335, y + 10);
+    // Signatures
+    doc.setFontSize(8);
+    doc.text('_______________________________', MARGIN + 20, y);
+    doc.text('_______________________________', MARGIN + 280, y);
+    y += 10;
+    doc.setFontSize(7);
+    doc.text('Firma Empacadora / Chofer', MARGIN + 30, y);
+    doc.text('Recibe / Firma Cliente', MARGIN + 290, y);
 
-    doc.save(`nota_venta_${facturaFolio || 'sinfolio'}_v${Date.now().toString().slice(-4)}.pdf`); // versioned filename (no recalc of shipment)
+    // Footer small
+    y = Math.min(y + 16, PAGE_H - 20);
+    doc.setFontSize(7);
+    doc.setTextColor(100,100,100);
+    doc.text(`${cName} • ${new Date().toLocaleDateString('es-MX')} • Página 1/1`, MARGIN, PAGE_H - 18);
+
+    doc.save(`nota_venta_${facturaFolio || 'sinfolio'}.pdf`);
   };
 
   // NOTA TERMO  – only kilos/cajas/tarimas – NO PRICES (for trailer travel)
@@ -2116,107 +2139,94 @@ export default function EmbarquesPage() {
                 <button onClick={() => setShowNotaDrawer(false)} className="font-semibold text-black hover:text-red-600 text-xl leading-none px-1" aria-label="Cerrar">✕</button>
               </div>
 
-                {/* TOP INFO TABLE - CajAS PLACAS FACTURA SADER */}
-                <table className="w-full mb-px border border-[#704E23]" style={{ borderCollapse: 'collapse', fontSize: '9px' }}>
-                  <thead>
-                    <tr>
-                      <th className="bg-[#704E23] text-white px-1 text-[8px] py-[1px]">CAJAS</th>
-                      <th className="bg-[#704E23] text-white px-1 text-[8px] py-[1px]">FECHA FACTURA</th>
-                      <th className="bg-[#704E23] text-white px-1 text-[8px] py-[1px]">FACTURA</th>
-                      <th className="bg-[#704E23] text-white px-1 text-[8px] py-[1px]">Folio</th>
-                      <th className="bg-[#704E23] text-white px-1 text-[8px] py-[1px]">REGISTRO SADER</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="h-6">
-                      <td className="border px-1 bg-[#EDE9B1] text-[9px] text-center" style={{color:'#000'}}>{getNotaTotalTarimas() || generateNotaContent().totalTarimas}</td>
-                      <td className="border px-1 text-[9px] text-center" style={{color:'#000'}}>{new Date().toLocaleDateString('es-MX')}</td>
-                      <td className="border px-1 text-[9px] text-center" style={{color:'#000'}}>Tracto</td>
-                      <td className="border px-1 text-[9px] text-center" style={{color:'#000'}}>{facturaFolio || '—'}</td>
-                      <td className="border px-1 bg-[#EDE9B1] text-[9px] text-center font-mono" style={{color:'#000'}}>{saderRegistro}</td>
-                    </tr>
-                    <tr className="h-6">
-                      <td className="border px-1 bg-[#EDE9B1]"></td>
-                      <td className="border px-1 text-[8px] bg-[#F7E8BB] text-center" style={{color:'#000'}}>&nbsp;</td>
-                      <td className="border px-1 text-[8px] bg-[#F7E8BB]" style={{color:'#000'}}>Termo</td>
-                      <td className="border px-1 text-[8px] bg-[#EDE9B1]" colSpan={2} style={{color:'#000'}}></td>
-                    </tr>
-                    <tr>
-                      <td colSpan={1} className="bg-[#F7E8BB] text-[8px] text-center border" style={{color:'#000'}}>PLACAS</td>
-                      <td className="border px-1 text-[8px]" style={{color:'#000'}}>{tractoPlates || '—'} / {termoPlates || '—'}</td>
-                      <td colSpan={3} className="bg-[#EDE9B1] border text-[8px] px-1 py-[1px]" style={{color:'#000'}}>CLIENTE: {selectedCustomer?.customer_name || '________________'} &nbsp;&nbsp; DESTINO: {selectedCustomer?.destination || '—'}</td>
-                    </tr>
-                  </tbody>
-                </table>
-
-                {/* CLIENTE DE TAIL ROW: CHOFER / CLIENTE / DESTINO / MONEDA / TEL */}
-                <div className="border border-[#704E23] grid grid-cols-5 text-[9px] text-black">
-                  <div className="border-r px-1 py-px bg-white" style={{color:'#000'}}><span className="font-semibold" style={{color:'#000'}}>CHOFER</span><br />{driverName || '_______________'}</div>
-                  <div className="border-r px-1 bg-white py-px" style={{color:'#000'}}><span className="font-semibold" style={{color:'#000'}}>CLIENTE</span><br />{selectedCustomer?.customer_name || '_______________'}</div>
-                  <div className="border-r px-1 bg-white py-px" style={{color:'#000'}}><span className="font-semibold" style={{color:'#000'}}>DESTINO</span><br />{selectedCustomer?.destination || '_______________'}</div>
-                  <div className="border-r px-1 bg-white py-px" style={{color:'#000'}}><span className="font-semibold" style={{color:'#000'}}>MONEDA</span><br />{moneda}</div>
-                  <div className="px-1 py-px bg-white" style={{color:'#000'}}><span className="font-semibold" style={{color:'#000'}}>TEL</span><br />{clienteTel || selectedCustomer?.phone || '_______________'}</div>
-                </div>
-
-                {/* DISCLAIMER — wrap/scale to fit colored container without overflow */}
-                <div className="my-1 border border-[#E6B167] bg-[#FAF7F0] px-2 py-1 text-[7px] leading-[1.0] text-black break-words overflow-hidden" style={{backgroundImage:`linear-gradient(rgba(255,255,255,0.9),rgba(255,255,255,0.9)), url(${logoPatternBg})`, backgroundSize:'70px', backgroundRepeat:'repeat', fontSize:'7px'}}>
-                  El presente envío ha sido realizado por Tecavo Fruits S. de R.L. de C.V., incluyendo en este documento una descripción detallada acerca del tipo de carga. Cabe resaltar que todo el proceso se ha llevado a cabo cumpliendo estrictamente con los más altos estándares de calidad establecidos por la normativa vigente.
-                </div>
-
-                {/* MAIN PRODUCT TABLE */}
-                <table className="w-full text-[10px] table-fixed border border-[#A05F54]" style={{ borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr>
-                      <th className="bg-[#F8A395] py-[1px] border text-left px-1" style={{color:'#5f332f', fontSize:'8px'}}>PRODUCTO</th>
-                      <th className="bg-[#F8A395] py-[1px] border text-center px-1" style={{color:'#5f332f', fontSize:'8px'}}>PRESENTACIÓN</th>
-                      <th className="bg-[#F8A395] py-[1px] border text-center px-1" style={{color:'#5f332f', fontSize:'8px'}}>TARIMAS</th>
-                      <th className="bg-[#F8A395] py-[1px] border text-center px-1" style={{color:'#5f332f', fontSize:'8px'}}>CAJAS</th>
-                      <th className="bg-[#F8A395] py-[1px] border text-center px-1" style={{color:'#5f332f', fontSize:'8px'}}>KILOS</th>
-                      <th className="bg-[#F8A395] py-[1px] border text-center px-1" style={{color:'#5f332f', fontSize:'8px'}}>PRECIO UN</th>
-                      <th className="bg-[#F8A395] py-[1px] border text-center px-1" style={{color:'#5f332f', fontSize:'8px'}}>TOTAL</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(notaEditItems.length ? notaEditItems : generateNotaContent().items).length > 0 ? (notaEditItems.length ? notaEditItems : generateNotaContent().items).map((row, i) => (
-                      <tr key={i}>
-                        <td className="border px-1 py-px text-black" style={{color:'#000', fontSize:'9px'}}>{row.producto}</td>
-                        <td className="border px-1 py-px text-center text-black" style={{color:'#000', fontSize:'9px'}}>{row.presentacion}</td>
-                        <td className="border px-1 py-px text-center font-bold text-black" style={{color:'#000', fontSize:'9px'}}>{row.tarimas}</td>
-                        <td className="border px-1 py-px text-center text-black" style={{color:'#000', fontSize:'9px'}}>{row.cajas}</td>
-                        <td className="border px-1 py-px text-center font-medium text-black" style={{color:'#000', fontSize:'9px'}}>{row.kg}</td>
-                        <td className="border px-1 py-px text-center text-black" style={{color:'#000', fontSize:'9px'}}>{parseFloat(row.precio)||0}</td>
-                        <td className="border px-1 py-px text-center font-semibold text-black" style={{color:'#000', fontSize:'9px'}}>{parseFloat(row.total)||'0.00'}</td>
-                      </tr>
-                    )) : (
-                      <tr><td colSpan={7} className="text-center border px-1 py-px text-black" style={{color:'#000', fontSize:'9px'}}>— Cargue tarimas al trailer —</td></tr>
+                {/* CLEAN NOTA PREVIEW - always white/light, isolated from app theme, letter proportions */}
+                <div id="nota-preview" style={{ background: '#fff', color: '#000', padding: '8mm', fontFamily: 'Arial, Helvetica, sans-serif', fontSize: '9pt', lineHeight: 1.25, border: '1px solid #ddd', maxWidth: '210mm', margin: '0 auto', boxSizing: 'border-box' }}>
+                  {/* Header compact with logo */}
+                  <div style={{ display: 'flex', alignItems: 'flex-start', marginBottom: '6pt', borderBottom: '1px solid #ccc', paddingBottom: '4pt' }}>
+                    { (corporateConfig.logo_url || empacadora.logoUrl || branding?.logo_url) && (
+                      <img 
+                        src={corporateConfig.logo_url || empacadora.logoUrl || branding?.logo_url} 
+                        alt="Logo TECAVO" 
+                        style={{ height: '32pt', width: 'auto', maxWidth: '110px', marginRight: '8pt', objectFit: 'contain', display: 'block' }}
+                        onLoad={() => {}}
+                      />
                     )}
-                    <tr className="bg-[#E9F1B4] font-bold">
-                      <td className="border px-1 py-[1px]" style={{color:'#000', fontSize:'9px'}}>TOTAL</td>
-                      <td className="border px-1 py-[1px]"></td>
-                      <td className="border px-1 py-[1px] text-center" style={{color:'#000', fontSize:'9px'}}>{getNotaTotalTarimas() || generateNotaContent().totalTarimas || trailerPalletsList.length}</td>
-                      <td className="border px-1 py-[1px] text-center" style={{color:'#000', fontSize:'9px'}}>{getNotaTotalCajas() || generateNotaContent().totalCajas}</td>
-                      <td className="border px-1 py-[1px] text-center" style={{color:'#000', fontSize:'9px'}}>{getNotaTotalKg() || generateNotaContent().totalKg}</td>
-                      <td className="border px-1 py-[1px]"></td>
-                      <td className="border px-1 py-[1px] text-center font-extrabold" style={{color:'#000', fontSize:'9px'}}>{getNotaGrandTotal()}</td>
-                    </tr>
-                  </tbody>
-                </table>
-
-                {/* FOOTER FACTURA / COMMENTS */}
-                <div className="mt-2 flex">
-                  <div className="flex-1">
-                    <div className="uppercase font-semibold text-black text-[9px] mb-px">COMENTARIOS ADICIONALES</div>
-                    <div className="border min-h-[48px] p-1 text-[7px] leading-tight bg-white text-black break-words overflow-hidden" style={{borderColor:'#D3C08F', backgroundImage:`linear-gradient(rgba(255,255,255,0.93),rgba(255,255,255,0.93)),url(${logoPatternBg})`, backgroundSize:'70px', backgroundRepeat:'repeat', fontSize:'7px'}}>
-                      {notaData.notes || '—'}
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '11pt', fontWeight: 700, color: '#000' }}>{corporateConfig.name || empacadora.companyName || 'TECAVO FRUITS'}</div>
+                      <div style={{ fontSize: '8pt', color: '#222' }}>{(corporateConfig.address || empacadora.address || '').substring(0,58)}</div>
+                      <div style={{ fontSize: '7.5pt', color: '#444' }}>{corporateConfig.phone || ''} {corporateConfig.rfc ? 'RFC: '+corporateConfig.rfc : ''}</div>
+                    </div>
+                    <div style={{ textAlign: 'right', fontSize: '9pt' }}>
+                      <div style={{ fontWeight: 700 }}>NOTA DE VENTA</div>
+                      <div>Folio: {facturaFolio || '—'}</div>
+                      <div>Fecha: {new Date().toLocaleDateString('es-MX')}</div>
                     </div>
                   </div>
-                  <div className="ml-2">
-                    <div className="text-[9px] font-semibold text-black">FACTURA</div>
-                    <div className="bg-[#E5A84C] text-white px-2 text-[8px] py-0.5 font-medium">USD <span className="font-bold">{moneda === 'USD' ? '●' : ''}</span></div>
-                    <div className="bg-[#C17D4E] text-white px-2 text-[8px] py-0.5 font-medium">MXN <span className="font-bold">{moneda === 'MXN' ? '●' : ''}</span></div>
+
+                  {/* Info compact */}
+                  <div style={{ fontSize: '8pt', marginBottom: '6pt', color: '#000' }}>
+                    <div>CHOFER: {driverName || '—'} &nbsp;&nbsp; CLIENTE: {selectedCustomer?.customer_name || '—'} &nbsp;&nbsp; DESTINO: {selectedCustomer?.destination || '—'}</div>
+                    <div style={{marginTop:'2pt'}}>PLACAS: {(tractoPlates||'—') + '/' + (termoPlates||'—')} &nbsp;&nbsp; MONEDA: {moneda} &nbsp;&nbsp; SADER: {saderRegistro}</div>
+                  </div>
+
+                  {/* Light disclaimer */}
+                  <div style={{ fontSize: '7pt', color: '#444', marginBottom: '6pt', border: '1px solid #ddd', padding: '2pt 4pt', background: '#fafafa' }}>
+                    El presente envío ha sido realizado por Tecavo Fruits S. de R.L. de C.V. Cumpliendo estrictamente con los más altos estándares de calidad.
+                  </div>
+
+                  {/* Table - light green header, black text, thin gray borders */}
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '8.5pt', marginBottom: '4pt' }}>
+                    <thead>
+                      <tr style={{ background: '#e8f5e9', color: '#000' }}>
+                        <th style={{ border: '1px solid #aaa', padding: '2pt 3pt', textAlign: 'left' }}>PRODUCTO</th>
+                        <th style={{ border: '1px solid #aaa', padding: '2pt 3pt', textAlign: 'center' }}>PRES.</th>
+                        <th style={{ border: '1px solid #aaa', padding: '2pt 3pt', textAlign: 'center' }}>TAR.</th>
+                        <th style={{ border: '1px solid #aaa', padding: '2pt 3pt', textAlign: 'center' }}>CAJAS</th>
+                        <th style={{ border: '1px solid #aaa', padding: '2pt 3pt', textAlign: 'center' }}>KG</th>
+                        <th style={{ border: '1px solid #aaa', padding: '2pt 3pt', textAlign: 'center' }}>PRECIO</th>
+                        <th style={{ border: '1px solid #aaa', padding: '2pt 3pt', textAlign: 'center' }}>TOTAL</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(notaEditItems.length ? notaEditItems : generateNotaContent().items).length > 0 ? (notaEditItems.length ? notaEditItems : generateNotaContent().items).map((row, i) => (
+                        <tr key={i}>
+                          <td style={{ border: '1px solid #ccc', padding: '1pt 3pt', color: '#000' }}>{row.producto}</td>
+                          <td style={{ border: '1px solid #ccc', padding: '1pt 3pt', textAlign: 'center', color: '#000' }}>{row.presentacion}</td>
+                          <td style={{ border: '1px solid #ccc', padding: '1pt 3pt', textAlign: 'center', color: '#000' }}>{row.tarimas}</td>
+                          <td style={{ border: '1px solid #ccc', padding: '1pt 3pt', textAlign: 'center', color: '#000' }}>{row.cajas}</td>
+                          <td style={{ border: '1px solid #ccc', padding: '1pt 3pt', textAlign: 'center', color: '#000' }}>{row.kg}</td>
+                          <td style={{ border: '1px solid #ccc', padding: '1pt 3pt', textAlign: 'center', color: '#000' }}>{parseFloat(row.precio)||0}</td>
+                          <td style={{ border: '1px solid #ccc', padding: '1pt 3pt', textAlign: 'center', color: '#000' }}>{parseFloat(row.total)||'0.00'}</td>
+                        </tr>
+                      )) : <tr><td colSpan={7} style={{ border: '1px solid #ccc', padding: '2pt', textAlign: 'center', color: '#000' }}>— Cargue tarimas al trailer —</td></tr>}
+                      <tr style={{ background: '#f5faf5', fontWeight: 700 }}>
+                        <td style={{ border: '1px solid #aaa', padding: '2pt 3pt', color: '#000' }}>TOTAL</td>
+                        <td style={{ border: '1px solid #aaa', padding: '2pt 3pt' }}></td>
+                        <td style={{ border: '1px solid #aaa', padding: '2pt 3pt', textAlign: 'center', color: '#000' }}>{getNotaTotalTarimas() || generateNotaContent().totalTarimas || trailerPalletsList.length}</td>
+                        <td style={{ border: '1px solid #aaa', padding: '2pt 3pt', textAlign: 'center', color: '#000' }}>{getNotaTotalCajas() || generateNotaContent().totalCajas}</td>
+                        <td style={{ border: '1px solid #aaa', padding: '2pt 3pt', textAlign: 'center', color: '#000' }}>{getNotaTotalKg() || generateNotaContent().totalKg}</td>
+                        <td style={{ border: '1px solid #aaa', padding: '2pt 3pt' }}></td>
+                        <td style={{ border: '1px solid #aaa', padding: '2pt 3pt', textAlign: 'center', color: '#000' }}>{getNotaGrandTotal()}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+
+                  {/* Comments + signatures */}
+                  <div style={{ fontSize: '8pt', marginTop: '4pt' }}>
+                    <div style={{ fontWeight: 600, marginBottom: '2pt' }}>OBSERVACIONES</div>
+                    <div style={{ border: '1px solid #ccc', minHeight: '28pt', padding: '2pt', fontSize: '7.5pt', color: '#000', background: '#fff' }}>
+                      {notaData.notes || '—'}
+                    </div>
+                    <div style={{ display: 'flex', marginTop: '10pt', fontSize: '8pt' }}>
+                      <div style={{ flex: 1 }}>
+                        _______________________________<br />Firma Empacadora / Chofer
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        _______________________________<br />Recibe / Firma Cliente
+                      </div>
+                    </div>
                   </div>
                 </div>
-              <div className="mt-7 text-center text-[11px] font-semibold" style={{color:'#000'}}>Firma Responsable • {empacadora.companyName}</div>
 
             {/* SECCIÓN EDITAR: precios + cualquier dato. PRECIO UN × CAJAS = TOTAL. Suma TOTAL al pie de columna */}
               <div className="p-4 border-t bg-slate-50">
