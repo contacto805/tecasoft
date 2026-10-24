@@ -114,7 +114,9 @@ export async function POST(request) {
           status,
           destination,
           client_name,
-          lot_traceability_status
+          lot_traceability_status,
+          visit_id,
+          cutting_order_id
         ) VALUES (
           ${lotNumber},
           ${producer_name},
@@ -126,7 +128,9 @@ export async function POST(request) {
           'cutting',
           ${destination || ''},
           ${client_name || ''},
-          'active'
+          'active',
+          ${body.visit_id || null},
+          null
         )
         RETURNING *
       `;
@@ -200,7 +204,9 @@ export async function POST(request) {
       show_agreed_price,
       plazo_dias,
       tipo_dias,
-      entrega_estimada
+      entrega_estimada,
+      visit_id,
+      calculator_evaluation_id
     )
     VALUES (
       ${folio},
@@ -237,7 +243,9 @@ export async function POST(request) {
       ${show_agreed_price === true || show_agreed_price === 'true'},
       ${plazo_dias ? parseInt(plazo_dias) : 0},
       ${tipo_dias || 'habiles'},
-      ${entrega_estimada || null}
+      ${entrega_estimada || null},
+      ${body.visit_id || null},
+      ${body.calculator_evaluation_id || null}
     )
     RETURNING *
   `;
@@ -355,7 +363,7 @@ export async function POST(request) {
 
   // Asegurar enlace bidireccional fuerte (lote → cutting + cutting → lote)
   if (lotId) {
-    try { await sql`UPDATE lots SET cutting_order_id = ${result[0].id}, updated_at = NOW() WHERE id = ${lotId}`; } catch(_) {}
+    try { await sql`UPDATE lots SET cutting_order_id = ${result[0].id}, visit_id = COALESCE(visit_id, ${body.visit_id || null}), updated_at = NOW() WHERE id = ${lotId}`; } catch(_) {}
   }
 
   // AUTO CREAR / SINCRONIZAR PAGO A PRODUCTOR (payment_schedule) cuando hay precio pactado

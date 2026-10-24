@@ -59,7 +59,9 @@ export default function CuttingOrdersPage() {
     plazo_dias: '',
     tipo_dias: 'habiles',
     entrega_estimada: '',
-    show_agreed_price: false
+    show_agreed_price: false,
+    visit_id: '',
+    calculator_evaluation_id: ''
   });
 
   const [editingId, setEditingId] = useState(null);
@@ -127,7 +129,9 @@ export default function CuttingOrdersPage() {
       plazo_dias: order.plazo_dias || '',
       tipo_dias: order.tipo_dias || 'habiles',
       entrega_estimada: order.entrega_estimada || '',
-      show_agreed_price: !!order.show_agreed_price
+      show_agreed_price: !!order.show_agreed_price,
+      visit_id: order.visit_id || '',
+      calculator_evaluation_id: order.calculator_evaluation_id || ''
     });
     setEditingId(order.id);
     setShowForm(true);
@@ -172,7 +176,9 @@ export default function CuttingOrdersPage() {
           plazo_dias: formData.plazo_dias ? parseInt(formData.plazo_dias) : 0,
           tipo_dias: formData.tipo_dias,
           entrega_estimada: formData.entrega_estimada || null,
-          freight_cost: formData.freight_cost ? parseFloat(formData.freight_cost) : 0
+          freight_cost: formData.freight_cost ? parseFloat(formData.freight_cost) : 0,
+          visit_id: formData.visit_id ? parseInt(formData.visit_id) : null,
+          calculator_evaluation_id: formData.calculator_evaluation_id ? parseInt(formData.calculator_evaluation_id) : null
         }
       : {
           folio: generateFolio(),
@@ -189,7 +195,9 @@ export default function CuttingOrdersPage() {
           plazo_dias: formData.plazo_dias ? parseInt(formData.plazo_dias) : 0,
           tipo_dias: formData.tipo_dias,
           entrega_estimada: formData.entrega_estimada || null,
-          freight_cost: formData.freight_cost ? parseFloat(formData.freight_cost) : 0
+          freight_cost: formData.freight_cost ? parseFloat(formData.freight_cost) : 0,
+          visit_id: formData.visit_id ? parseInt(formData.visit_id) : null,
+          calculator_evaluation_id: formData.calculator_evaluation_id ? parseInt(formData.calculator_evaluation_id) : null
         };
     
     setIsLoading(true);

@@ -186,6 +186,13 @@ export async function POST(request) {
       } catch (_) {}
     }
 
+    // Propagate status to linked visit (huerta → corte flow)
+    if (order.visit_id) {
+      try {
+        await sql`UPDATE orchard_visits SET neg_status = 'Cortada', updated_at = NOW() WHERE id = ${order.visit_id}`;
+      } catch (_) {}
+    }
+
     // Auto penalizaciones por cajas faltantes / no retornadas + daños (BLOCK 04 trazabilidad física sanciones autorizadas)
     const missing = parseInt(missing_boxes || 0) + (parseInt(order.boxes_count || 0) - parseInt(returned_boxes || order.boxes_count || 0));
     if (missing > 0 && order.lot_id) {

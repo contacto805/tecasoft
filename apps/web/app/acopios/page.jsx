@@ -393,7 +393,9 @@ export default function AcopiosCampo() {
       driver_name: '',
       crew_chief_name: '',
       truck_plates: '',
-      location: calcVisit.municipality || ''
+      location: calcVisit.municipality || '',
+      meeting_point: '',
+      meeting_time: ''
     });
     setShowCalculator(false);
     setTab('ordenes'); // show orders section
@@ -1164,12 +1166,18 @@ ${p.lat},${p.lng}`)}
               <div className="text-xs mb-2">Productor: {confirmCutData.producer_name} • Huerta: {confirmCutData.orchard_name}</div>
               <input placeholder="Cajas" value={confirmCutData.boxes_count} onChange={e=>setConfirmCutData({...confirmCutData,boxes_count:e.target.value})} className="border w-full mb-2 p-1 text-sm" />
               <input placeholder="Chofer" value={confirmCutData.driver_name} onChange={e=>setConfirmCutData({...confirmCutData,driver_name:e.target.value})} className="border w-full mb-2 p-1 text-sm" />
+              <input placeholder="Jefe Cuadrilla" value={confirmCutData.crew_chief_name||''} onChange={e=>setConfirmCutData({...confirmCutData,crew_chief_name:e.target.value})} className="border w-full mb-2 p-1 text-sm" />
+              <input placeholder="Placas Camion" value={confirmCutData.truck_plates||''} onChange={e=>setConfirmCutData({...confirmCutData,truck_plates:e.target.value})} className="border w-full mb-2 p-1 text-sm" />
               <div className="flex gap-2">
-                <button onClick={async ()=>{
+                <button onClick={async ()=>{ 
                   const folio='CORTE-'+Date.now().toString().slice(-6);
-                  const pl={folio,cutting_date:confirmCutData.cutting_date,producer_name:confirmCutData.producer_name,orchard_name:confirmCutData.orchard_name,boxes_count:parseInt(confirmCutData.boxes_count)||0,visit_id:confirmCutData.visit_id,calculator_evaluation_id:confirmCutData.calculator_evaluation_id,projection_snapshot:confirmCutData.projection_snapshot};
+                  const pl={folio,cutting_date:confirmCutData.cutting_date,producer_name:confirmCutData.producer_name,orchard_name:confirmCutData.orchard_name,boxes_count:parseInt(confirmCutData.boxes_count)||0,visit_id:confirmCutData.visit_id,calculator_evaluation_id:confirmCutData.calculator_evaluation_id,projection_snapshot:confirmCutData.projection_snapshot,driver_name:confirmCutData.driver_name||'',crew_chief_name:confirmCutData.crew_chief_name||'',truck_plates:confirmCutData.truck_plates||'',location:confirmCutData.location||''};
                   const r=await fetch('/api/cutting-orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pl)});
                   const j=await r.json();
+                  // Update visit status to Cortada for flow
+                  if (confirmCutData.visit_id) {
+                    try { await fetch('/api/acopios/visits',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:confirmCutData.visit_id, negotiation:{status:'Cortada'}})}); } catch(_){}
+                  }
                   alert('Orden: '+(j.folio||folio));
                   setConfirmCutData(null);
                   loadAll();
