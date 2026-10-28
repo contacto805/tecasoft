@@ -63,6 +63,33 @@ export async function POST(request) {
 
     const totalAmount = parseFloat(totalKgReceived) * parseFloat(fruitPricePerKg);
 
+    // Delegar a payment_schedule como fuente única de CxP (productor). Idempotente.
+    let scheduleId = null;
+    try {
+      const existing = await sql`
+        SELECT id FROM payment_schedule 
+        WHERE owner_type = 'producer' AND lot_id = ${parseInt(lotId)} LIMIT 1
+      `;
+      if (existing.length) {
+        scheduleId = existing[0].id;
+        await sql`
+          UPDATE payment_schedule SET amount = ${totalAmount}, saldo_pendiente = ${totalAmount}, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ${scheduleId}
+        `;
+      } else {
+        const year = new Date().getFullYear();
+        const last = await sql`SELECT folio FROM payment_schedule WHERE folio LIKE ${'PAG-' + year + '-%'} ORDER BY id DESC LIMIT 1`;
+        let nn = 1; if (last.length) nn = (parseInt(String(last[0].folio).split('-')[2]) || 0) + 1;
+        const pfolio = `PAG-${year}-${String(nn).padStart(3,'0')}`;
+        const [sch] = await sql`
+          INSERT INTO payment_schedule (folio, lot_id, producer_name, beneficiary_name, concept, amount, fruit_reception_date, due_date, scheduled_payment_date, payment_days, priority, status, created_by, owner_type, monto_pagado, saldo_pendiente)
+          VALUES (${pfolio}, ${parseInt(lotId)}, ${producerName}, ${producerName}, ${'Fruta lote ' + lotId}, ${totalAmount}, ${scheduledPaymentDate || null}, ${scheduledPaymentDate || null}, ${scheduledPaymentDate || null}, 7, 'normal', 'scheduled', 'sistema', 'producer', 0, ${totalAmount})
+          RETURNING id
+        `;
+        scheduleId = sch.id;
+      }
+    } catch(e){}
+
     const result = await sql`
       INSERT INTO producer_payments (
         lot_id,
@@ -86,7 +113,7 @@ export async function POST(request) {
       RETURNING *
     `;
 
-    return NextResponse.json(result[0], { status: 201 });
+    return NextResponse.json({ ...result[0], payment_schedule_id: scheduleId }, { status: 201 });
   } catch (error) {
     console.error('Error creating producer payment:', error);
     return NextResponse.json(
@@ -131,11 +158,27 @@ export async function PUT(request) {
       );
     }
 
-    // Si se marca como pagado, registrar en movimientos diarios
+    const payment = result[0];
+
+    // Sincronizar a payment_schedule (fuente única CxP): reduce saldo, una sola vez por ref
+    try {
+      const [sch] = await sql`
+        SELECT id, monto_pagado, saldo_pendiente, amount FROM payment_schedule 
+        WHERE owner_type='producer' AND lot_id = ${payment.lot_id} LIMIT 1
+      `;
+      if (sch) {
+        const pagadoSch = parseFloat(sch.monto_pagado || 0);
+        const nuevo = Math.min(parseFloat(sch.amount || payment.total_amount), pagadoSch + parseFloat(payment.total_amount || 0));
+        const nsaldo = Math.max(0, parseFloat(sch.amount || 0) - nuevo);
+        await sql`
+          UPDATE payment_schedule SET monto_pagado = ${nuevo}, saldo_pendiente = ${nsaldo}, status = ${nsaldo <= 0 ? 'paid' : 'partial'}, payment_proof_url = COALESCE(payment_proof_url, ${paymentProofUrl || null}), updated_at = CURRENT_TIMESTAMP
+          WHERE id = ${sch.id}
+        `;
+      }
+    } catch(e){}
+
+    // Si se marca como pagado, registrar en movimientos diarios (idempotente)
     if (paymentStatus === 'Pagado' && actualPaymentDate) {
-      const payment = result[0];
-      
-      // Verificar si ya existe el movimiento
       const existingMovement = await sql`
         SELECT id FROM daily_movements
         WHERE related_entity_type = 'producer_payment'

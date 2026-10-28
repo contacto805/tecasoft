@@ -424,11 +424,33 @@ export async function PUT(request) {
     }
 
     // Handle partial payments / liquidacion for dias_retraso (P2)
-    const newMontoPagado = updateData.monto_pagado !== undefined ? parseFloat(updateData.monto_pagado) : parseFloat(current[0].monto_pagado || 0);
+    // Idempotencia por referencia/comprobante: si ya hay pago con misma ref + monto similar, no suma de nuevo.
+    const newMontoPagadoInput = updateData.monto_pagado !== undefined ? parseFloat(updateData.monto_pagado) : null;
     const totalAmount = updateData.amount !== undefined ? parseFloat(updateData.amount) : parseFloat(current[0].amount || 0);
-    let newSaldo = totalAmount - newMontoPagado;
-    if (newSaldo < 0) newSaldo = 0;
-    if (updateData.monto_pagado !== undefined || updateData.status === 'paid') {
+    let newMontoPagado = parseFloat(current[0].monto_pagado || 0);
+    let newSaldo = (current[0].saldo_pendiente != null) ? parseFloat(current[0].saldo_pendiente) : Math.max(0, totalAmount - newMontoPagado);
+
+    const ref = updateData.payment_proof_url || updateData.observations || updateData.referencia || '';
+    const applyAmount = newMontoPagadoInput !== null ? newMontoPagadoInput - newMontoPagado : 0;
+
+    if (applyAmount > 0 && ref) {
+      // Check duplicate application by ref + approx amount on this obligation
+      const dup = await sql`
+        SELECT id FROM payment_schedule_audit 
+        WHERE payment_id = ${id} AND action = 'pago_aplicado' 
+          AND (new_data::text ILIKE ${'%' + ref.slice(0,40) + '%'} OR reason ILIKE ${'%' + ref.slice(0,40) + '%'})
+        LIMIT 1
+      `;
+      if (dup.length === 0) {
+        newMontoPagado = Math.min(totalAmount, newMontoPagado + applyAmount);
+      }
+    } else if (newMontoPagadoInput !== null) {
+      newMontoPagado = newMontoPagadoInput;
+    }
+
+    newSaldo = Math.max(0, totalAmount - newMontoPagado);
+
+    if (newMontoPagadoInput !== null || updateData.status === 'paid') {
       updateData.monto_pagado = newMontoPagado;
       updateData.saldo_pendiente = newSaldo;
       if (newSaldo <= 0 || updateData.status === 'paid') {
@@ -479,7 +501,11 @@ export async function PUT(request) {
       RETURNING *
     `;
 
-    // Create audit log
+    const auditAction = (updateData.monto_pagado !== undefined || updateData.payment_proof_url) ? 'pago_aplicado' : 'updated';
+    const auditReason = (updateData.monto_pagado !== undefined || updateData.payment_proof_url) 
+      ? ('Aplicación de pago' + (ref ? ' ref:' + ref.slice(0,30) : '')) 
+      : (updateData.audit_reason || 'Actualización de pago programado');
+
     await sql`
       INSERT INTO payment_schedule_audit (
         payment_id,
@@ -491,11 +517,11 @@ export async function PUT(request) {
         timestamp
       ) VALUES (
         ${id},
-        'updated',
+        ${auditAction},
         ${updateData.updated_by || 'system'},
         ${JSON.stringify(current[0])},
         ${JSON.stringify(result[0])},
-        ${updateData.audit_reason || 'Actualización de pago programado'},
+        ${auditReason},
         CURRENT_TIMESTAMP
       )
     `;

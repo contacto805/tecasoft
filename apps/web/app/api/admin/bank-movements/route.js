@@ -94,6 +94,47 @@ export async function PUT(request) {
       VALUES ('admin', ${update.reconciled_by || 'admin'}, 'conciliacion_bancaria', 'update', 'bank_movement', ${id}, 'Movimiento actualizado / conciliado')
     `;
 
+    // Si se concilia a payment_schedule (pago a productor/proveedor), aplicar al saldo (solo una vez, via ref)
+    // NO crea nueva obligación. Transferencias internas ya marcadas como traspaso por analyze.
+    if (update.status === 'conciliado' && update.suggested_entity_type === 'payment_schedule' && update.suggested_entity_id) {
+      try {
+        const [mov] = await sql`SELECT charge, credit, reference, movement_date FROM bank_movements WHERE id = ${parseInt(id)}`;
+        const linkedId = parseInt(update.suggested_entity_id);
+        const isOutgoing = (mov.charge || 0) > (mov.credit || 0);
+        const applyAmt = isOutgoing ? parseFloat(mov.charge || 0) : parseFloat(mov.credit || 0);
+
+        if (applyAmt > 0) {
+          const [sch] = await sql`SELECT id, amount, monto_pagado, saldo_pendiente FROM payment_schedule WHERE id = ${linkedId}`;
+          if (sch) {
+            const ref = mov.reference || '';
+            const already = await sql`
+              SELECT 1 FROM payment_schedule_audit 
+              WHERE payment_id = ${linkedId} AND action='pago_aplicado' 
+                AND (reason ILIKE ${'%' + (ref||'').slice(0,30) + '%'} OR new_data::text ILIKE ${'%' + applyAmt + '%'})
+              LIMIT 1
+            `;
+            if (!already.length) {
+              const nuevoPag = Math.min(parseFloat(sch.amount || 0), parseFloat(sch.monto_pagado || 0) + applyAmt);
+              const ns = Math.max(0, parseFloat(sch.amount || 0) - nuevoPag);
+              await sql`
+                UPDATE payment_schedule SET 
+                  monto_pagado = ${nuevoPag}, 
+                  saldo_pendiente = ${ns}, 
+                  status = ${ns <= 0 ? 'paid' : 'partial'},
+                  payment_proof_url = COALESCE(payment_proof_url, ${ref || null}),
+                  updated_at = NOW()
+                WHERE id = ${linkedId}
+              `;
+              await sql`
+                INSERT INTO payment_schedule_audit (payment_id, action, user_name, old_data, new_data, reason, timestamp)
+                VALUES (${linkedId}, 'pago_aplicado', ${update.reconciled_by || 'banco'}, ${JSON.stringify(sch)}, ${JSON.stringify({monto_pagado: nuevoPag, saldo: ns})}, ${'Conciliado banco ref ' + (ref||id)}, NOW())
+              `;
+            }
+          }
+        }
+      } catch(e) { /* non fatal */ }
+    }
+
     return NextResponse.json(updated);
   } catch (e) {
     return NextResponse.json({ error: "Error al actualizar movimiento" }, { status: 500 });
