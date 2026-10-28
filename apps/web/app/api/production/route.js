@@ -267,6 +267,10 @@ export async function POST(request) {
       if (q.quality_name) validQualitySet.add(String(q.quality_name).toUpperCase());
       if (q.display_name) validQualitySet.add(String(q.display_name).toUpperCase());
     });
+    // Support short codes 'A'/'B' used in UI and legacy stored data
+    validQualitySet.add('A');
+    validQualitySet.add('B');
+    validQualitySet.add('C');
 
     for (const item of caliber_data) {
       const b10 = parseInt(item.boxes_10kg);

@@ -334,16 +334,18 @@ export default function ProductionPage() {
     }
     // VI: SIN PRECIO MANUAL EN PRODUCCIÓN. Precios autorizados vienen del backend (precios_fruta_publicados).
     // Producción captura solo pesos y presentaciones. Precios para vista financiera separada.
+    const rawCls = String(cls || 'A').toUpperCase().replace(/CALIDAD_/i, '');
+    const normCls = ['A','B','C'].includes(rawCls) ? rawCls : (rawCls[0] || 'A');
     setSelectionRows([...selectionRows, {
       id: Date.now(),
       caliber: cal,
-      class_name: cls,
+      class_name: normCls,
       boxes_10kg: 0,
       boxes_6kg: 0,
       additional_granel_kg: 0,
       total_kg: 0,
       percentage: 0,
-      price_per_kg: 0, // no manual - will be sourced from yield_summary authorized prices
+      price_per_kg: 0,
       total_price: 0
     }]);
   };
@@ -441,15 +443,17 @@ export default function ProductionPage() {
       if (existing.length > 0) {
         const p10 = presentations.find(p => Number(p.kilograms) === 10 || /10/.test(String(p.nombre||'')))?.kilograms || 10;
         const p6 = presentations.find(p => Number(p.kilograms) === 6 || /6/.test(String(p.nombre||'')))?.kilograms || 6;
-        const loaded = existing.map((d, idx) => {
+          const loaded = existing.map((d, idx) => {
           const p10 = presentations.find(p => Number(p.kilograms) === 10 || /10/.test(String(p.nombre||'')))?.kilograms || 10;
           const p6 = presentations.find(p => Number(p.kilograms) === 6 || /6/.test(String(p.nombre||'')))?.kilograms || 6;
           const tkg = parseFloat(d.kg_comercial_i || d.total_kg || 0) || ((parseInt(d.boxes_10kg)||0)*Number(p10) + (parseInt(d.boxes_6kg)||0)*Number(p6) + (parseFloat(d.additional_granel_kg||0)));
           const prc = currentPrices[(d.caliber||'').toUpperCase()] || currentPrices.default || 0;
+          const rawCls = String(d.class_name || 'A').toUpperCase().replace(/CALIDAD_/i, '');
+          const normCls = ['A','B','C'].includes(rawCls) ? rawCls : (rawCls[0] || 'A');
           return {
             id: d.id || (Date.now() + idx),
             caliber: d.caliber || '',
-            class_name: d.class_name || 'A',
+            class_name: normCls,
             boxes_10kg: parseInt(d.boxes_10kg)||0,
             boxes_6kg: parseInt(d.boxes_6kg)||0,
             additional_granel_kg: parseFloat(d.additional_granel_kg || d.granel_kg || 0),
@@ -528,7 +532,7 @@ export default function ProductionPage() {
       // reload existing to avoid dups
       await handleSelectLot(selectedLot);
     } catch (e) {
-      alert('No se pudo guardar borrador');
+      alert('No se pudo guardar borrador' + (e && e.message ? ': ' + e.message : ''));
     } finally { setLoading(false); }
   };
 
@@ -552,7 +556,8 @@ export default function ProductionPage() {
         return false;
       }
       const cl = String(r.class_name||'A').trim().toUpperCase();
-      if (!qualities.some(q => String(q.quality_name||q.display_name||'').toUpperCase() === cl)) {
+      const qUppers = qualities.flatMap(q => [q.quality_name, q.display_name].filter(Boolean).map(s => String(s).toUpperCase()));
+      if (cl && !qUppers.includes(cl) && !['A','B','C'].includes(cl)) {
         alert(`Calidad ${r.class_name} no está en catálogos.`);
         return false;
       }
