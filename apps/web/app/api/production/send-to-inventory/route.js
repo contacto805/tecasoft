@@ -73,7 +73,7 @@ export async function POST(request) {
           ) VALUES (
             ${batchId}, ${lotIdNum}, ${master_batch_id || null}, ${label.id || null},
             'Tarima', ${label.caliber}, ${label.class_name}, 1, ${kg},
-            ${label.packing_date || CURRENT_DATE}, ${label.cold_date || null},
+            ${label.packing_date || new Date().toISOString().slice(0,10)}, ${label.cold_date || null},
             'PENDIENTE_UBICACION', ${'TAR-' + String(label.id || Date.now()).padStart(6,'0')}, 1
           ) RETURNING *
         `;

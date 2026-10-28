@@ -138,7 +138,7 @@ export default function ProductionPage() {
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape' && selectedLot) { setSelectedLot(null); setSelectionRows([]); }
-      if (e.key === '/' && document.activeElement?.tagName !== 'INPUT') { e.preventDefault(); document.querySelector('input[placeholder*="Escribe para filtrar"]')?.focus(); }
+      if (e.key === '/' && document.activeElement?.tagName !== 'INPUT') { e.preventDefault(); document.querySelector('input[placeholder*="Escribe para filtrar"]')?.focus?.(); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -699,7 +699,7 @@ export default function ProductionPage() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-white text-black" style={{'--brand': '#024D32'}}>
+    <div className="min-h-screen flex flex-col bg-white text-black" style={{ '--brand': '#024D32' }}>
       <header className="fixed top-0 left-0 right-0 z-50 bg-white border-b border-black/10" style={{background:'#fff', color:'#000'}}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-8">
@@ -919,15 +919,15 @@ export default function ProductionPage() {
                                 <td className="p-1 border font-mono">{row.caliber}</td>
                                 <td className="p-1 border text-center">{row.class_name}</td>
                                 <td className="p-1 border">
-                                  <input type="number" min="0" aria-label="Cajas 10kg" value={row.boxes_10kg} onChange={e=>updateSelectionRow(row.id,'boxes_10kg', e.target.value)} onKeyDown={e=> e.key==='Enter' && updateSelectionRow(row.id,'boxes_10kg', e.target.value)} className="w-16 border px-1 py-0.5 text-right" placeholder="0" />
+                                  <input type="number" min="0" aria-label="Cajas 10kg" value={row.boxes_10kg} onChange={e=>updateSelectionRow(row.id,'boxes_10kg', e.currentTarget.value)} onKeyDown={e=> e.key==='Enter' && updateSelectionRow(row.id,'boxes_10kg', e.currentTarget.value)} className="w-16 border px-1 py-0.5 text-right" placeholder="0" />
                                   <span className="text-[9px] text-emerald-700 ml-0.5">cajas</span>
                                 </td>
                                 <td className="p-1 border">
-                                  <input type="number" min="0" aria-label="Cajas 6kg" value={row.boxes_6kg} onChange={e=>updateSelectionRow(row.id,'boxes_6kg', e.target.value)} onKeyDown={e=> e.key==='Enter' && updateSelectionRow(row.id,'boxes_6kg', e.target.value)} className="w-16 border px-1 py-0.5 text-right" placeholder="0" />
+                                  <input type="number" min="0" aria-label="Cajas 6kg" value={row.boxes_6kg} onChange={e=>updateSelectionRow(row.id,'boxes_6kg', e.currentTarget.value)} onKeyDown={e=> e.key==='Enter' && updateSelectionRow(row.id,'boxes_6kg', e.currentTarget.value)} className="w-16 border px-1 py-0.5 text-right" placeholder="0" />
                                   <span className="text-[9px] text-emerald-700 ml-0.5">cajas</span>
                                 </td>
                                 <td className="p-1 border">
-                                  <input type="number" min="0" step="0.1" aria-label="Kg granel" value={row.additional_granel_kg} disabled={!verifiedWeighing} onChange={e=>updateSelectionRow(row.id,'additional_granel_kg', e.target.value)} className="w-20 border px-1 py-0.5 text-right" placeholder="0" title={verifiedWeighing ? 'Kg a granel' : 'Requiere pesaje verificado'} />
+                                  <input type="number" min="0" step="0.1" aria-label="Kg granel" value={row.additional_granel_kg} disabled={!verifiedWeighing} onChange={e=>updateSelectionRow(row.id,'additional_granel_kg', e.currentTarget.value)} className="w-20 border px-1 py-0.5 text-right" placeholder="0" title={verifiedWeighing ? 'Kg a granel' : 'Requiere pesaje verificado'} />
                                   <span className="text-[9px] text-emerald-700 ml-0.5">kg</span>
                                 </td>
                                 <td className="p-1 border text-right font-medium">{(parseFloat(row.total_kg)||0).toFixed(1)} <span className="text-[9px] text-emerald-700">kg</span></td>
@@ -950,19 +950,19 @@ export default function ProductionPage() {
                     <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm border-t pt-3">
                       <div>
                         <div className="font-medium mb-1">Proceso (independiente)</div>
-                        <input type="number" value={processKg} onChange={e=>setProcessKg(e.target.value)} className="border px-2 py-1 w-full" placeholder="kg" />
+                        <input type="number" value={processKg} onChange={e=>setProcessKg(parseFloat(e.currentTarget.value)||0)} className="border px-2 py-1 w-full" placeholder="kg" />
                         <div className="text-[10px] text-slate-500 mt-0.5">Usar presentación del catálogo si aplica (ej. 25kg)</div>
                         <select className="text-xs border mt-1 w-full" onChange={()=>{}}><option>Presentación (catálogo)</option>{presentations.map((p,i)=><option key={i}>{p.nombre} ({p.kilograms}kg)</option>)}</select>
                       </div>
                       <div>
                         <div className="font-medium mb-1">Desecho (independiente)</div>
-                        <input type="number" value={wasteKg} onChange={e=>setWasteKg(e.target.value)} className="border px-2 py-1 w-full" placeholder="kg" />
+                        <input type="number" value={wasteKg} onChange={e=>setWasteKg(parseFloat(e.currentTarget.value)||0)} className="border px-2 py-1 w-full" placeholder="kg" />
                         <div className="text-[10px] text-slate-500 mt-0.5">Cajas 25kg usan kg desde catálogo (no fijo)</div>
                       </div>
                       <div>
                         <div className="font-medium mb-1">Merma identificada (por peso + causa)</div>
                         <div className="flex gap-2">
-                          <input type="number" value={mermaKg} onChange={e=>setMermaKg(e.target.value)} className="border px-2 py-1 w-24" placeholder="kg" />
+                          <input type="number" value={mermaKg} onChange={e=>setMermaKg(parseFloat(e.currentTarget.value)||0)} className="border px-2 py-1 w-24" placeholder="kg" />
                           <input value={mermaCausa} onChange={e=>setMermaCausa(e.target.value)} className="border px-2 py-1 flex-1" placeholder="Causa (obligatorio)" />
                         </div>
                         <div className="text-[10px] text-amber-700">Confirmar manualmente. No se calcula como diferencia automática.</div>

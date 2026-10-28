@@ -24,7 +24,8 @@ export async function GET(request) {
   }
 }
 
-// POST: asignar producto a una posición del tráiler
+// POST: asignar producto a una posición del tráiler (BORRADOR - solo registra posición, sin descuento de inventario)
+// El descuento único y la creación de venta/CxC ocurre SOLO en loads/complete (único comando transaccional)
 export async function POST(request) {
   try {
     const body = await request.json();
@@ -33,30 +34,8 @@ export async function POST(request) {
       boxes, kilos, unloadOrder, destination, userResponsible, notes 
     } = body;
 
-    // Validar inventario disponible
-    const [inventory] = await sql`
-      SELECT total_kg FROM lot_inventory 
-      WHERE lot_id = ${lotId} 
-      AND caliber = ${caliber} 
-      AND class_name = ${className}
-    `;
-
-    if (!inventory || parseFloat(inventory.total_kg) < parseFloat(kilos)) {
-      return NextResponse.json({ 
-        error: "Inventario insuficiente" 
-      }, { status: 400 });
-    }
-
-    // Reservar inventario (marcar como "asignado a carga")
-    await sql`
-      UPDATE lot_inventory 
-      SET total_kg = total_kg - ${parseFloat(kilos)}
-      WHERE lot_id = ${lotId} 
-      AND caliber = ${caliber} 
-      AND class_name = ${className}
-    `;
-
-    // Registrar posición en el mapa del tráiler
+    // Solo registra la posición en el mapa del tráiler (draft/reserva visual).
+    // NO se descuenta stock aquí. Fuente canónica: pallet_output_summary.
     const [slot] = await sql`
       INSERT INTO trailer_load_map (
         load_id, slot_position, lot_id, caliber, class_name,
@@ -76,65 +55,42 @@ export async function POST(request) {
   }
 }
 
-// PUT: confirmar carga (finalizar y descontar inventario definitivamente)
+// PUT: confirmar mapa de tráiler (solo marca estado operativo del mapa)
+// El descuento físico único, la venta y la CxC se hacen en UN SOLO comando: loads/complete
+// (evita duplicación de descuentos y ventas al confirmar salida)
 export async function PUT(request) {
   try {
     const body = await request.json();
-    const { loadId, userId, userName } = body;
+    const { loadId } = body;
 
-    // Obtener todas las posiciones de la carga
     const slots = await sql`
       SELECT * FROM trailer_load_map WHERE load_id = ${loadId}
     `;
 
     if (slots.length === 0) {
-      return NextResponse.json({ error: "No hay producto asignado a esta carga" }, { status: 400 });
+      return NextResponse.json({ error: "No hay posiciones asignadas" }, { status: 400 });
     }
 
-    // Descontar inventario definitivamente y actualizar lote
-    for (const slot of slots) {
-      // Actualizar totales del lote
-      await sql`
-        UPDATE lots 
-        SET 
-          total_kg_sold = COALESCE(total_kg_sold, 0) + ${slot.kilos},
-          total_kg_inventory = COALESCE(total_kg_inventory, 0) - ${slot.kilos}
-        WHERE id = ${slot.lot_id}
-      `;
-
-      // Registrar en trazabilidad
-      await sql`
-        INSERT INTO traceability_log (
-          lot_id, event_type, event_category, event_description,
-          related_entity_type, related_entity_id, user_name, metadata
-        ) VALUES (
-          ${slot.lot_id}, 'sale', 'load_confirmed', 
-          'Producto cargado y confirmado en tráiler',
-          'load_history', ${loadId}, ${userName || 'Sistema'},
-          ${JSON.stringify({ slot_position: slot.slot_position, kilos: slot.kilos, caliber: slot.caliber })}
-        )
-      `;
-    }
-
-    // Actualizar estado de la carga
+    // Solo actualiza estado del mapa / carga (sin tocar inventario ni crear ventas)
     await sql`
       UPDATE load_history 
-      SET payment_status = 'confirmed'
+      SET payment_status = 'confirmed', updated_at = NOW()
       WHERE id = ${loadId}
     `;
 
     return NextResponse.json({ 
       success: true, 
-      message: "Carga confirmada y inventario descontado", 
+      message: "Mapa de tráiler confirmado (descuento y venta en loads/complete)", 
       slotsProcessed: slots.length 
     });
   } catch (error) {
-    console.error("Error confirming load:", error);
+    console.error("Error confirming trailer map:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
 
-// DELETE: cancelar asignación de una posición
+// DELETE: cancelar asignación de una posición del mapa (borrador)
+// Como el assign ya no descuenta, solo elimina la posición del mapa
 export async function DELETE(request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -144,28 +100,9 @@ export async function DELETE(request) {
       return NextResponse.json({ error: "slotId requerido" }, { status: 400 });
     }
 
-    // Obtener datos de la posición
-    const [slot] = await sql`
-      SELECT * FROM trailer_load_map WHERE id = ${parseInt(slotId)}
-    `;
-
-    if (!slot) {
-      return NextResponse.json({ error: "Posición no encontrada" }, { status: 404 });
-    }
-
-    // Devolver inventario
-    await sql`
-      UPDATE lot_inventory 
-      SET total_kg = total_kg + ${slot.kilos}
-      WHERE lot_id = ${slot.lot_id} 
-      AND caliber = ${slot.caliber} 
-      AND class_name = ${slot.class_name}
-    `;
-
-    // Eliminar posición
     await sql`DELETE FROM trailer_load_map WHERE id = ${parseInt(slotId)}`;
 
-    return NextResponse.json({ success: true, message: "Posición liberada e inventario restaurado" });
+    return NextResponse.json({ success: true, message: "Posición liberada (sin movimiento de stock en borrador)" });
   } catch (error) {
     console.error("Error deleting trailer slot:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
