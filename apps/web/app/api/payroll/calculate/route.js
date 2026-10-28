@@ -223,6 +223,8 @@ export async function POST(request) {
       // Actual recording of employee_loan_payments + remaining_balance reduction happens exactly once at payroll APPROVE (idempotent by period+loan+week).
 
       // SAVE NEW MODEL: payroll_attendance_calculations (trace) - include unified loan deductions
+      // Safe upsert (no constraint dependency)
+      await sql`DELETE FROM payroll_attendance_calculations WHERE payroll_period_id = ${periodId} AND employee_id = ${emp.employee_id}`;
       await sql`
         INSERT INTO payroll_attendance_calculations (
           payroll_period_id, employee_id, employee_name,
@@ -239,23 +241,6 @@ export async function POST(request) {
           ${otherBonuses}, ${totalDeduc}, ${netSalary},
           ${JSON.stringify(attIds)}, ${valStatus}, ${valNote || ('incluye ' + empLoans.length + ' préstamos/adelantos')}
         )
-        ON CONFLICT (payroll_period_id, employee_id) DO UPDATE SET
-          days_present = EXCLUDED.days_present,
-          days_retardo = EXCLUDED.days_retardo,
-          absences = EXCLUDED.absences,
-          total_late_minutes = EXCLUDED.total_late_minutes,
-          overtime_hours = EXCLUDED.overtime_hours,
-          total_hours_worked = EXCLUDED.total_hours_worked,
-          base_salary_calculated = EXCLUDED.base_salary_calculated,
-          inasistencia_deduction = EXCLUDED.inasistencia_deduction,
-          perfect_attendance_bonus = EXCLUDED.perfect_attendance_bonus,
-          other_bonuses = EXCLUDED.other_bonuses,
-          total_deductions = EXCLUDED.total_deductions,
-          calculated_net_salary = EXCLUDED.calculated_net_salary,
-          source_attendance_ids = EXCLUDED.source_attendance_ids,
-          validation_status = EXCLUDED.validation_status,
-          validation_notes = EXCLUDED.validation_notes,
-          synced_at = CURRENT_TIMESTAMP
       `;
 
       grandTotal += netSalary;
