@@ -31,6 +31,24 @@ export async function POST(request) {
     const payDate = paymentDate || new Date().toISOString().split("T")[0];
     const folioRef = reference || `NOM-${period.folio || pid}`;
 
+    // Idempotency: do not create duplicate bank movement for same ref + payroll
+    const existingBank = await sql`
+      SELECT id FROM bank_movements 
+      WHERE suggested_entity_type = 'payroll_period' 
+        AND suggested_entity_id = ${pid}
+        AND reference = ${folioRef}
+        AND amount = ${toPay}
+      LIMIT 1
+    `;
+    if (existingBank.length > 0) {
+      return NextResponse.json({ 
+        success: true, 
+        message: "Pago ya registrado (idempotente por referencia)", 
+        paid: toPay, 
+        duplicate: true 
+      });
+    }
+
     // 1. Registrar como movimiento bancario (egreso) - NO genera costo nuevo
     await sql`
       INSERT INTO bank_movements (

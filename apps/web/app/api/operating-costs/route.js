@@ -199,6 +199,16 @@ export async function PUT(request) {
     // Recalculate amount_mxn if amount or exchange_rate changed
     const amountMxn = (updates.amount || oldCost.amount) * (updates.exchange_rate || oldCost.exchange_rate);
 
+    // Handle explicit approve action (devengado/provisión) - payment is separate via bank_movements
+    let finalStatus = updates.status || oldCost.status;
+    let finalAuthBy = updates.authorized_by || oldCost.authorized_by;
+    let finalAuthAt = updates.authorized_at || oldCost.authorized_at;
+    if (updates.action === 'approve' || updates.status === 'aprobado') {
+      finalStatus = 'aprobado';
+      finalAuthBy = updates.authorized_by || 'Sistema';
+      finalAuthAt = new Date();
+    }
+
     const [updated] = await sql`
       UPDATE operating_costs
       SET
@@ -218,9 +228,9 @@ export async function PUT(request) {
         base_kg = COALESCE(${updates.base_kg}, base_kg),
         notes = COALESCE(${updates.notes}, notes),
         receipt_url = COALESCE(${updates.receipt_url}, receipt_url),
-        status = COALESCE(${updates.status}, status),
-        authorized_by = COALESCE(${updates.authorized_by}, authorized_by),
-        authorized_at = COALESCE(${updates.authorized_at}, authorized_at),
+        status = ${finalStatus},
+        authorized_by = ${finalAuthBy},
+        authorized_at = ${finalAuthAt},
         updated_at = NOW()
       WHERE id = ${id}
       RETURNING *
@@ -236,6 +246,66 @@ export async function PUT(request) {
     return NextResponse.json(updated);
   } catch (error) {
     console.error('Error updating operating cost:', error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+// Support pay action on operating cost: registers bank egress (no new cost), marks partial/paid on operating_costs
+// Provision (aprobado) happened earlier; payment is separate event.
+export async function PATCH(request) {
+  try {
+    const body = await request.json();
+    const { id, action, paidBy = 'Administración', amount, paymentDate, reference = '' } = body;
+
+    if (!id || action !== 'pay') {
+      return NextResponse.json({ error: 'id y action=pay requeridos' }, { status: 400 });
+    }
+
+    const cid = parseInt(id);
+    const [cost] = await sql`SELECT * FROM operating_costs WHERE id = ${cid}`;
+    if (!cost) return NextResponse.json({ error: 'Costo operativo no encontrado' }, { status: 404 });
+
+    const totalCost = parseFloat(cost.amount_mxn || cost.amount || 0);
+    const paidSoFar = parseFloat(cost.paid_amount || 0);
+    const toPay = amount ? parseFloat(amount) : Math.max(0, totalCost - paidSoFar);
+    if (toPay <= 0) return NextResponse.json({ error: 'Nada por pagar' }, { status: 400 });
+
+    const pDate = paymentDate || new Date().toISOString().split('T')[0];
+    const ref = reference || `OP-${cost.folio || cid}`;
+
+    // Idempotencia ref + entity
+    const dup = await sql`
+      SELECT id FROM bank_movements 
+      WHERE reference = ${ref} AND suggested_entity_type = 'operating_cost' AND suggested_entity_id = ${cid}
+      LIMIT 1
+    `;
+    if (dup.length) {
+      return NextResponse.json({ success: true, message: 'Pago ya registrado', duplicate: true });
+    }
+
+    // Bank egress (no new gasto) - provision was separate event at approve
+    await sql`
+      INSERT INTO bank_movements (movement_date, description, reference, beneficiary, charge, credit, amount, currency, concept, status, suggested_entity_type, suggested_entity_id, category)
+      VALUES (${pDate}, ${`Pago costo operativo ${cost.folio || ''}`}, ${ref}, ${cost.provider_id || 'Operativo'}, ${toPay}, 0, ${toPay}, ${cost.currency || 'MXN'}, 'Costo operativo', 'pendiente', 'operating_cost', ${cid}, 'Gasto operativo')
+    `;
+
+    // Update paid tracking and status (provision != payment)
+    const newPaid = Math.min(totalCost, paidSoFar + toPay);
+    const newSt = newPaid >= totalCost ? 'pagado' : 'aprobado';
+
+    await sql`
+      UPDATE operating_costs 
+      SET status = ${newSt},
+          paid_amount = ${newPaid},
+          paid_at = ${pDate},
+          notes = COALESCE(notes, '') || ' | Pago bancario ' || ${ref} || ' (' || ${toPay} || ')',
+          updated_at = NOW()
+      WHERE id = ${cid}
+    `;
+
+    return NextResponse.json({ success: true, paid: toPay, status: newSt });
+  } catch (error) {
+    console.error('Error paying operating cost:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

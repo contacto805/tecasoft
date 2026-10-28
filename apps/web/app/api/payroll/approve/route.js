@@ -70,6 +70,84 @@ export async function POST(request) {
       WHERE id = ${parseInt(periodId)}
     `;
 
+    // 3b. Apply loan deductions exactly once at approval time (devengado). Idempotent.
+    // Use authorized weekly deductions only. Reduces remaining_balance. Records history.
+    // No bank income generated (deduction from salary).
+    try {
+      const periodEmployees = await sql`
+        SELECT DISTINCT employee_id, employee_name FROM payroll_records 
+        WHERE payroll_period_id = ${parseInt(periodId)}
+      `;
+      const empIds = periodEmployees.map(e => e.employee_id);
+
+      if (empIds.length > 0) {
+        const loansToApply = await sql`
+          SELECT * FROM employee_loans 
+          WHERE employee_id = ANY(${empIds})
+            AND (status IN ('aprobado','activo','active') OR status IS NULL OR status = 'pendiente')
+            AND (paid_at IS NULL)
+            AND COALESCE(remaining_balance, amount) > 0
+            AND COALESCE(descuento_semanal, 0) > 0
+        `;
+
+        for (const ln of loansToApply) {
+          const wDed = parseFloat(ln.descuento_semanal) || 0;
+          if (wDed <= 0) continue;
+
+          // Idempotent per loan + week
+          const already = await sql`
+            SELECT id FROM employee_loan_payments 
+            WHERE loan_id = ${ln.id} AND fecha BETWEEN ${period.week_start_date} AND ${period.week_end_date}
+            LIMIT 1
+          `;
+          if (already.length > 0) continue;
+
+          const pfolio = `ABO-PR-${new Date().getFullYear()}-${String(ln.id).padStart(4,'0')}`;
+          await sql`
+            INSERT INTO employee_loan_payments (loan_id, monto, fecha, semana, anno, concepto, applied_by, folio)
+            VALUES (
+              ${ln.id}, ${wDed}, ${period.week_start_date}, 
+              EXTRACT(WEEK FROM ${period.week_start_date}::date), 
+              EXTRACT(YEAR FROM ${period.week_start_date}::date),
+              ${'Descuento semanal por nómina aprobada (Asistencia • Préstamos y Adelantos)'},
+              ${approvedBy}, ${pfolio}
+            )
+          `;
+
+          const paidQ = await sql`SELECT COALESCE(SUM(monto), 0) as total_paid FROM employee_loan_payments WHERE loan_id = ${ln.id}`;
+          const paid = parseFloat(paidQ[0]?.total_paid || 0);
+          const orig = parseFloat(ln.amount || ln.monto_original || 0);
+          const newRemaining = Math.max(0, orig - paid);
+
+          await sql`
+            UPDATE employee_loans 
+            SET remaining_balance = ${newRemaining},
+                status = ${newRemaining <= 0 ? 'liquidado' : 'activo'},
+                paid_at = ${newRemaining <= 0 ? new Date().toISOString() : null},
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ${ln.id}
+          `;
+
+          // Also record in payroll_deductions for traceability
+          await sql`
+            INSERT INTO payroll_deductions (
+              payroll_period_id, employee_id, employee_name,
+              deduction_type, concept, amount, deduction_date,
+              week_start_date, week_end_date, authorized_by, status, notes
+            ) VALUES (
+              ${parseInt(periodId)}, ${ln.employee_id}, ${ln.employee_name},
+              'prestamo', ${'Descuento semanal préstamo/adelanto ' + (ln.folio || ln.id)},
+              ${wDed}, ${period.week_start_date},
+              ${period.week_start_date}, ${period.week_end_date}, ${approvedBy}, 'aplicado',
+              ${'Desde aprobación nómina. employee_loans id=' + ln.id}
+            ) ON CONFLICT DO NOTHING
+          `;
+        }
+      }
+    } catch (eLoan) {
+      console.error('Loan apply at approve (non-fatal):', eLoan);
+    }
+
     // 4. Crear gasto automático en el módulo de gastos
     const expenseDate = period.week_end_date; // Usar el último día de la semana
     const weekLabel = `${new Date(period.week_start_date).toLocaleDateString('es-MX')} - ${new Date(period.week_end_date).toLocaleDateString('es-MX')}`;
