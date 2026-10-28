@@ -11,6 +11,28 @@ export async function POST(request) {
       return NextResponse.json({ error: "Se requieren fechas de la semana" }, { status: 400 });
     }
 
+    // LOCK: si ya está aprobado/pagado, NO recalcular desde asistencia actual (evita cambio silencioso post-cierre)
+    let [existingPeriod] = await sql`
+      SELECT * FROM payroll_periods 
+      WHERE week_start_date = ${week_start_date} AND week_end_date = ${week_end_date}
+    `;
+    if (existingPeriod && ['aprobado', 'pagado', 'parcial'].includes((existingPeriod.status || '').toLowerCase())) {
+      const traces = await sql`
+        SELECT * FROM payroll_attendance_calculations 
+        WHERE payroll_period_id = ${existingPeriod.id}
+        ORDER BY employee_name ASC
+      `;
+      return NextResponse.json({
+        success: true,
+        period_id: existingPeriod.id,
+        total_amount: existingPeriod.total_amount,
+        employee_count: existingPeriod.total_employees,
+        calculations: traces,
+        locked: true,
+        message: "Período cerrado/aprobado. Se usa snapshot de trazabilidad (no se recalcula desde asistencia actual)"
+      });
+    }
+
     // 1. Fetch employees
     const employees = await sql`SELECT * FROM employee_profiles WHERE is_active = true ORDER BY employee_name ASC`;
 
@@ -20,6 +42,19 @@ export async function POST(request) {
       WHERE date BETWEEN ${week_start_date} AND ${week_end_date}
       ORDER BY employee_id, date ASC
     `;
+
+    // 2b. Incidentes AUTORIZADOS solamente afectan descuentos finales (separar propuesto vs autorizado)
+    const authInc = await sql`
+      SELECT * FROM attendance_incidents 
+      WHERE date BETWEEN ${week_start_date} AND ${week_end_date}
+        AND (status IN ('autorizado','aprobado','authorized') OR discount_authorized > 0)
+    `;
+    const authByEmpDate = {};
+    authInc.forEach(i => {
+      const k = `${i.employee_id}|${i.date}`;
+      if (!authByEmpDate[k]) authByEmpDate[k] = [];
+      authByEmpDate[k].push(i);
+    });
 
     // 3. Fetch existing bonuses for week
     const bonuses = await sql`
@@ -96,11 +131,27 @@ export async function POST(request) {
       if (useEff >= 7.5) baseCalc = daily;
       else if (useEff >= 3.5) baseCalc = daily * 0.5;
 
-      // Penalty for retard (1h like existing): each retardo discounts 1 hour pay equivalent
-      const retardoDed = (daysRetardo * (daily / 8));
+      // SOLO descuentos AUTORIZADOS (incidents con status autorizado o discount_authorized >0)
+      // Evita deducciones automáticas que puedan infringir legislación (separar propuesto/autorizado)
+      let authRetardoDays = 0;
+      let authAbsences = 0;
+      empAtts.forEach(r => {
+        const k = `${r.employee_id}|${r.date}`;
+        const incs = authByEmpDate[k] || [];
+        if (incs.length > 0) {
+          incs.forEach(ic => {
+            if ((ic.incident_type || '').includes('retardo') || (ic.discount_authorized || 0) > 0) authRetardoDays++;
+            if ((ic.incident_type || '').includes('falta') || (ic.incident_type || '').includes('ausente')) authAbsences++;
+          });
+        } else {
+          // si no hay incidente autorizado, no aplicar deducción por este día (solo proposed en attendance)
+        }
+      });
+      // Penalty for retard (1h like existing): SOLO autorizados
+      const retardoDed = (authRetardoDays * (daily / 8));
 
-      // Deduction by absences (full days)
-      const absenceDed = absences * daily;
+      // Deduction by absences (full days) - SOLO autorizados
+      const absenceDed = authAbsences * daily;
 
       // Perfect attendance bonus: no faltas + no retardos (and worked at least some days)
       const perfectBonus = (absences === 0 && daysRetardo === 0 && daysWorked >= 1) ? daily : 0;

@@ -22,14 +22,14 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Período no encontrado' }, { status: 404 });
     }
 
-    if (period.status === 'aprobado') {
+    if (['aprobado', 'pagado'].includes((period.status || '').toLowerCase())) {
       return NextResponse.json(
-        { error: 'Esta nómina ya fue aprobada' },
+        { error: 'Esta nómina ya fue aprobada o pagada' },
         { status: 400 }
       );
     }
 
-    // 2. Verificar duplicación en gastos
+    // 2. Verificar duplicación en gastos (una sola vez)
     const duplicateCheck = await sql`
       SELECT e.* 
       FROM expenses e
@@ -47,6 +47,17 @@ export async function POST(request) {
         duplicates: duplicateCheck,
         requiresSuperAdminApproval: true
       }, { status: 409 });
+    }
+
+    // Asegurar que el total esté actualizado desde el snapshot de cálculo (si existe)
+    const [traceSum] = await sql`
+      SELECT COALESCE(SUM(calculated_net_salary), 0) as snap_total, COUNT(*) as cnt
+      FROM payroll_attendance_calculations 
+      WHERE payroll_period_id = ${parseInt(periodId)}
+    `;
+    if (traceSum && parseFloat(traceSum.snap_total) > 0) {
+      await sql`UPDATE payroll_periods SET total_amount = ${parseFloat(traceSum.snap_total)}, total_employees = ${parseInt(traceSum.cnt)} WHERE id = ${parseInt(periodId)}`;
+      period.total_amount = parseFloat(traceSum.snap_total);
     }
 
     // 3. Actualizar estado del período a aprobado

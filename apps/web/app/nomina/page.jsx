@@ -263,7 +263,25 @@ export default function NominaPage() {
                             <button onClick={() => handleViewTraces(r.id)} className="text-brand-600 hover:underline text-xs">Ver Trazabilidad Asistencia</button>
                           </td>
                           <td className="px-5 py-3 text-xs">
+                            <button onClick={() => handleViewTraces(r.id)} className="text-brand-600 hover:underline text-xs">Ver Trazabilidad Asistencia</button>
+                          </td>
+                          <td className="px-5 py-3 text-xs space-x-1">
                             <button onClick={() => router.push(`/nomina/${r.id}`)} className="text-brand-700 hover:underline">Ver Detalle</button>
+                            {(['aprobado','parcial'].includes((r.status||'').toLowerCase()) || (parseFloat(r.paid_amount||0) < parseFloat(r.total_amount||0))) && (
+                              <button 
+                                onClick={async () => {
+                                  if (!confirm('¿Confirmar pago de nómina? (egreso bancario en esta semana, no duplica costo)')) return;
+                                  const res = await fetch('/api/payroll/pay', { 
+                                    method:'POST', 
+                                    headers:{'Content-Type':'application/json'}, 
+                                    body: JSON.stringify({ periodId: r.id, paidBy: 'Administración' }) 
+                                  });
+                                  const d = await res.json();
+                                  if (res.ok) { alert('Pago registrado: ' + (d.message || '')); fetchPeriods(); } else alert(d.error || 'Error');
+                                }}
+                                className="text-emerald-700 hover:underline text-xs border px-1 rounded"
+                              >Pagar</button>
+                            )}
                           </td>
                         </tr>
                       ))
