@@ -232,7 +232,6 @@ export async function POST(request) {
       await sql`
         INSERT INTO attendance_incidents (employee_id, date, incident_type, schedule_type, jornada_type, difference, discount_proposed)
         VALUES (${employeeId}, ${date}, ${inc.type}, ${enriched.schedule_type}, ${enriched.jornada_type}, ${inc.diff || 0}, ${inc.proposed || 0})
-        ON CONFLICT DO NOTHING
       `;
     }
 

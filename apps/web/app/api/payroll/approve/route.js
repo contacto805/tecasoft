@@ -140,7 +140,7 @@ export async function POST(request) {
               ${wDed}, ${period.week_start_date},
               ${period.week_start_date}, ${period.week_end_date}, ${approvedBy}, 'aplicado',
               ${'Desde aprobación nómina. employee_loans id=' + ln.id}
-            ) ON CONFLICT DO NOTHING
+            )
           `;
         }
       }

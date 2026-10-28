@@ -239,7 +239,7 @@ export async function POST(request) {
           ${lateTotal}, ${overtime}, ${hrsWorked},
           ${baseCalc}, ${absenceDed}, ${perfectBonus},
           ${otherBonuses}, ${totalDeduc}, ${netSalary},
-          ${JSON.stringify(attIds)}, ${valStatus}, ${valNote || ('incluye ' + empLoans.length + ' préstamos/adelantos')}
+          ${JSON.stringify(attIds || [])}, ${valStatus}, ${valNote || ('incluye ' + empLoans.length + ' préstamos/adelantos')}
         )
       `;
 

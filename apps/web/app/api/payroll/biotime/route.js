@@ -237,13 +237,12 @@ async function generateNominaFromBioTime(weekStart, weekEnd, approvedBy = "BioTi
     totalAmount += base;
     empCount++;
 
-    // Upsert payroll_record
+    // Safe upsert (no constraint dependency)
+    await sql`DELETE FROM payroll_records WHERE payroll_period_id = ${periodId} AND employee_id = ${att.employee_id}`;
     await sql`
       INSERT INTO payroll_records (payroll_period_id, employee_id, employee_name, department, days_worked, hours_worked, base_salary, bonuses, deductions, net_salary)
       VALUES (${periodId}, ${att.employee_id}, ${att.employee_name || prof.employee_name || ""}, ${prof.department || "General"},
               ${days}, ${Number(att.hours|| days*8)}, ${base}, 0, 0, ${base})
-      ON CONFLICT (payroll_period_id, employee_id) 
-      DO UPDATE SET days_worked = ${days}, hours_worked = ${Number(att.hours||days*8)}, base_salary=${base}, net_salary=${base}
     `;
   }
 
