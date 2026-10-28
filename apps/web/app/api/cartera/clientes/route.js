@@ -6,13 +6,13 @@ export async function GET() {
     const rows = await sql`
       SELECT 
         c.id, c.customer_name, c.destination, c.rfc,
-        COUNT(DISTINCT v.id) as viajes,
-        COALESCE(SUM(v.valor_usd),0) as total_vendido,
+        COUNT(DISTINCT lh.id) as cargas,
+        COALESCE(SUM(n.importe_original_usd),0) as total_vendido,
         COALESCE(SUM(n.total_abonado_usd),0) as total_pagado,
         COALESCE(SUM(n.saldo_usd),0) as saldo,
-        COUNT(DISTINCT CASE WHEN n.saldo_usd > 0.5 THEN n.id END) as facturas_pendientes
+        COUNT(DISTINCT CASE WHEN n.saldo_usd > 0.5 THEN n.id END) as notas_pendientes
       FROM customers c
-      LEFT JOIN viajes v ON v.customer_id = c.id
+      LEFT JOIN load_history lh ON lh.customer_id = c.id
       LEFT JOIN notas n ON n.customer_id = c.id
       GROUP BY c.id, c.customer_name, c.destination, c.rfc
       ORDER BY saldo DESC

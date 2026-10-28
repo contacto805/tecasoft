@@ -57,6 +57,15 @@ export async function POST(request) {
         ${rest.comprobante_url || null}, ${rest.observaciones || null}, ${rest.created_by || 'sistema'}
       ) RETURNING *
     `;
+
+    // Pago reportado = ingreso bancario pendiente de validación (no reduce saldo hasta aplicación)
+    try {
+      await sql`
+        INSERT INTO bank_movements (movement_date, description, reference, beneficiary, credit, amount, currency, status, suggested_entity_type, suggested_entity_id, suggested_document_type, suggested_document_id)
+        VALUES (${rest.fecha || new Date().toISOString().slice(0,10)}, ${'Abono cliente ' + (row.id)}, ${rest.referencia_bancaria || folio}, ${row.customer_name || 'cliente'}, ${equiv}, ${equiv}, ${moneda_recibida || 'USD'}, 'pending', 'abono', ${row.id}, 'abono', ${row.id})
+      `;
+    } catch(_) {}
+
     return NextResponse.json(row, { status: 201 });
   } catch (e) {
     return NextResponse.json({ error: "Error crear abono" }, { status: 500 });

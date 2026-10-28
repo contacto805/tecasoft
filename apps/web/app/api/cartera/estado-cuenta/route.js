@@ -9,38 +9,30 @@ export async function GET(request) {
 
     const cid = parseInt(customerId);
 
-    // Aggregate from new module + existing for full trace
     const movimientos = [];
 
-    // Viajes
-    const viajes = await sql`
-      SELECT 'Viaje' as tipo, v.folio, v.fecha_salida as fecha, v.valor_usd as cargo, 0 as abono, v.estatus, v.destino
-      FROM viajes v WHERE v.customer_id = ${cid}
-    `;
-    viajes.forEach(r => movimientos.push({ ...r, cargo: parseFloat(r.cargo)||0, abono: 0 }));
-
-    // Notas
+    // Notas = fuente canónica de venta/CxC (una por embarque comercial, incluso multi-lote)
     const notas = await sql`
       SELECT 'Nota' as tipo, n.folio, n.fecha, n.importe_original_usd as cargo, n.total_abonado_usd as abono, n.saldo_usd as saldo, n.estatus
       FROM notas n WHERE n.customer_id = ${cid}
     `;
     notas.forEach(r => movimientos.push({ ...r, cargo: parseFloat(r.cargo)||0, abono: parseFloat(r.abono)||0 }));
 
-    // Facturas CFDI
+    // Facturas CFDI (adjuntas, nunca generan cargo adicional)
     const facts = await sql`
       SELECT 'Factura' as tipo, f.folio_interno as folio, f.fecha_timbrado as fecha, f.importe_usd as cargo, 0 as abono, f.uso_factura as estatus
       FROM cfdi_facturas f WHERE f.customer_id = ${cid}
     `;
     facts.forEach(r => movimientos.push({ ...r, cargo: parseFloat(r.cargo)||0, abono: 0 }));
 
-    // Abonos
+    // Abonos (depósitos reportados)
     const abs = await sql`
       SELECT 'Depósito' as tipo, a.folio, a.fecha, 0 as cargo, a.equivalente_usd as abono, a.moneda_recibida as moneda
       FROM abonos a WHERE a.customer_id = ${cid}
     `;
     abs.forEach(r => movimientos.push({ ...r, cargo: 0, abono: parseFloat(r.abono)||0 }));
 
-    // Aplicaciones as separate for detail
+    // Aplicaciones
     const apps = await sql`
       SELECT 'Aplicación' as tipo, 'AP-'||ap.id as folio, ap.fecha_aplicacion as fecha, 0 as cargo, ap.monto_aplicado_usd as abono, n.folio as ref_nota
       FROM abono_aplicaciones ap LEFT JOIN notas n ON ap.nota_id = n.id
@@ -48,7 +40,14 @@ export async function GET(request) {
     `;
     apps.forEach(r => movimientos.push({ ...r, cargo: 0, abono: parseFloat(r.abono)||0 }));
 
-    // Also pull from existing customer_accounts + load_history for compatibility
+    // load_history solo como info (sin duplicar cargo)
+    const loadsInfo = await sql`
+      SELECT 'Carga' as tipo, lh.factura_folio as folio, lh.load_date as fecha, 0 as cargo, 0 as abono, lh.payment_status as estatus
+      FROM load_history lh WHERE lh.customer_id = ${cid}
+    `;
+    loadsInfo.forEach(r => movimientos.push({ ...r, cargo: 0, abono: 0 }));
+
+    // legacy accounts (compat)
     const legacy = await sql`
       SELECT 'Cuenta' as tipo, ca.description as folio, ca.trip_date as fecha, 
              CASE WHEN ca.transaction_type ILIKE '%charge%' THEN ca.amount_usd ELSE 0 END as cargo,
@@ -57,17 +56,14 @@ export async function GET(request) {
     `;
     legacy.forEach(r => movimientos.push({ ...r, cargo: parseFloat(r.cargo)||0, abono: parseFloat(r.abono)||0 }));
 
-    // Sort chrono
+    // Sort + running
     movimientos.sort((a,b) => (a.fecha || '').localeCompare(b.fecha || ''));
-
-    // Running saldo (USD primary)
     let saldo = 0;
     const out = movimientos.map(m => {
       saldo += (parseFloat(m.cargo)||0) - (parseFloat(m.abono)||0);
       return { ...m, saldo_running: Math.round(saldo * 100) / 100 };
     });
 
-    // Summary
     const totalCargo = out.reduce((s, m) => s + (parseFloat(m.cargo)||0), 0);
     const totalAbono = out.reduce((s, m) => s + (parseFloat(m.abono)||0), 0);
     const saldoPend = Math.round((totalCargo - totalAbono) * 100) / 100;
@@ -78,7 +74,6 @@ export async function GET(request) {
         total_cargo_usd: Math.round(totalCargo * 100) / 100,
         total_abono_usd: Math.round(totalAbono * 100) / 100,
         saldo_pendiente_usd: saldoPend,
-        total_viajes: viajes.length,
         total_abonos: abs.length
       }
     });

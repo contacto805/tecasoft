@@ -1358,100 +1358,77 @@ export default function EmbarquesPage() {
         }
       }
 
-      // Agrupar por lote porque puede haber fruta de lotes distintos
-      const groups = {};
-      trailerPalletsList.forEach(p => {
-        const key = p.lot_id || 'na';
-        if (!groups[key]) groups[key] = { lot_id: p.lot_id, pallets: [] };
-        groups[key].pallets.push(p);
+      const loadDate = new Date().toISOString().split('T')[0];
+
+      // Una sola llamada comercial con TODOS los detalles (soporta multi-lote). 
+      // Trailer-map draft visual; el descuento + UNA nota/CxC ocurre solo en loads/complete.
+      const allForSave = [...liveCaliberRows];
+      caliberPriceTable.filter(r => !liveCaliberRows.some(l => (l.caliber||'').toLowerCase()===(r.caliber||'').toLowerCase())).forEach(r => allForSave.push(r));
+
+      const caliberDetailsForSave = allForSave.map(r => {
+        // find a pallet of this caliber to carry its lot_id
+        const sample = trailerPalletsList.find(p => (p.caliber||'').toLowerCase() === (r.caliber||'').toLowerCase());
+        return {
+          lot_id: sample?.lot_id || null,
+          caliber: r.caliber,
+          class_name: sample?.class_name || 'Primera',
+          pallets: 1,
+          boxes: parseInt(r.boxes) || 0,
+          total_kg: Math.round((parseInt(r.boxes) || 0) * 10),
+          price_per_kg: parseFloat(r.price) || 0
+        };
+      });
+
+      const payload = {
+        customer_id: selectedCustomer.id,
+        load_date: loadDate,
+        driver_name: driverName,
+        truck_plates: tractoPlates,
+        trailer_plates: termoPlates || trailerPlates,
+        caliber_details: caliberDetailsForSave,
+        currency: moneda,
+        notes: `Embarque Nota Venta • Folio:${currentFolio || ''} • SADER:${saderRegistro} • Chofer:${driverName} • Tracto:${tractoPlates} Termo:${termoPlates} • Dir:${selectedCustomer.destination || ''} • Temp:${temperaturaConsignacion || ''} • Termografo:${termografoUrl || ''}`,
+        factura_folio: currentFolio || '',
+        nota_total_amount: notaMoney,
+        nota_total_kg: notaKg
+      };
+
+      const res = await fetch('/api/loads/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
       });
 
       let confirmed = 0;
       let mainLoadId = null;
+      if (res.ok) {
+        confirmed = 1;
+        const data = await res.json();
+        mainLoadId = data?.load?.id || data?.id || null;
+      }
 
-      const loadDate = new Date().toISOString().split('T')[0];
-
-      // Build caliber_details from the price table (per caliber prices) so they are saved to load_details and reflected in ALL sales/trip sections
-      const allForSave = [...liveCaliberRows];
-      caliberPriceTable.filter(r => !liveCaliberRows.some(l => (l.caliber||'').toLowerCase()===(r.caliber||'').toLowerCase())).forEach(r => allForSave.push(r));
-      const caliberDetailsForSave = allForSave.map(r => ({
-        caliber: r.caliber,
-        class_name: 'Primera',
-        pallets: 1,
-        boxes: parseInt(r.boxes) || 0,
-        total_kg: Math.round((parseInt(r.boxes) || 0) * 10),
-        price_per_kg: parseFloat(r.price) || 0
-      }));
-
-      for (const g of Object.values(groups)) {
-        const pals = g.pallets;
-        const totPallets = pals.length;
-        const totBoxes = pals.reduce((s, pp) => s + (pp.boxes || 0), 0);
-        const totKg = pals.reduce((s, pp) => s + Math.round(pp.kilos), 0);
-
-        // Use per-caliber prices from table (or fallback to avg from nota)
-        const priceAvg = (notaKg > 0) ? (notaMoney / notaKg) : 0;
-        const detailsToUse = caliberDetailsForSave.length > 0 ? caliberDetailsForSave : [{
-          caliber: pals[0]?.caliber || 'Extra',
-          class_name: pals[0]?.class_name || 'Primera',
-          pallets: totPallets,
-          boxes: totBoxes,
-          total_kg: totKg,
-          price_per_kg: priceAvg
-        }];
-
-        const payload = {
-          lot_id: g.lot_id || null,
-          customer_id: selectedCustomer.id,
-          load_date: loadDate,
-          driver_name: driverName,
-          truck_plates: tractoPlates,
-          trailer_plates: termoPlates || trailerPlates,
-          caliber_details: detailsToUse,
-          currency: moneda,
-          notes: `Embarque Nota Venta • Folio:${currentFolio || ''} • SADER:${saderRegistro} • Chofer:${driverName} • Tracto:${tractoPlates} Termo:${termoPlates} • Dir:${selectedCustomer.destination || ''} • Temp:${temperaturaConsignacion || ''} • Termografo:${termografoUrl || ''}`,
-          factura_folio: currentFolio || '',
-          nota_total_amount: notaMoney,
-          nota_total_kg: notaKg
-        };
-
-        const res = await fetch('/api/loads/complete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-
-        if (res.ok) {
-          confirmed++;
-          const data = await res.json();
-          const returnedLoadId = data?.load?.id || data?.id;
-          if (returnedLoadId && !mainLoadId) mainLoadId = returnedLoadId;
-
-          // Save trailer slots into trailer_load_map — sequential numbering fila por fila (1 left-top, 2 right-top, 3 left-next...)
-          if (returnedLoadId) {
-            for (let j = 0; j < pals.length; j++) {
-              const pp = pals[j];
-              // find the exact slot index in trailerSlots for this np
-              const actualSlotIdx = trailerSlots.findIndex(s => s && s.uid === pp.uid);
-              const slotNum = actualSlotIdx >= 0 ? getSlotNumber(actualSlotIdx) : (j + 1);
-              await fetch('/api/trailer-map', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  loadId: returnedLoadId,
-                  slotPosition: String(slotNum),
-                  lotId: pp.lot_id,
-                  caliber: pp.caliber,
-                  className: pp.class_name,
-                  boxes: pp.boxes,
-                  kilos: Math.round(pp.kilos),
-                  unloadOrder: (actualSlotIdx >= 0 ? actualSlotIdx : j) + 1,
-                  destination: selectedCustomer.destination || '',
-                  notes: 'Embarque - Nota de venta'
-                })
-              }).catch(() => {});
-            }
-          }
+      // Guardar posiciones del mapa UNA SOLA VEZ (draft visual ya estaba; esto vincula al load confirmado)
+      if (mainLoadId) {
+        for (let j = 0; j < trailerPalletsList.length; j++) {
+          const pp = trailerPalletsList[j];
+          const actualSlotIdx = trailerSlots.findIndex(s => s && s.uid === pp.uid);
+          const slotNum = actualSlotIdx >= 0 ? getSlotNumber(actualSlotIdx) : (j + 1);
+          await fetch('/api/trailer-map', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              loadId: mainLoadId,
+              slotPosition: String(slotNum),
+              lotId: pp.lot_id,
+              caliber: pp.caliber,
+              className: pp.class_name,
+              boxes: pp.boxes,
+              kilos: Math.round(pp.kilos),
+              unloadOrder: (actualSlotIdx >= 0 ? actualSlotIdx : j) + 1,
+              destination: selectedCustomer.destination || '',
+              notes: 'Embarque - Nota de venta'
+            })
+          }).catch(() => {});
         }
       }
 
