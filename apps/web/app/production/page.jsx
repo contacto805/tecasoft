@@ -651,19 +651,35 @@ export default function ProductionPage() {
     setObservaciones((observaciones || '') + ' | Corrección solicitada');
     alert('Marcado para corrección. Guarda el borrador.');
   };
-
   const registerToInventory = async () => {
     if (!selectedLot) return;
+    setLoading(true);
     try {
-      await fetch('/api/production/send-to-inventory', {
+      // Obtain the latest confirmed production batch for this lot (single source)
+      const prodRes = await fetch(`/api/production?lotId=${selectedLot.id}`);
+      const prodData = prodRes.ok ? await prodRes.json() : { batches: [] };
+      const confirmed = (prodData.batches || []).find(b => (b.status || '').toUpperCase() === 'CONFIRMADO') || (prodData.batches || [])[0];
+      const batchId = confirmed?.id;
+
+      const payload = batchId 
+        ? { production_batch_id: batchId, lot_id: selectedLot.id }
+        : { lot_id: selectedLot.id, from_selection: true };
+
+      const r = await fetch('/api/production/send-to-inventory', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lot_id: selectedLot.id, from_selection: true })
-      }).catch(()=>{});
-      alert('Salida a inventarios registrada (tarimas generadas).');
+        body: JSON.stringify(payload)
+      });
+      if (!r.ok) {
+        const e = await r.json().catch(()=>({}));
+        throw new Error(e.error || 'Error');
+      }
+      alert('Tarimas generadas desde producción confirmada (idempotente).');
       const pRes = await fetch('/api/pallet-output');
       if (pRes.ok) setPallets(await pRes.json());
-    } catch (_) { alert('Salida registrada localmente.'); }
+    } catch (e) {
+      alert('No se pudo registrar: ' + (e.message || 'intenta de nuevo'));
+    } finally { setLoading(false); }
   };
 
   const downloadReport = (type = "csv") => {

@@ -45,62 +45,25 @@ export async function GET(request) {
   }
 }
 
-// POST: asignar producto a una posición
+// POST: delega a la ruta canónica de asignación (pallet_output_summary + concurrency control)
+// Mantiene compatibilidad pero no duplica lógica de inventario.
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { slotId, lotId, caliber, className, boxes, kilos, presentation, userId, userName, notes } = body;
-
-    // Validar existencia del lote
-    const [lot] = await sql`SELECT * FROM lots WHERE id = ${lotId}`;
-    if (!lot) {
-      return NextResponse.json({ error: "Lote no encontrado" }, { status: 404 });
-    }
-
-    // Validar inventario disponible
-    const [inventory] = await sql`
-      SELECT total_kg FROM lot_inventory 
-      WHERE lot_id = ${lotId} 
-      AND caliber = ${caliber} 
-      AND class_name = ${className}
-    `;
-
-    if (!inventory || parseFloat(inventory.total_kg) < parseFloat(kilos)) {
-      return NextResponse.json({ 
-        error: "Inventario insuficiente para este calibre y calidad" 
-      }, { status: 400 });
-    }
-
-    // Validar que la posición no esté ocupada
-    const [existingSlot] = await sql`
-      SELECT * FROM warehouse_map_movements 
-      WHERE slot_id = ${slotId} 
-      AND movement_type = 'assign'
-      ORDER BY moved_at DESC 
-      LIMIT 1
-    `;
-
-    if (existingSlot && !body.forceOverwrite) {
-      return NextResponse.json({ 
-        error: "La posición ya está ocupada. Usa forceOverwrite para reemplazar." 
-      }, { status: 400 });
-    }
-
-    // Registrar movimiento
-    const [movement] = await sql`
-      INSERT INTO warehouse_map_movements (
-        slot_id, lot_id, caliber, class_name, boxes, kilos, presentation,
-        movement_type, user_id, user_name, notes
-      ) VALUES (
-        ${slotId}, ${lotId}, ${caliber}, ${className}, ${boxes}, ${parseFloat(kilos)}, ${presentation || null},
-        'assign', ${userId || null}, ${userName || null}, ${notes || null}
-      )
-      RETURNING *
-    `;
-
-    return NextResponse.json(movement, { status: 201 });
+    // Forward to the single authoritative assign (handles 39 slots, one-at-a-time, pallet_output as source)
+    const res = await fetch(new URL('/api/production/assign-to-slot', request.url), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pallet_output_id: body.pallet_output_id || body.palletId,
+        slot_id: body.slotId || body.slot_id,
+        forceOverwrite: body.forceOverwrite
+      })
+    });
+    const data = await res.json();
+    return NextResponse.json(data, { status: res.status });
   } catch (error) {
-    console.error("Error assigning to warehouse slot:", error);
+    console.error("Error delegando asignación de almacén:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

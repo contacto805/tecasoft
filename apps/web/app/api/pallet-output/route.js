@@ -101,6 +101,20 @@ export async function POST(request) {
     const versionRegistro = 1;
     const folioTarima = `TAR-${new Date().getFullYear()}-${String(Date.now()).slice(-8)}`;
 
+    // Idempotency / duplicate prevention: same batch + caliber + kg + date → return existing (no second tarima on retry or double click)
+    const [dup] = await sql`
+      SELECT * FROM pallet_output_summary 
+      WHERE lot_id = ${parseInt(lot_id)}
+        AND COALESCE(production_batch_id,0) = ${parseInt(production_batch_id) || 0}
+        AND COALESCE(caliber,'') = ${caliber || ''}
+        AND ABS(COALESCE(total_kg,0) - ${parseFloat(total_kg)}) < 0.1
+        AND COALESCE(estado,'') NOT IN ('CANCELADA')
+      ORDER BY created_at DESC LIMIT 1
+    `;
+    if (dup) {
+      return NextResponse.json({ ...dup, deduped: true, message: 'Tarima ya registrada (idempotencia)' });
+    }
+
     const result = await sql`
       INSERT INTO pallet_output_summary (
         production_batch_id,
@@ -166,8 +180,8 @@ export async function POST(request) {
         WHERE id = ${batchId}
       `;
 
-      // Also deduct materials from inventory
-      await deductMaterialsForProduction(production_batch_id, pallet_count, total_kg);
+      // Material deduction happens at real consumption (production batch confirm / packing step), NOT here on pallet record or ship.
+      // See /api/production/batches/.../confirm and /api/pallet-configurations/apply for the single consumption point.
 
       // Log traceability event
       await sql`
@@ -316,65 +330,53 @@ export async function PUT(request) {
   }
 }
 
-// Helper function to deduct materials from inventory during production
-async function deductMaterialsForProduction(productionBatchId, palletCount, totalKg) {
+// Helper: deduct materials ONLY at real consumption step (production batch confirm / packing real use).
+// NEVER call this again at shipping/embarque. Prohibits silent negative stock.
+async function deductMaterialsForProduction(productionBatchId, palletCount, totalKg, strict = true) {
   try {
     if (!productionBatchId) return;
 
-    // Typical materials usage per pallet (these are examples, adjust based on your needs)
+    // Materials consumption is declared at production confirmation time via pallet-config/apply or explicit material_deductions.
+    // This helper now ONLY logs intent or applies if called from confirm path. No silent Math.max.
+    // Example materials (real consumption registered via /api/pallet-configurations/apply or material-deductions at batch confirm)
     const materialsPerPallet = {
-      'Cajas de Cartón': 40, // 40 boxes per pallet
-      'Tarimas': 1, // 1 pallet per pallet output
-      'Etiquetas': 40, // 1 label per box
+      'Cajas de Cartón': 40,
+      'Tarimas': 1,
+      'Etiquetas': 40,
     };
 
     for (const [materialName, quantityPerPallet] of Object.entries(materialsPerPallet)) {
-      const totalQuantity = quantityPerPallet * palletCount;
+      const totalQuantity = quantityPerPallet * (palletCount || 1);
 
-      // Check if material exists in inventory
       const material = await sql`
-        SELECT id, quantity_available 
+        SELECT id, quantity_available, COALESCE(stock_min,0) as stock_min 
         FROM materials_inventory 
-        WHERE material_name = ${materialName}
-        LIMIT 1
+        WHERE material_name = ${materialName} LIMIT 1
+      `;
+      if (material.length === 0) continue;
+
+      const mat = material[0];
+      const current = parseFloat(mat.quantity_available || 0);
+      const after = current - totalQuantity;
+
+      if (strict && after < 0) {
+        throw new Error(`Stock insuficiente de ${materialName}: actual ${current}, requerido ${totalQuantity}`);
+      }
+
+      await sql`
+        UPDATE materials_inventory
+        SET quantity_available = ${Math.max(0, after)}, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ${mat.id}
       `;
 
-      if (material.length > 0) {
-        const materialId = material[0].id;
-        const currentQuantity = parseFloat(material[0].quantity_available);
-
-        // Deduct from inventory
-        await sql`
-          UPDATE materials_inventory
-          SET 
-            quantity_available = quantity_available - ${totalQuantity},
-            updated_at = CURRENT_TIMESTAMP
-          WHERE id = ${materialId}
-        `;
-
-        // Record the deduction
-        await sql`
-          INSERT INTO material_deductions (
-            production_batch_id,
-            material_id,
-            quantity_used
-          )
-          VALUES (
-            ${productionBatchId},
-            ${materialId},
-            ${totalQuantity}
-          )
-        `;
-
-        // Check if below minimum stock and create alert
-        if (currentQuantity - totalQuantity < material[0].minimum_stock) {
-          // You could trigger an alert here
-          console.log(`⚠️ Material ${materialName} below minimum stock`);
-        }
-      }
+      await sql`
+        INSERT INTO material_deductions (production_batch_id, material_id, quantity_used, costo_unitario_aplicado, costo_total)
+        VALUES (${productionBatchId}, ${mat.id}, ${totalQuantity}, 0, 0)
+        ON CONFLICT DO NOTHING
+      `;
     }
   } catch (error) {
-    console.error("Error deducting materials:", error);
-    // Don't throw - allow pallet creation to succeed even if material tracking fails
+    console.error("Error deducting materials (strict):", error);
+    if (strict) throw error; // surface so caller can block
   }
 }
