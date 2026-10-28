@@ -2,6 +2,7 @@ import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
 import { recalculateLotPerformance } from "@/app/api/utils/recalculate";
 import * as CrewService from "@/lib/domain/crew-service";
+import { computePaymentSchedule } from "@/app/api/payment-schedule/route.js";
 
 export async function POST(request) {
   try {
@@ -36,6 +37,7 @@ export async function POST(request) {
     `;
     
     // 3. Si hay lote asociado, crear/actualizar registro de ingreso (SIN += para mantener fuente única)
+    // fruit_input_weighings es el documento único de recepción validada (pesaje real)
     if (order.lot_id) {
       const existingWeighing = await sql`
         SELECT id FROM fruit_input_weighings 
@@ -67,6 +69,71 @@ export async function POST(request) {
         if (order.agreed_price_per_kg) await sql`UPDATE lots SET fruit_price = ${order.agreed_price_per_kg} WHERE id = ${order.lot_id}`;
         if (order.agreed_commission) await sql`UPDATE lots SET commission_amount = ${order.agreed_commission} WHERE id = ${order.lot_id}`;
       }
+    }
+
+    // 3b. OBLIGACIÓN ÚNICA AL PRODUCTOR (payment_schedule): una sola por orden + kg real confirmado
+    // Usa kg del pesaje validado + precio pactado. Idempotente por cutting_order_id.
+    // Delega fechas al motor oficial (viernes + festivos). No duplica CxP.
+    try {
+      const realKg = parseFloat(net_weight);
+      const precio = parseFloat(order.agreed_price_per_kg || 0);
+      if (realKg > 0 && precio > 0 && order.producer_name) {
+        const importe = Math.round(realKg * precio * 100) / 100;
+
+        const existingObl = await sql`
+          SELECT id, monto_pagado, saldo_pendiente FROM payment_schedule 
+          WHERE cutting_order_id = ${order_id} LIMIT 1
+        `;
+
+        const schedule = await computePaymentSchedule(order.cutting_date, (order.plazo_dias || 7), order_id);
+
+        if (existingObl.length > 0) {
+          // Actualizar importe y fechas si cambió (respeta pagos parciales ya hechos)
+          const curr = existingObl[0];
+          const pagado = parseFloat(curr.monto_pagado || 0);
+          const nuevoSaldo = Math.max(0, importe - pagado);
+          await sql`
+            UPDATE payment_schedule SET
+              amount = ${importe},
+              saldo_pendiente = ${nuevoSaldo},
+              fruit_reception_date = ${schedule.fruit_reception_date || order.cutting_date},
+              scheduled_payment_date = ${schedule.scheduled_payment_date},
+              due_date = ${schedule.contractual_due_date},
+              contractual_due_date = ${schedule.contractual_due_date},
+              original_friday = ${schedule.original_friday},
+              adjustment_reason = ${schedule.adjustment_reason || ''},
+              calendar_version = ${schedule.calendar_version || 'V3'},
+              updated_at = CURRENT_TIMESTAMP
+            WHERE id = ${curr.id}
+          `;
+        } else {
+          // Crear obligación definitiva con kg real (no estimado)
+          const year = new Date().getFullYear();
+          const last = await sql`SELECT folio FROM payment_schedule WHERE folio LIKE ${'PAG-' + year + '-%'} ORDER BY id DESC LIMIT 1`;
+          let nextN = 1;
+          if (last.length) nextN = parseInt(String(last[0].folio).split('-')[2] || '0') + 1;
+          const pfolio = `PAG-${year}-${String(nextN).padStart(3,'0')}`;
+
+          await sql`
+            INSERT INTO payment_schedule (
+              folio, producer_name, beneficiary_name, concept, amount,
+              fruit_reception_date, due_date, scheduled_payment_date,
+              payment_days, priority, status, created_by, cutting_order_id,
+              contractual_due_date, original_friday, adjustment_reason, calendar_version,
+              monto_pagado, saldo_pendiente
+            ) VALUES (
+              ${pfolio}, ${order.producer_name}, ${order.producer_name}, 
+              ${'Fruta confirmada - Orden ' + order.folio},
+              ${importe}, ${order.cutting_date}, ${schedule.scheduled_payment_date}, ${schedule.scheduled_payment_date},
+              ${schedule.payment_days || 7}, 'normal', 'scheduled', 'sistema-complete', ${order_id},
+              ${schedule.contractual_due_date}, ${schedule.original_friday}, ${schedule.adjustment_reason || ''}, ${schedule.calendar_version || 'V3'},
+              0, ${importe}
+            )
+          `;
+        }
+      }
+    } catch (eObl) {
+      console.error('Obligación productor (non-blocking):', eObl?.message);
     }
     
     // 4. Calcular el pago de la cuadrilla usando servicio de dominio (congela tarifa)

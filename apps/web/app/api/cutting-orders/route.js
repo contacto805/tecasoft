@@ -226,7 +226,7 @@ export async function POST(request) {
       ${boxes_count},
       ${lotId || null},
       ${batchId || null},
-      'pending',
+      'authorized',
       ${crew_chief_phone || null},
       ${driver_phone || null},
       ${contact_name || null},
@@ -325,33 +325,39 @@ export async function POST(request) {
     console.error('Auto-flete error (non-blocking):', e.message);
   }
 
-  // AUTO_SYNC: Asignar cajas a Control de Caja emitiendo ticket de forma automática
+  // AUTO_SYNC: Asignar cajas a Control de Caja emitiendo ticket de forma automática (idempotente: una sola salida por orden)
   if (parseInt(boxes_count || 0) > 0) {
     try {
-      await sql`SELECT 1`; // noop to keep context; use direct insert
-      // Use the existing box-control API action which also updates summary/history
-      // To avoid circular, directly emulate the salida_corte
-      const ts = Date.now();
-      const folioSal = `SAL-CORTE-${new Date().getFullYear()}-${ts.toString().slice(-8)}`;
-      const [mov] = await sql`
-        INSERT INTO box_control_movements (
-          folio, cutting_order_id, lot_id, operational_state, movement_type,
-          movement_date, location, boxes_quantity, responsible_type, responsible_name, responsible_phone,
-          notes, status, created_by
-        ) VALUES (
-          ${folioSal}, ${result[0].id || null}, ${lotId || null}, 'EN CORTE', 'SALIDA A CAMPO',
-          CURRENT_TIMESTAMP, 'CAMPO',
-          ${parseInt(boxes_count)},
-          'Fletero/Cuadrilla', ${driver_name || crew_chief_name || 'Sin responsable'},
-          ${driver_phone || crew_chief_phone || null},
-          ${'Automático al emitir Orden de Corte ' + folio + ' | ' + (producer_name||'') + ' | ' + (orchard_name||'') },
-          'active', 'sistema'
-        ) RETURNING *
+      // Idempotency: no duplicar salida para la misma orden de corte
+      const existingSalida = await sql`
+        SELECT id FROM box_control_movements 
+        WHERE cutting_order_id = ${result[0].id} 
+          AND movement_type = 'SALIDA A CAMPO' 
+        LIMIT 1
       `;
-      await sql`
-        INSERT INTO box_movement_history (movement_id, event_type, event_date, to_state, to_responsible_name, to_location, user_name, related_document_type, related_document_id, notes)
-        VALUES (${mov.id}, 'SALIDA A CAMPO', CURRENT_TIMESTAMP, 'EN CORTE', ${driver_name || crew_chief_name}, 'CAMPO', 'Sistema (Órdenes de Corte)', 'cutting_order', ${result[0].id || null}, 'Ticket generado automático junto con la orden')
-      `;
+      if (!existingSalida.length) {
+        const ts = Date.now();
+        const folioSal = `SAL-CORTE-${new Date().getFullYear()}-${ts.toString().slice(-8)}`;
+        const [mov] = await sql`
+          INSERT INTO box_control_movements (
+            folio, cutting_order_id, lot_id, operational_state, movement_type,
+            movement_date, location, boxes_quantity, responsible_type, responsible_name, responsible_phone,
+            notes, status, created_by
+          ) VALUES (
+            ${folioSal}, ${result[0].id || null}, ${lotId || null}, 'EN CORTE', 'SALIDA A CAMPO',
+            CURRENT_TIMESTAMP, 'CAMPO',
+            ${parseInt(boxes_count)},
+            'Fletero/Cuadrilla', ${driver_name || crew_chief_name || 'Sin responsable'},
+            ${driver_phone || crew_chief_phone || null},
+            ${'Automático al emitir Orden de Corte ' + folio + ' | ' + (producer_name||'') + ' | ' + (orchard_name||'') },
+            'active', 'sistema'
+          ) RETURNING *
+        `;
+        await sql`
+          INSERT INTO box_movement_history (movement_id, event_type, event_date, to_state, to_responsible_name, to_location, user_name, related_document_type, related_document_id, notes)
+          VALUES (${mov.id}, 'SALIDA A CAMPO', CURRENT_TIMESTAMP, 'EN CORTE', ${driver_name || crew_chief_name}, 'CAMPO', 'Sistema (Órdenes de Corte)', 'cutting_order', ${result[0].id || null}, 'Ticket generado automático junto con la orden')
+        `;
+      }
     } catch (e) { console.error('Auto box salida non-blocking:', e && e.message); }
   }
 
@@ -366,34 +372,38 @@ export async function POST(request) {
     try { await sql`UPDATE lots SET cutting_order_id = ${result[0].id}, visit_id = COALESCE(visit_id, ${body.visit_id || null}), updated_at = NOW() WHERE id = ${lotId}`; } catch(_) {}
   }
 
-  // AUTO CREAR / SINCRONIZAR PAGO A PRODUCTOR (payment_schedule) cuando hay precio pactado
-  // Esto conecta directamente Orden de Corte → Próximos Pagos sin duplicar captura
+  // AUTO CREAR OBLIGACIÓN AL PRODUCTOR (payment_schedule) - fuente única, usa algoritmo oficial de viernes
+  // Reserva al crear (AUTORIZAR): no declara fruta recibida definitiva ni pago hasta complete
   try {
     const precio = parseFloat(agreed_price_per_kg || 0);
-    const kg = parseFloat(result[0].net_weight || result[0].gross_weight || 0) || 0;
-    const importe = precio > 0 && kg > 0 ? Math.round(precio * kg * 100) / 100 : 0;
+    // Al autorizar usamos estimado si no hay net aún; el complete con kg real recalculará/actualizará
+    const kgEst = parseFloat(result[0].net_weight || result[0].gross_weight || 0) || (parseFloat(boxes_count||0) * 10); // fallback estimado
+    const importe = precio > 0 && kgEst > 0 ? Math.round(precio * kgEst * 100) / 100 : 0;
 
     if (importe > 0 && producer_name && cutting_date) {
-      const dias = plazo_dias ? parseInt(plazo_dias) : 7;
-      const tipo = tipo_dias || 'habiles';
-      const receptionDate = new Date(cutting_date);
-      const due = new Date(receptionDate);
-      due.setDate(due.getDate() + dias);
-
-      // Friday schedule (same logic as payment-schedule)
-      const day = due.getDay();
-      const diff = day <= 5 ? 5 - day : 7 - day + 5;
-      const scheduled = new Date(due);
-      scheduled.setDate(scheduled.getDate() + diff);
-
-      // Avoid duplicate schedule for same producer + reception + order
+      // Dup check por cutting_order_id (único) + producer
       const existingPay = await sql`
         SELECT id FROM payment_schedule 
-        WHERE producer_name = ${producer_name} 
-          AND fruit_reception_date = ${cutting_date}
+        WHERE cutting_order_id = ${result[0].id} OR (producer_name = ${producer_name} AND fruit_reception_date = ${cutting_date})
         LIMIT 1
       `;
       if (!existingPay.length) {
+        // Delegar al motor oficial de calendario (import dinámico para reutilizar)
+        let scheduleCalc;
+        try {
+          const psMod = await import('../payment-schedule/route.js');
+          scheduleCalc = await psMod.computePaymentSchedule(cutting_date, (plazo_dias||7), result[0].id);
+        } catch (_) {
+          // fallback simple
+          const dias = plazo_dias ? parseInt(plazo_dias) : 7;
+          const receptionDate = new Date(cutting_date);
+          const due = new Date(receptionDate); due.setDate(due.getDate() + dias);
+          const day = due.getDay();
+          const diff = day <= 5 ? 5 - day : 7 - day + 5;
+          const scheduled = new Date(due); scheduled.setDate(scheduled.getDate() + diff);
+          scheduleCalc = { scheduled_payment_date: scheduled.toISOString().slice(0,10), contractual_due_date: due.toISOString().slice(0,10), original_friday: scheduled.toISOString().slice(0,10), adjustment_reason: '', calendar_version: 'V3-fallback', fruit_reception_date: cutting_date, payment_days: dias };
+        }
+
         const year = new Date().getFullYear();
         const last = await sql`SELECT folio FROM payment_schedule WHERE folio LIKE ${'PAG-' + year + '-%'} ORDER BY id DESC LIMIT 1`;
         let nextN = 1;
@@ -407,12 +417,16 @@ export async function POST(request) {
           INSERT INTO payment_schedule (
             folio, producer_name, beneficiary_name, concept, amount,
             fruit_reception_date, due_date, scheduled_payment_date,
-            payment_days, priority, status, created_by, rfc
+            payment_days, priority, status, created_by, cutting_order_id,
+            contractual_due_date, original_friday, adjustment_reason, calendar_version,
+            monto_pagado, saldo_pendiente
           ) VALUES (
             ${pfolio}, ${producer_name}, ${producer_name}, 
             ${'Fruta - Orden ' + (folio || result[0].folio)},
-            ${importe}, ${cutting_date}, ${due.toISOString().slice(0,10)}, ${scheduled.toISOString().slice(0,10)},
-            ${dias}, 'normal', 'scheduled', 'sistema-orden-corte', ${null}
+            ${importe}, ${cutting_date}, ${scheduleCalc.scheduled_payment_date || cutting_date}, ${scheduleCalc.scheduled_payment_date || cutting_date},
+            ${scheduleCalc.payment_days || (plazo_dias||7)}, 'normal', 'scheduled', 'sistema-orden-corte', ${result[0].id},
+            ${scheduleCalc.contractual_due_date || null}, ${scheduleCalc.original_friday || null}, ${scheduleCalc.adjustment_reason || ''}, ${scheduleCalc.calendar_version || 'V3'},
+            0, ${importe}
           )
         `;
       }

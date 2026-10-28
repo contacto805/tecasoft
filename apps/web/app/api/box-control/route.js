@@ -124,6 +124,19 @@ export async function POST(request) {
         return NextResponse.json({ error: 'boxes_quantity requerido' }, { status: 400 });
       }
 
+      // Idempotencia: una sola salida por orden de corte (evita duplicados por doble clic o reintentos)
+      if (cutting_order_id) {
+        const dup = await sql`
+          SELECT id FROM box_control_movements 
+          WHERE cutting_order_id = ${cutting_order_id} 
+            AND (movement_type = 'SALIDA A CAMPO' OR movement_type = 'SALIDA SIN LOTE')
+          LIMIT 1
+        `;
+        if (dup.length) {
+          return NextResponse.json({ success: true, movement: dup[0], deduped: true, ticket_type: 'salida' });
+        }
+      }
+
       const ts = Date.now();
       const folio = `SAL-CORTE-${new Date().getFullYear()}-${ts.toString().slice(-8)}`;
 
@@ -163,7 +176,7 @@ export async function POST(request) {
       `;
 
       await updateInventorySummary();
-      await syncCajasToMaterials();
+      // syncCajasToMaterials() DESACTIVADO: evita duplicación de stock de cajas en materials_inventory (fuente única = box_control_movements + summary)
 
       return NextResponse.json({ success: true, movement: mov, ticket_type: 'salida' });
     }
@@ -252,7 +265,7 @@ export async function POST(request) {
       }
 
       await updateInventorySummary();
-      await syncCajasToMaterials();
+      // syncCajasToMaterials() DESACTIVADO: evita duplicación de stock de cajas en materials_inventory (fuente única = box_control_movements + summary)
 
       return NextResponse.json({ success: true, reception: newRec, original: updatedOrig, extraviadas: lostMov, penalty, tickets: ['recepcion', perdidasEnRec>0 ? 'extraviadas' : null].filter(Boolean) });
     }
@@ -286,7 +299,7 @@ export async function POST(request) {
       `;
 
       await updateInventorySummary();
-      await syncCajasToMaterials();
+      // syncCajasToMaterials() DESACTIVADO: evita duplicación de stock de cajas en materials_inventory (fuente única = box_control_movements + summary)
 
       return NextResponse.json(updated);
     }
@@ -315,7 +328,7 @@ export async function POST(request) {
     `;
 
     await updateInventorySummary();
-    await syncCajasToMaterials();
+    // syncCajasToMaterials() DESACTIVADO: evita duplicación de stock de cajas en materials_inventory (fuente única = box_control_movements + summary)
 
     return NextResponse.json(movement, { status: 201 });
   } catch (error) {
@@ -358,7 +371,7 @@ export async function PUT(request) {
     `;
 
     await updateInventorySummary();
-    await syncCajasToMaterials();
+    // syncCajasToMaterials() DESACTIVADO: evita duplicación de stock de cajas en materials_inventory (fuente única = box_control_movements + summary)
 
     return NextResponse.json(updated);
   } catch (error) {

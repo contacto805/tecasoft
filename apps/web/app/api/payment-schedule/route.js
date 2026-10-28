@@ -55,7 +55,7 @@ function calcularDiasRetrasoHabiles(scheduledStr, refDateStr = null, isLiquidate
   return count;
 }
 
-async function computePaymentSchedule(fruitReceptionDateStr, paymentDays, cuttingOrderId = null) {
+export async function computePaymentSchedule(fruitReceptionDateStr, paymentDays, cuttingOrderId = null) {
   if (!fruitReceptionDateStr) {
     const today = new Date();
     fruitReceptionDateStr = toDateOnly(today);

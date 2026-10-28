@@ -19,7 +19,28 @@ export async function GET() {
 
 export async function POST(request) {
   try {
-    const { lot_id, weight_kg, timestamp } = await request.json();
+    const { lot_id, weight_kg, timestamp, notes } = await request.json();
+
+    // Delegar a fuente única de recepción: fruit_input_weighings (pesaje validado)
+    // fruit_intake queda como adaptador legacy / compatibilidad
+    try {
+      // Upsert en el documento autorizado
+      const existingW = await sql`SELECT id FROM fruit_input_weighings WHERE lot_id = ${lot_id} LIMIT 1`;
+      if (existingW.length) {
+        await sql`
+          UPDATE fruit_input_weighings 
+          SET total_kg_weighed = ${parseFloat(weight_kg)}, 
+              public_scale_date = ${timestamp ? timestamp.split('T')[0] : null},
+              notes = COALESCE(notes, ${notes || ''}) || ' | legacy fruit-intake'
+          WHERE lot_id = ${lot_id}
+        `;
+      } else {
+        await sql`
+          INSERT INTO fruit_input_weighings (lot_id, total_kg_weighed, public_scale_date, notes)
+          VALUES (${lot_id}, ${parseFloat(weight_kg)}, ${timestamp ? timestamp.split('T')[0] : null}, ${notes || 'legacy fruit-intake'})
+        `;
+      }
+    } catch (e) { console.error('fruit-intake delegate to weighings warning:', e.message); }
 
     const result = await sql`
       INSERT INTO fruit_intake (lot_id, weight_kg, timestamp)
@@ -27,7 +48,7 @@ export async function POST(request) {
       RETURNING *
     `;
 
-    return NextResponse.json(result[0], { status: 201 });
+    return NextResponse.json({ ...result[0], delegated_to: 'fruit_input_weighings (single source)' }, { status: 201 });
   } catch (error) {
     console.error("Error creating intake:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
