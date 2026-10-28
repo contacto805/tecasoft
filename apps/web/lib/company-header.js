@@ -81,10 +81,11 @@ export function prependCompanyHeaderToExcelRows(brandingData, title = 'Documento
 }
 
 // Server-side helper (for API routes such as contract) - async fetch branding 
-export async function getBrandingDataForServer() {
+export async function getBrandingDataForServer(request) {
   try {
     // Prefer internal API call during build/runtime
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/api/branding`, { cache: 'no-store' });
+    const base = request ? new URL(request.url).origin : '';
+    const res = await fetch(`${base}/api/branding`, { cache: 'no-store' });
     if (!res.ok) throw new Error('no brand');
     const b = await res.json();
     return { 

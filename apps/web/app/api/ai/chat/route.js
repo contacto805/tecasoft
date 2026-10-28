@@ -12,7 +12,8 @@ import {
 async function getAuthenticatedUser(request) {
   try {
     const cookie = request.headers.get("cookie") || "";
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/api/auth/user`, {
+    const base = new URL(request.url).origin;
+    const res = await fetch(`${base}/api/auth/user`, {
       headers: { cookie },
       credentials: "include"
     });
@@ -21,7 +22,7 @@ async function getAuthenticatedUser(request) {
       return u;
     }
     // fallback super check
-    const sup = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/api/auth/check-super-admin`, {
+    const sup = await fetch(`${base}/api/auth/check-super-admin`, {
       headers: { cookie },
       credentials: "include"
     });

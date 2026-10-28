@@ -91,13 +91,12 @@ export async function POST(request) {
       // Generar número de lote automático - safe fallbacks if route not present
       let lotNumber = 'LOT-' + Date.now().toString().slice(-8);
       try {
-        const base = (process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL.startsWith('http')) ? process.env.NEXT_PUBLIC_API_URL : '';
-        if (base) {
-          const lotNumberResponse = await fetch(`${base}/api/lots/generate-next`);
-          if (lotNumberResponse.ok) {
-            const parsed = await lotNumberResponse.json();
-            if (parsed && parsed.lotNumber) lotNumber = parsed.lotNumber;
-          }
+        const origin = new URL(request.url).origin;
+        const base = (process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL.startsWith('http')) ? process.env.NEXT_PUBLIC_API_URL : origin;
+        const lotNumberResponse = await fetch(`${base}/api/lots/generate-next`);
+        if (lotNumberResponse.ok) {
+          const parsed = await lotNumberResponse.json();
+          if (parsed && parsed.lotNumber) lotNumber = parsed.lotNumber;
         }
       } catch(_) {}
       

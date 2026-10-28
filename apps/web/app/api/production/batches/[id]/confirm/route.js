@@ -179,7 +179,8 @@ export async function POST(request, { params }) {
     // Only once per confirmed corrida. Real costs recorded. Standard from current config.
     if (body.pallet_config_id) {
       try {
-        await fetch('/api/pallet-configurations/apply', {
+        const base = new URL(request.url).origin;
+        await fetch(`${base}/api/pallet-configurations/apply`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

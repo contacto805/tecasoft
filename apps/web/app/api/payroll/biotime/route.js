@@ -189,12 +189,13 @@ async function syncAttendance(baseUrl, auth, weekStart, weekEnd) {
 }
 
 // Generate nómina using BioTime synced data — uses existing calculate as base
-async function generateNominaFromBioTime(weekStart, weekEnd, approvedBy = "BioTime") {
+async function generateNominaFromBioTime(weekStart, weekEnd, origin = "", approvedBy = "BioTime") {
   const ws = weekStart;
   const we = weekEnd || new Date(ws).toISOString().split("T")[0];
 
   // Trigger payroll calculation with period
-  const calcRes = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ""}/api/payroll/calculate`, {
+  const base = origin || "";
+  const calcRes = await fetch(`${base}/api/payroll/calculate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ week_start: ws, week_end: we })
@@ -300,7 +301,8 @@ export async function POST(request) {
 
     if (action === "generate_nomina" || action === "generate") {
       if (!weekStart) return NextResponse.json({ error: "weekStart required" }, { status: 400 });
-      const r = await generateNominaFromBioTime(weekStart, weekEnd);
+      const origin = new URL(request.url).origin;
+      const r = await generateNominaFromBioTime(weekStart, weekEnd, origin);
       // Sync may have already happened before generate
       if (bioTimeUrl) {
         await syncEmployees(bioTimeUrl, auth).catch(() => {});

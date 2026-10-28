@@ -2,9 +2,12 @@ import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
 import QRCode from "qrcode";
 
-async function getSessionUser() {
+async function getSessionUser(request) {
   try {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/api/auth/user`, { credentials: 'include' });
+    const base = new URL(request.url).origin;
+    const res = await fetch(`${base}/api/auth/user`, { 
+      headers: { cookie: request.headers.get('cookie') || '' } 
+    });
     if (res.ok) return await res.json();
   } catch (_) {}
   return { id: 'sistema', name: 'Sistema', admin_role: '' };
@@ -38,7 +41,7 @@ export async function GET(request, { params }) {
     const cargaId = parseInt(id);
     if (!cargaId) return NextResponse.json({ error: 'ID inválido' }, { status: 400 });
 
-    const user = await getSessionUser();
+    const user = await getSessionUser(request);
 
     // Fetch full record
     const [carga] = await sql`SELECT * FROM combustible_cargas WHERE id = ${cargaId} LIMIT 1`;

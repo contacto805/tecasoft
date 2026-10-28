@@ -32,7 +32,8 @@ export async function POST(request) {
         }, { status: 200 });
       }
       // Verificar PIN
-      const verify = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/api/pin/verify`, {
+      const base = new URL(request.url).origin;
+      const verify = await fetch(`${base}/api/pin/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: usuario || 'supervisor', pin, requiredRole: 'SUPERVISOR_CALIDAD' })

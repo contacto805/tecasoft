@@ -34,7 +34,8 @@ export async function POST(request) {
 
     // If action=timbrar, delegate to central Senhub integration (real API call)
     if (action === 'timbrar' || action === 'stamp') {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/api/facturacion/senhub`, {
+      const base = new URL(request.url).origin;
+      const res = await fetch(`${base}/api/facturacion/senhub`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'timbrar', customer_id: customerId, uso_cfdi: uso_factura, ...rest })

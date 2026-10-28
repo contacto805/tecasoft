@@ -18,7 +18,8 @@ export async function GET(request) {
     // Try to get branding
     let branding = { primary_color: "#0E4A22", companyName: "TECAVO FRUITS", slogan: "Del campo con amor" };
     try {
-      const cfg = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ""}/api/app-config`).then(r => r.json());
+      const base = new URL(request.url).origin;
+      const cfg = await fetch(`${base}/api/app-config`).then(r => r.json());
       if (cfg?.branding) branding = { ...branding, ...cfg.branding };
       if (cfg?.company) branding = { ...branding, ...cfg.company };
     } catch (_) {}

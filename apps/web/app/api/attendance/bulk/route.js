@@ -96,7 +96,8 @@ export async function POST(request) {
 
     // Trigger advanced engine (fijo/flexible, descuentos medio turno, etc)
     try {
-      await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/api/attendance/calculate`, {
+      const base = new URL(request.url).origin;
+      await fetch(`${base}/api/attendance/calculate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ employeeId, date })

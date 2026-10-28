@@ -3,10 +3,13 @@ import { NextResponse } from "next/server";
 import { getMexicoCityTime } from "@/app/api/utils/mexico-time";
 import { logMovement } from "@/app/api/utils/recalculate";
 
-async function getSessionUser() {
+async function getSessionUser(request) {
   // Reuse pattern from menu
   try {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/api/auth/user`, { credentials: 'include' });
+    const base = new URL(request.url).origin;
+    const res = await fetch(`${base}/api/auth/user`, { 
+      headers: { cookie: request.headers.get('cookie') || '' }
+    });
     if (res.ok) return await res.json();
   } catch (_) {}
   return { id: 'sistema', name: 'Sistema', admin_role: '' };
@@ -97,7 +100,7 @@ export async function GET(request) {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const user = await getSessionUser();
+    const user = await getSessionUser(request);
     const creadoPor = body.creado_por || user?.name || user?.email || 'usuario';
 
     // Validate required - special handling for "entrega de dinero / vale" from mobile APK
@@ -221,7 +224,7 @@ export async function POST(request) {
 export async function PUT(request) {
   try {
     const body = await request.json();
-    const user = await getSessionUser();
+    const user = await getSessionUser(request);
     const actualizadoPor = body.actualizado_por || user?.name || user?.email || 'usuario';
     const id = parseInt(body.id);
     if (!id) return NextResponse.json({ error: 'ID requerido' }, { status: 400 });

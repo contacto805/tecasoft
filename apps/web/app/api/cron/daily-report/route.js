@@ -33,7 +33,7 @@ export async function GET(request) {
     }
     
     // Llamar al endpoint de reportes para generar y subir
-    const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+    const baseUrl = new URL(request.url).origin;
     const response = await fetch(`${baseUrl}/api/reports/daily`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -1,9 +1,12 @@
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
 
-async function getSessionUser() {
+async function getSessionUser(request) {
   try {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/api/auth/user`, { credentials: 'include' });
+    const base = new URL(request.url).origin;
+    const res = await fetch(`${base}/api/auth/user`, { 
+      headers: { cookie: request.headers.get('cookie') || '' } 
+    });
     if (res.ok) return await res.json();
   } catch (_) {}
   return { id: 'sistema', name: 'Sistema', admin_role: '' };
@@ -45,7 +48,7 @@ export async function GET(request) {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const user = await getSessionUser();
+    const user = await getSessionUser(request);
     const usuario = body.usuario_carga || user?.name || user?.email || 'usuario';
 
     const { carga_id, folio, tipo_documento, nombre_original, ruta_almacenamiento, mime_type, tamano_bytes, numero_factura } = body;
@@ -103,7 +106,7 @@ export async function POST(request) {
 export async function PUT(request) {
   try {
     const body = await request.json();
-    const user = await getSessionUser();
+    const user = await getSessionUser(request);
     const usuario = body.usuario || user?.name || user?.email || 'usuario';
     const id = parseInt(body.id);
     const cargaId = parseInt(body.carga_id);

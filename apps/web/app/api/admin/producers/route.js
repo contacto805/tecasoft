@@ -5,7 +5,8 @@ import { generateProducerPIN, sendProducerPINToWhatsApp } from "@/app/api/utils/
 // Helper: check if user has full visibility (Super or Admin General)
 async function hasFullProducerVisibility(request) {
   try {
-    const userRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/api/auth/user`, { 
+    const base = new URL(request.url).origin;
+    const userRes = await fetch(`${base}/api/auth/user`, { 
       headers: { cookie: request.headers.get('cookie') || '' } 
     });
     if (!userRes.ok) return false;
