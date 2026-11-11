@@ -1,3 +1,63 @@
+/*
+**Objetivo de la reestructuración de TECAVO SOFT**
+
+Revisar los módulos existentes y **eliminar o fusionar los que repitan capturas, información o funciones**, para que el sistema siga el flujo real de la empacadora y reduzca el trabajo operativo.
+
+**Los puntos siguientes describen funciones y etapas del proceso; no significa que deba crearse un módulo independiente para cada punto.** Deben integrarse dentro de las áreas correspondientes.
+
+**1. Una sola captura por operación**
+
+Cada dato debe registrarse una sola vez, en el área donde se origina. Los demás procesos deben recuperarlo automáticamente mediante su relación con la operación.
+
+Por ejemplo, productor, huerta y condiciones acordadas se registran desde campo; la orden de corte los hereda; recepción agrega los pesos reales; producción registra el resultado; Administración utiliza esa misma información para costos y pagos.
+
+**2. Fusionar funciones repetidas**
+
+Identificar pantallas, formularios, catálogos y registros que representen la misma operación. Consolidarlos en un único registro con las vistas necesarias para cada área.
+
+En particular:
+
+- **Producción, selección, lotificación y rendimiento:** deben formar un mismo proceso integrado, con captura del resultado y cálculo automático del rendimiento.
+- **Inventario de producto terminado y cuarto frío:** deben compartir las mismas existencias; el mapa de frío muestra su ubicación.
+- **Compras de fruta y cuenta del productor:** deben alimentarse del ingreso y las condiciones autorizadas.
+- **Embarques, notas de venta y cuentas por cobrar:** deben permanecer enlazados, reutilizando los datos de la carga.
+- **Pagos y gastos:** deben reflejar sus operaciones de origen, evitando registrarlos nuevamente en Administración.
+
+**3. Organizar el sistema en áreas claras**
+
+| Área principal | Funciones integradas |
+|---|---|
+| **Acopios** | Productores, huertas, visitas a campo, porcentajes estimados, negociación, acuerdos y programación de corte. |
+| **Operaciones** | Órdenes de corte, cuadrillas, cajas, transporte, ingreso y pesaje, lotes, producción y rendimiento. |
+| **Inventarios y embarques** | Fruta disponible, materiales, cajas empacadas, tarimas, ubicación en frío, cargas y salidas. |
+| **Administración** | Compras y obligaciones generadas, proveedores, clientes, gastos, nómina, pagos, cobranza, bancos, costos y cierre semanal. |
+
+Los catálogos, documentos, reportes y tableros deben ser compartidos o accesibles desde la operación correspondiente, sin exigir una captura adicional.
+
+**4. Automatizar el avance del flujo**
+
+- Al confirmar el acuerdo y programar el corte, generar la orden con folio automático.
+- Al confirmar la recepción, generar el ingreso y el lote automáticamente.
+- Al registrar producción, actualizar rendimiento, existencias y consumo de materiales.
+- Al confirmar el embarque, actualizar inventario y generar la información de venta correspondiente.
+- Al registrar pagos o cobros, actualizar los saldos relacionados.
+- El cierre semanal debe reunir y conciliar estos movimientos automáticamente.
+
+Cada etapa agrega únicamente la información nueva que le corresponde.
+
+**5. Administración recibe información de toda la operación**
+
+Administración debe revisar, complementar documentos, autorizar, pagar, cobrar y conciliar sobre los registros ya existentes. No debe volver a capturar cortes, kilos, lotes, producción, cargas o compras registradas por otras áreas.
+
+**6. Simplificar sin perder información**
+
+Antes de retirar un módulo repetido, trasladar sus datos y relaciones al registro definitivo. Conservar folios, documentos, historial, permisos y trazabilidad. Actualizar las pantallas que dependan de él para que utilicen la información consolidada.
+
+**Criterio de aceptación:** una operación debe poder avanzar de campo a Administración sin volver a escribir información previamente registrada. Cada módulo debe aportar una función concreta; si únicamente repite datos o captura, debe fusionarse con el proceso correspondiente.
+*/
+
+/* DIRECTIVA PERSISTENTE PARA APPGEN — Usar siempre esta guía al revisar o modificar el sistema. */
+
 'use client';
 // polished startup flow for clean preview loads
 
