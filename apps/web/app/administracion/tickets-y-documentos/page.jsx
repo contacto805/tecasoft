@@ -11,7 +11,7 @@ const ERP_CORE_CODES = [
 
 const OUTPUT_TYPES = ['pdf', 'excel', 'ticket', 'nota'];
 const DOCUMENT_TYPES = ['pdf', 'ticket', 'excel', 'nota', 'jpg'];
-const FONT_OPTIONS = ['Arial', 'Helvetica', 'Times New Roman', 'Inter', 'Courier New'];
+const FONT_OPTIONS = ['Arial', 'Helvetica', 'Times New Roman', 'Inter', 'Courier New', 'monospace'];
 
 const defaultForm = {
   template_name: '',
@@ -29,6 +29,9 @@ const defaultForm = {
   page_size: 'A4',
   orientation: 'portrait',
   is_default: false,
+  header_text: 'EMPAQUE TECAVO • Del campo con amor',
+  footer_text: 'Documento corporativo oficial • Conserve para sus registros',
+  additional_logo_url: '',
 };
 
 export default function TicketsYDocumentos() {
@@ -91,7 +94,7 @@ export default function TicketsYDocumentos() {
     } catch(e){}
   }
 
-  const startNew = () => { setSelectedTemplate(null); setForm(defaultForm); setActiveTab('plantillas'); };
+  const startNew = () => { setSelectedTemplate(null); setForm({...defaultForm, header_text: defaultForm.header_text, footer_text: defaultForm.footer_text}); setActiveTab('plantillas'); };
 
   const editTemplate = (tpl) => {
     setSelectedTemplate(tpl);
@@ -111,6 +114,9 @@ export default function TicketsYDocumentos() {
       page_size: tpl.page_size||'A4',
       orientation: tpl.orientation||'portrait',
       is_default: !!tpl.is_default,
+      header_text: tpl.header_text || tpl.header_config?.text || 'EMPAQUE TECAVO • Del campo con amor',
+      footer_text: tpl.footer_text || tpl.footer_config?.text || 'Documento corporativo oficial • Conserve para sus registros',
+      additional_logo_url: tpl.additional_logo_url || '',
     }});
     setPreviewConfig(tpl);
   };
@@ -121,12 +127,19 @@ export default function TicketsYDocumentos() {
   };
 
   const saveTemplate = async () => {
-    const payload = { ...form, template_code: (form.template_name||'tpl').toLowerCase().replace(/\s/g,'_').slice(0,60), created_by:'admin' };
+    const payload = { 
+      ...form, 
+      template_code: (form.template_name||'tpl').toLowerCase().replace(/\s/g,'_').slice(0,60), 
+      created_by:'admin',
+      header_config: { text: form.header_text },
+      footer_config: { text: form.footer_text },
+      additional_logo_url: form.additional_logo_url || null
+    };
     const url = selectedTemplate ? `/api/document-templates/${selectedTemplate.id}` : '/api/document-templates';
     const method = selectedTemplate ? 'PUT' : 'POST';
     const res = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
     const saved = await res.json().catch(()=>({}));
-    if (res.ok) { await loadAll(); if (saved && saved.id) { setSelectedTemplate(saved); setForm(saved); setPreviewConfig(saved); } alert('Plantilla guardada'); }
+    if (res.ok) { await loadAll(); if (saved && saved.id) { setSelectedTemplate(saved); setForm({...form, ...saved}); setPreviewConfig(saved); } alert('Plantilla guardada'); }
     else alert('Error: '+(saved.error||''));
   };
 
@@ -157,7 +170,105 @@ export default function TicketsYDocumentos() {
   function renderSimplePreview(c) {
     const bg = c.primary_color || '#0E4A22'; const f = c.font_family||'Arial'; const l = c.logo_url||c.base_file_url;
     const nm = c.template_name || 'Asignado';
-    return (<div className="border bg-white rounded-xl p-3" style={{fontFamily:f}}><div style={{background:bg,color:'#fff'}} className="p-2 flex items-center gap-2">{l&&<img src={l} className="h-8 inline"/>}<span>{nm}</span></div><div style={{color:c.secondary_color}} className="p-2 text-xs">Documento {c.document_type||'asignado'} listo para imprimir en módulo.</div></div>);
+    const ht = c.header_text || '';
+    const ft = c.footer_text || '';
+    return (<div className="border bg-white rounded-xl p-3" style={{fontFamily:f}}><div style={{background:bg,color:'#fff'}} className="p-2 flex items-center gap-2">{l&&<img src={l} className="h-8 inline"/>}<span>{nm}</span></div>{ht && <div className="text-[11px] px-2 pt-1 font-medium" style={{color:bg}}>{ht}</div>}<div style={{color:c.secondary_color}} className="p-2 text-xs">Documento {c.document_type||'asignado'} listo para imprimir en módulo.</div>{ft && <div className="text-[10px] px-2 pb-1 text-slate-500">{ft}</div>}</div>);
+  }
+
+  // PROFESSIONAL GENERATORS - real PDF/JPG/Ticket using current corporate config + uploaded images
+  async function generateRealPDF() {
+    const { default: jsPDF } = await import('jspdf');
+    const doc = new jsPDF({ orientation: form.orientation === 'landscape' ? 'l' : 'p', unit: 'mm', format: form.page_size || 'A4' });
+    const pw = doc.internal.pageSize.getWidth();
+    const ph = doc.internal.pageSize.getHeight();
+    const m = 15;
+
+    // Corporate colors & header
+    doc.setFillColor(parseInt((form.primary_color||'#0E4A22').slice(1,3),16), parseInt((form.primary_color||'#0E4A22').slice(3,5),16), parseInt((form.primary_color||'#0E4A22').slice(5,7),16));
+    doc.rect(0, 0, pw, 22, 'F');
+    doc.setTextColor(255,255,255);
+    doc.setFontSize(form.font_size_title || 16);
+    doc.setFont(form.font_family || 'helvetica', 'bold');
+    doc.text(form.header_text || 'EMPAQUE TECAVO', m, 14);
+
+    // Logo if present
+    if (form.logo_url || form.additional_logo_url) {
+      try { doc.addImage((form.logo_url || form.additional_logo_url), 'JPEG', pw - 50, 3, 35, 16); } catch(_) {}
+    }
+
+    doc.setTextColor(0,0,0);
+    doc.setFontSize(form.font_size_body || 11);
+    doc.setFont(form.font_family || 'helvetica', 'normal');
+
+    let y = 32;
+    doc.text('DOCUMENTO CORPORATIVO - VISTA PREVIA EDITABLE', m, y); y += 8;
+    doc.text(`Plantilla: ${form.template_name || 'Sin nombre'}  |  Tipo: ${form.document_type}`, m, y); y += 7;
+    doc.text(`Fecha: ${new Date().toLocaleDateString('es-MX')}`, m, y); y += 10;
+
+    // Sample content for corporate look
+    doc.setFontSize(form.font_size_body || 11);
+    doc.text('Ejemplo de contenido dinámico:', m, y); y += 6;
+    doc.text('• Folio: DOC-0001   |   Lote: LOT-2025-042   |   Kg: 1,250.00', m, y); y += 6;
+    doc.text('• Productor / Huerta: Ejemplo S.A. de C.V. - Huerta El Paraíso', m, y); y += 6;
+    doc.text('• Calibre / Clase: Extra / Primera   |   Precio: $48.50 /kg', m, y); y += 10;
+
+    doc.setFontSize(form.font_size_small || 9);
+    doc.setTextColor(80,80,80);
+    doc.text(form.footer_text || 'Documento corporativo oficial • Conserve para sus registros', m, ph - 12);
+    doc.text('Generado desde Tickets y Documentos • Imagen corporativa aplicada', m, ph - 6);
+
+    doc.save(`Muestra_${(form.template_name||'doc').replace(/\s/g,'_')}.pdf`);
+  }
+
+  async function generateRealJPG() {
+    // Use a live preview element for high quality JPG
+    const el = document.createElement('div');
+    el.style.width = '800px';
+    el.style.padding = '24px';
+    el.style.background = '#fff';
+    el.style.fontFamily = form.font_family || 'Arial';
+    el.style.border = `4px solid ${form.primary_color || '#0E4A22'}`;
+    el.innerHTML = `
+      <div style="background:${form.primary_color||'#0E4A22'};color:#fff;padding:12px 16px;display:flex;align-items:center;gap:12px;">
+        ${(form.logo_url||form.additional_logo_url) ? `<img src="${form.logo_url||form.additional_logo_url}" style="height:42px;max-width:160px;object-fit:contain" />` : ''}
+        <div style="font-size:20px;font-weight:700;">${form.header_text || 'EMPAQUE TECAVO'}</div>
+      </div>
+      <div style="padding:16px 20px;color:#222;font-size:14px;line-height:1.5;">
+        <div style="margin-bottom:8px;font-weight:600;color:${form.secondary_color||'#963821'}">DOCUMENTO CORPORATIVO (JPG)</div>
+        <div>Plantilla: <b>${form.template_name || 'Sin nombre'}</b> — ${form.document_type}</div>
+        <div style="margin:10px 0;">Folio: DOC-0001 &nbsp;&nbsp; Lote: LOT-2025-042 &nbsp;&nbsp; Total: 1,250.00 kg</div>
+        <div style="font-size:12px;color:#555;margin-top:12px;">${form.footer_text || 'Documento corporativo oficial • Conserve para sus registros'}</div>
+      </div>
+    `;
+    document.body.appendChild(el);
+    const { default: html2canvas } = await import('html2canvas');
+    const canvas = await html2canvas(el, {scale: 2, backgroundColor: '#ffffff'});
+    document.body.removeChild(el);
+    const link = document.createElement('a');
+    link.download = `Muestra_${(form.template_name||'doc').replace(/\s/g,'_')}.jpg`;
+    link.href = canvas.toDataURL('image/jpeg', 0.95);
+    link.click();
+  }
+
+  function generateThermalTicket() {
+    // Simple thermal ticket text + small jsPDF for 80mm style
+    const w = 80; // mm thermal
+    import('jspdf').then(({default: jsPDF}) => {
+      const doc = new jsPDF({unit:'mm', format:[w, 200]});
+      doc.setFontSize(10);
+      doc.setFont('courier', 'normal');
+      let y = 8;
+      const center = (t) => { const tw = doc.getTextWidth(t); doc.text(t, (w-tw)/2 , y); };
+      center((form.header_text || 'TECAVO').toUpperCase()); y += 5;
+      center('TICKET CORPORATIVO'); y += 6;
+      doc.text('Folio: T-0001   Fecha: ' + new Date().toLocaleDateString('es-MX'), 5, y); y += 5;
+      if (form.logo_url) { try { doc.addImage(form.logo_url, 'JPEG', 25, y, 30, 12); y += 14; } catch(_) {} }
+      doc.text('Lote: LOT-042   Kg: 1250.00', 5, y); y += 5;
+      doc.text('Precio: $48.50   Total: $60,625.00', 5, y); y += 8;
+      doc.setFontSize(8);
+      doc.text(form.footer_text || 'Conserve este ticket', 5, y);
+      doc.save(`Ticket_Termico_${(form.template_name||'tkt')}.pdf`);
+    });
   }
 
   return (
@@ -189,24 +300,50 @@ export default function TicketsYDocumentos() {
             </div>
             <div>
               <div className="bg-white border rounded p-3">
-                <div className="font-semibold mb-3">{selectedTemplate?'Editar':'Crear'} Plantilla</div>
+                <div className="font-semibold mb-3">{selectedTemplate?'Editar':'Crear'} Plantilla Profesional</div>
                 <div className="mb-2 grid grid-cols-2 gap-2">
                   <input value={form.template_name} onChange={e=>handleField('template_name',e.target.value)} placeholder="Nombre plantilla" className="border px-2 py-1 rounded" />
                   <select value={form.document_type} onChange={e=>handleField('document_type',e.target.value)} className="border px-2 rounded">{DOCUMENT_TYPES.map(d=><option key={d}>{d}</option>)}</select>
                 </div>
+
+                {/* CORPORATE HEADER / FOOTER TEXT - editable for branding */}
+                <div className="grid grid-cols-1 gap-2 mb-2 text-sm">
+                  <input value={form.header_text||''} onChange={e=>handleField('header_text',e.target.value)} placeholder="Texto de encabezado corporativo" className="border px-2 py-1 rounded" />
+                  <input value={form.footer_text||''} onChange={e=>handleField('footer_text',e.target.value)} placeholder="Texto de pie corporativo" className="border px-2 py-1 rounded" />
+                </div>
+
                 <div className="grid grid-cols-4 gap-2 mb-2 text-sm">
-                  <input value={form.font_family} onChange={e=>handleField('font_family',e.target.value)} className="border px-1" />
+                  <input value={form.font_family} onChange={e=>handleField('font_family',e.target.value)} placeholder="Fuente (Arial, Helvetica, monospace...)" className="border px-1" />
                   <input type="number" value={form.font_size_title} onChange={e=>handleField('font_size_title',+e.target.value)} className="border px-1" placeholder="Titulo pt" />
                   <input type="number" value={form.font_size_body} onChange={e=>handleField('font_size_body',+e.target.value)} className="border px-1" placeholder="Cuerpo pt" />
                   <input type="number" value={form.font_size_small} onChange={e=>handleField('font_size_small',+e.target.value)} className="border px-1" placeholder="Peque pt" />
                 </div>
-                <div className="flex gap-2 items-center mb-2 text-xs">Colores:
+                <div className="flex gap-2 items-center mb-2 text-xs">Colores corporativos:
                   {['primary_color','secondary_color','accent_color'].map(k=>(<input key={k} type="color" value={form[k]} onChange={e=>handleField(k,e.target.value)} />))}
                 </div>
-                <input value={form.logo_url} onChange={e=>handleField('logo_url',e.target.value)} placeholder="URL logo o imagen" className="border w-full mb-2 px-2 text-sm py-1 rounded" />
-                <label className="block mb-1 text-xs">O sube base/imagen: <input type="file" accept="image/*" onChange={async (e)=>{ const fi=e.target.files[0]; if(!fi)return; const fd=new FormData();fd.append('file',fi); try{ const u=await fetch('/api/upload',{method:'POST',body:fd}); if(!u.ok)throw new Error(''); const d=await u.json(); const uu = d && (d.url || (d.data&&d.data.url)); if(uu) handleField('base_file_url',uu); else handleField('base_file_url',d.url || ''); }catch(e){} }} /></label>
-                <textarea value={form.description} onChange={e=>handleField('description',e.target.value)} className="border w-full rounded px-2 py-1 text-sm" placeholder="Descripción" />
-                <div className="mt-3 flex gap-2"><button onClick={()=>showPreview(form)} className="border px-3 py-1 rounded text-sm">Vista Previa</button><button onClick={saveTemplate} className="bg-emerald-700 px-4 text-white rounded py-1">Guardar</button></div>
+
+                {/* IMAGES: logo + additional for full corporate image */}
+                <div className="space-y-2 mb-2">
+                  <input value={form.logo_url} onChange={e=>handleField('logo_url',e.target.value)} placeholder="URL Logo principal" className="border w-full px-2 text-sm py-1 rounded" />
+                  <input value={form.additional_logo_url} onChange={e=>handleField('additional_logo_url',e.target.value)} placeholder="URL Imagen adicional / banner corporativo" className="border w-full px-2 text-sm py-1 rounded" />
+                  <label className="block text-xs">Subir imagen (logo o banner): <input type="file" accept="image/*" onChange={async (e)=>{ const fi=e.target.files[0]; if(!fi)return; const fd=new FormData();fd.append('file',fi); try{ const u=await fetch('/api/upload',{method:'POST',body:fd}); if(!u.ok)throw new Error(''); const d=await u.json(); const uu = d && (d.url || (d.data&&d.data.url)); if(uu){ handleField('logo_url',uu); handleField('additional_logo_url',uu); } }catch(e){} }} /></label>
+                </div>
+
+                <textarea value={form.description} onChange={e=>handleField('description',e.target.value)} className="border w-full rounded px-2 py-1 text-sm" placeholder="Descripción (ej: Nota de venta corporativa con logo y colores oficiales)" />
+
+                {/* PROFESSIONAL GENERATOR BUTTONS */}
+                <div className="mt-3 border-t pt-3">
+                  <div className="text-xs font-medium mb-1 text-emerald-700">Generador Profesional (PDF / JPG / Ticket editable con imagen corporativa)</div>
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => generateRealPDF()} className="px-3 py-1 bg-emerald-700 text-white text-xs rounded">Generar PDF Muestra</button>
+                    <button onClick={() => generateRealJPG()} className="px-3 py-1 bg-slate-800 text-white text-xs rounded">Generar JPG</button>
+                    <button onClick={() => generateThermalTicket()} className="px-3 py-1 bg-amber-700 text-white text-xs rounded">Generar Ticket Térmico</button>
+                    <button onClick={()=>showPreview(form)} className="border px-3 py-1 rounded text-sm">Vista Previa Rápida</button>
+                  </div>
+                  <div className="text-[10px] text-slate-500 mt-1">Los archivos usan el logo, colores, fuentes y textos corporativos configurados. Sube imágenes arriba para imagen de marca completa.</div>
+                </div>
+
+                <div className="mt-3 flex gap-2"><button onClick={saveTemplate} className="bg-emerald-700 px-4 text-white rounded py-1 flex-1">Guardar Plantilla Corporativa</button></div>
               </div>
               <div className="mt-3">{renderSimplePreview(form)}</div>
             </div>
@@ -227,7 +364,7 @@ export default function TicketsYDocumentos() {
             {/* LOGO */}
             <div className="bg-white border p-5 rounded">
               <h3 className="font-medium mb-1 flex items-center gap-2">🏷️ Logotipo de la empresa</h3>
-              <p className="text-xs text-slate-500 mb-2">Se usa en documentos, tickets, notas de venta y toda la papelería.</p>
+                <p className="text-xs text-slate-500 mb-2">Se usa en documentos, tickets, notas de venta y toda la papelería. El generador profesional permite editar textos corporativos, subir múltiples imágenes y exportar PDF/JPG/Ticket con marca completa.</p>
               <input type="file" accept=".jpg,.jpeg,.png,.webp" onChange={async (e) => {
                 const f = e.target.files[0]; if (!f) return;
                 const fd = new FormData(); fd.append('file', f);
@@ -325,9 +462,14 @@ export default function TicketsYDocumentos() {
                     </div>
                   </div>
                 ) : <div className="text-xs text-slate-400 italic">Sin plantilla Excel cargada. Súbela para usarla globalmente.</div>}
-                {/* Demo de vista previa de archivo cargado usando la imagen de referencia */}
+                {/* Vista previa dinámica del logo/plantilla activa (sin imagen estática) */}
                 <div className="mt-2">
-                  <img src="https://app-cdn.appgen.com/220e1bc6-4350-453d-b566-60b6f97e03e9/assets/uploaded_1784107484476_zwsgxc.jpeg" alt="Vista previa documento cargado" className="border rounded max-h-28 object-contain" />
+                  {(currentLogo || currentExcel) ? (
+                    <div className="border rounded p-2 bg-white inline-block text-xs">
+                      {currentLogo && <img src={currentLogo} alt="Logo corporativo activo" className="max-h-16 object-contain" />}
+                      {currentExcel && <div className="mt-1 text-emerald-700">Plantilla Excel activa</div>}
+                    </div>
+                  ) : <div className="text-[10px] text-slate-400">Sube logo o plantilla arriba para previsualizar imagen corporativa.</div>}
                 </div>
               </div>
             </div>
