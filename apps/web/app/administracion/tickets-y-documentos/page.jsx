@@ -17,7 +17,7 @@ const defaultForm = {
   template_name: '',
   document_type: 'pdf',
   description: '',
-  logo_url: '',
+  logo_url: 'https://app-cdn.appgen.com/7fb1627b-46c6-4220-bc49-ed19cb1ce959/assets/uploaded_1794450433353_4f52o.png',
   base_file_url: '',
   primary_color: '#0E4A22',
   secondary_color: '#963821',
@@ -31,7 +31,10 @@ const defaultForm = {
   is_default: false,
   header_text: 'EMPAQUE TECAVO • Del campo con amor',
   footer_text: 'Documento corporativo oficial • Conserve para sus registros',
-  additional_logo_url: '',
+  additional_logo_url: 'https://app-cdn.appgen.com/7fb1627b-46c6-4220-bc49-ed19cb1ce959/assets/uploaded_1794450433353_4f52o.png',
+  // Central ascending folio linked to Administración module for control
+  current_folio: 'DOC-0001',
+  folio_prefix: 'DOC-',
 };
 
 export default function TicketsYDocumentos() {
@@ -52,10 +55,40 @@ export default function TicketsYDocumentos() {
   const [currentLogo, setCurrentLogo] = useState(null);
   const [currentExcel, setCurrentExcel] = useState(null);
 
+  // Central folio control - linked to Administración for ascending automated control across all modules that emit tickets/notas
+  const [centralFolio, setCentralFolio] = useState('DOC-0001');
+  const [folioPrefix, setFolioPrefix] = useState('DOC-');
+
   useEffect(() => { loadAll(); fetchSuperAdmin(); loadBranding(); }, []);
 
   async function fetchSuperAdmin() {
     try { const r = await fetch('/api/auth/check-super-admin'); if (r.ok) setIsSuperAdmin(!!(await r.json()).isSuperAdmin); } catch (_) {}
+  }
+
+  // Central ascending folio generator - all modules (tickets, notas, embarques, etc.) must use this pattern linked to Administración
+  async function generateNextCentralFolio() {
+    const prefix = folioPrefix || form.folio_prefix || 'DOC-';
+    try {
+      const r = await fetch(`/api/admin/folios/next-folio?prefix=${encodeURIComponent(prefix)}`);
+      if (r.ok) {
+        const d = await r.json();
+        if (d.nextFolio) {
+          setCentralFolio(d.nextFolio);
+          handleField('current_folio', d.nextFolio);
+          handleField('folio_prefix', prefix);
+          return d.nextFolio;
+        }
+      }
+    } catch (_) {}
+    // fallback local increment
+    const current = centralFolio || form.current_folio || 'DOC-0001';
+    let num = 1;
+    const match = current.match(/(\d+)$/);
+    if (match) num = parseInt(match[1], 10) + 1;
+    const next = prefix + String(num).padStart(4, '0');
+    setCentralFolio(next);
+    handleField('current_folio', next);
+    return next;
   }
 
   async function loadAll() {
@@ -94,7 +127,14 @@ export default function TicketsYDocumentos() {
     } catch(e){}
   }
 
-  const startNew = () => { setSelectedTemplate(null); setForm({...defaultForm, header_text: defaultForm.header_text, footer_text: defaultForm.footer_text}); setActiveTab('plantillas'); };
+  const startNew = () => { 
+    setSelectedTemplate(null); 
+    const initF = 'DOC-0001';
+    setForm({...defaultForm, header_text: defaultForm.header_text, footer_text: defaultForm.footer_text, current_folio: initF, folio_prefix: 'DOC-'}); 
+    setCentralFolio(initF);
+    setFolioPrefix('DOC-');
+    setActiveTab('plantillas'); 
+  };
 
   const editTemplate = (tpl) => {
     setSelectedTemplate(tpl);
@@ -102,7 +142,7 @@ export default function TicketsYDocumentos() {
       template_name: tpl.template_name||'',
       document_type: tpl.document_type||'pdf',
       description: tpl.description||'',
-      logo_url: tpl.logo_url||'',
+      logo_url: tpl.logo_url||'https://app-cdn.appgen.com/7fb1627b-46c6-4220-bc49-ed19cb1ce959/assets/uploaded_1794450433353_4f52o.png',
       base_file_url: tpl.base_file_url||'',
       primary_color: tpl.primary_color||'#0E4A22',
       secondary_color: tpl.secondary_color||'#963821',
@@ -116,9 +156,13 @@ export default function TicketsYDocumentos() {
       is_default: !!tpl.is_default,
       header_text: tpl.header_text || tpl.header_config?.text || 'EMPAQUE TECAVO • Del campo con amor',
       footer_text: tpl.footer_text || tpl.footer_config?.text || 'Documento corporativo oficial • Conserve para sus registros',
-      additional_logo_url: tpl.additional_logo_url || '',
+      additional_logo_url: tpl.additional_logo_url || 'https://app-cdn.appgen.com/7fb1627b-46c6-4220-bc49-ed19cb1ce959/assets/uploaded_1794450433353_4f52o.png',
+      current_folio: tpl.current_folio || 'DOC-0001',
+      folio_prefix: tpl.folio_prefix || 'DOC-',
     }});
     setPreviewConfig(tpl);
+    setCentralFolio(tpl.current_folio || 'DOC-0001');
+    setFolioPrefix(tpl.folio_prefix || 'DOC-');
   };
 
   const handleField = (key, val) => {
@@ -133,13 +177,15 @@ export default function TicketsYDocumentos() {
       created_by:'admin',
       header_config: { text: form.header_text },
       footer_config: { text: form.footer_text },
-      additional_logo_url: form.additional_logo_url || null
+      additional_logo_url: form.additional_logo_url || null,
+      current_folio: centralFolio || form.current_folio,
+      folio_prefix: folioPrefix || form.folio_prefix
     };
     const url = selectedTemplate ? `/api/document-templates/${selectedTemplate.id}` : '/api/document-templates';
     const method = selectedTemplate ? 'PUT' : 'POST';
     const res = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
     const saved = await res.json().catch(()=>({}));
-    if (res.ok) { await loadAll(); if (saved && saved.id) { setSelectedTemplate(saved); setForm({...form, ...saved}); setPreviewConfig(saved); } alert('Plantilla guardada'); }
+    if (res.ok) { await loadAll(); if (saved && saved.id) { setSelectedTemplate(saved); setForm({...form, ...saved}); setPreviewConfig(saved); } alert('Plantilla guardada con folio central vinculado a Administración'); }
     else alert('Error: '+(saved.error||''));
   };
 
@@ -168,15 +214,17 @@ export default function TicketsYDocumentos() {
   };
 
   function renderSimplePreview(c) {
-    const bg = c.primary_color || '#0E4A22'; const f = c.font_family||'Arial'; const l = c.logo_url||c.base_file_url;
+    const bg = c.primary_color || '#0E4A22'; const f = c.font_family||'Arial'; const l = c.logo_url||c.base_file_url || 'https://app-cdn.appgen.com/7fb1627b-46c6-4220-bc49-ed19cb1ce959/assets/uploaded_1794450433353_4f52o.png';
     const nm = c.template_name || 'Asignado';
     const ht = c.header_text || '';
     const ft = c.footer_text || '';
-    return (<div className="border bg-white rounded-xl p-3" style={{fontFamily:f}}><div style={{background:bg,color:'#fff'}} className="p-2 flex items-center gap-2">{l&&<img src={l} className="h-8 inline"/>}<span>{nm}</span></div>{ht && <div className="text-[11px] px-2 pt-1 font-medium" style={{color:bg}}>{ht}</div>}<div style={{color:c.secondary_color}} className="p-2 text-xs">Documento {c.document_type||'asignado'} listo para imprimir en módulo.</div>{ft && <div className="text-[10px] px-2 pb-1 text-slate-500">{ft}</div>}</div>);
+    const folio = c.current_folio || centralFolio || 'DOC-0001';
+    return (<div className="border bg-white rounded-xl p-3" style={{fontFamily:f}}><div style={{background:bg,color:'#fff'}} className="p-2 flex items-center gap-2">{l&&<img src={l} className="h-8 inline"/>}<span>{nm}</span></div>{ht && <div className="text-[11px] px-2 pt-1 font-medium" style={{color:bg}}>{ht}</div>}<div style={{color:c.secondary_color}} className="p-2 text-xs">Documento {c.document_type||'asignado'} • Folio central: <b>{folio}</b> (Administración)</div>{ft && <div className="text-[10px] px-2 pb-1 text-slate-500">{ft}</div>}</div>);
   }
 
-  // PROFESSIONAL GENERATORS - real PDF/JPG/Ticket using current corporate config + uploaded images
+  // PROFESSIONAL GENERATORS - real PDF/JPG/Ticket using current corporate config + uploaded images + CENTRAL ASCENDING FOLIO from Administración
   async function generateRealPDF() {
+    const folio = centralFolio || form.current_folio || generateNextCentralFolio();
     const { default: jsPDF } = await import('jspdf');
     const doc = new jsPDF({ orientation: form.orientation === 'landscape' ? 'l' : 'p', unit: 'mm', format: form.page_size || 'A4' });
     const pw = doc.internal.pageSize.getWidth();
@@ -191,9 +239,10 @@ export default function TicketsYDocumentos() {
     doc.setFont(form.font_family || 'helvetica', 'bold');
     doc.text(form.header_text || 'EMPAQUE TECAVO', m, 14);
 
-    // Logo if present
-    if (form.logo_url || form.additional_logo_url) {
-      try { doc.addImage((form.logo_url || form.additional_logo_url), 'JPEG', pw - 50, 3, 35, 16); } catch(_) {}
+    // Logo if present (uses uploaded corporate image)
+    const logoToUse = form.logo_url || form.additional_logo_url || 'https://app-cdn.appgen.com/7fb1627b-46c6-4220-bc49-ed19cb1ce959/assets/uploaded_1794450433353_4f52o.png';
+    if (logoToUse) {
+      try { doc.addImage(logoToUse, 'JPEG', pw - 50, 3, 35, 16); } catch(_) {}
     }
 
     doc.setTextColor(0,0,0);
@@ -203,24 +252,27 @@ export default function TicketsYDocumentos() {
     let y = 32;
     doc.text('DOCUMENTO CORPORATIVO - VISTA PREVIA EDITABLE', m, y); y += 8;
     doc.text(`Plantilla: ${form.template_name || 'Sin nombre'}  |  Tipo: ${form.document_type}`, m, y); y += 7;
-    doc.text(`Fecha: ${new Date().toLocaleDateString('es-MX')}`, m, y); y += 10;
+    doc.text(`Folio Central (Administración): ${folio}   |   Fecha: ${new Date().toLocaleDateString('es-MX')}`, m, y); y += 10;
 
-    // Sample content for corporate look
+    // Sample content for corporate look - all modules use this ascending folio control
     doc.setFontSize(form.font_size_body || 11);
-    doc.text('Ejemplo de contenido dinámico:', m, y); y += 6;
-    doc.text('• Folio: DOC-0001   |   Lote: LOT-2025-042   |   Kg: 1,250.00', m, y); y += 6;
+    doc.text('Ejemplo de contenido dinámico (folio vinculado a Administración):', m, y); y += 6;
+    doc.text(`• Folio: ${folio}   |   Lote: LOT-2025-042   |   Kg: 1,250.00`, m, y); y += 6;
     doc.text('• Productor / Huerta: Ejemplo S.A. de C.V. - Huerta El Paraíso', m, y); y += 6;
     doc.text('• Calibre / Clase: Extra / Primera   |   Precio: $48.50 /kg', m, y); y += 10;
 
     doc.setFontSize(form.font_size_small || 9);
     doc.setTextColor(80,80,80);
     doc.text(form.footer_text || 'Documento corporativo oficial • Conserve para sus registros', m, ph - 12);
-    doc.text('Generado desde Tickets y Documentos • Imagen corporativa aplicada', m, ph - 6);
+    doc.text('Generado desde Tickets y Documentos • Folio ascendente centralizado en Administración', m, ph - 6);
 
-    doc.save(`Muestra_${(form.template_name||'doc').replace(/\s/g,'_')}.pdf`);
+    doc.save(`Muestra_${(form.template_name||'doc').replace(/\s/g,'_')}_${folio}.pdf`);
+    // Advance folio for next use in any module
+    generateNextCentralFolio();
   }
 
   async function generateRealJPG() {
+    const folio = centralFolio || form.current_folio || generateNextCentralFolio();
     // Use a live preview element for high quality JPG
     const el = document.createElement('div');
     el.style.width = '800px';
@@ -228,15 +280,16 @@ export default function TicketsYDocumentos() {
     el.style.background = '#fff';
     el.style.fontFamily = form.font_family || 'Arial';
     el.style.border = `4px solid ${form.primary_color || '#0E4A22'}`;
+    const logoToUse = form.logo_url || form.additional_logo_url || 'https://app-cdn.appgen.com/7fb1627b-46c6-4220-bc49-ed19cb1ce959/assets/uploaded_1794450433353_4f52o.png';
     el.innerHTML = `
       <div style="background:${form.primary_color||'#0E4A22'};color:#fff;padding:12px 16px;display:flex;align-items:center;gap:12px;">
-        ${(form.logo_url||form.additional_logo_url) ? `<img src="${form.logo_url||form.additional_logo_url}" style="height:42px;max-width:160px;object-fit:contain" />` : ''}
+        ${logoToUse ? `<img src="${logoToUse}" style="height:42px;max-width:160px;object-fit:contain" />` : ''}
         <div style="font-size:20px;font-weight:700;">${form.header_text || 'EMPAQUE TECAVO'}</div>
       </div>
       <div style="padding:16px 20px;color:#222;font-size:14px;line-height:1.5;">
         <div style="margin-bottom:8px;font-weight:600;color:${form.secondary_color||'#963821'}">DOCUMENTO CORPORATIVO (JPG)</div>
         <div>Plantilla: <b>${form.template_name || 'Sin nombre'}</b> — ${form.document_type}</div>
-        <div style="margin:10px 0;">Folio: DOC-0001 &nbsp;&nbsp; Lote: LOT-2025-042 &nbsp;&nbsp; Total: 1,250.00 kg</div>
+        <div style="margin:10px 0;">Folio Central (Admón): <b>${folio}</b> &nbsp;&nbsp; Lote: LOT-2025-042 &nbsp;&nbsp; Total: 1,250.00 kg</div>
         <div style="font-size:12px;color:#555;margin-top:12px;">${form.footer_text || 'Documento corporativo oficial • Conserve para sus registros'}</div>
       </div>
     `;
@@ -245,13 +298,15 @@ export default function TicketsYDocumentos() {
     const canvas = await html2canvas(el, {scale: 2, backgroundColor: '#ffffff'});
     document.body.removeChild(el);
     const link = document.createElement('a');
-    link.download = `Muestra_${(form.template_name||'doc').replace(/\s/g,'_')}.jpg`;
+    link.download = `Muestra_${(form.template_name||'doc').replace(/\s/g,'_')}_${folio}.jpg`;
     link.href = canvas.toDataURL('image/jpeg', 0.95);
     link.click();
+    generateNextCentralFolio();
   }
 
   function generateThermalTicket() {
-    // Simple thermal ticket text + small jsPDF for 80mm style
+    const folio = centralFolio || form.current_folio || generateNextCentralFolio();
+    // Simple thermal ticket text + small jsPDF for 80mm style - uses central folio from Administración
     const w = 80; // mm thermal
     import('jspdf').then(({default: jsPDF}) => {
       const doc = new jsPDF({unit:'mm', format:[w, 200]});
@@ -261,14 +316,16 @@ export default function TicketsYDocumentos() {
       const center = (t) => { const tw = doc.getTextWidth(t); doc.text(t, (w-tw)/2 , y); };
       center((form.header_text || 'TECAVO').toUpperCase()); y += 5;
       center('TICKET CORPORATIVO'); y += 6;
-      doc.text('Folio: T-0001   Fecha: ' + new Date().toLocaleDateString('es-MX'), 5, y); y += 5;
-      if (form.logo_url) { try { doc.addImage(form.logo_url, 'JPEG', 25, y, 30, 12); y += 14; } catch(_) {} }
+      doc.text(`Folio Central (Adm): ${folio}   Fecha: ${new Date().toLocaleDateString('es-MX')}`, 5, y); y += 5;
+      const logoToUse = form.logo_url || form.additional_logo_url || 'https://app-cdn.appgen.com/7fb1627b-46c6-4220-bc49-ed19cb1ce959/assets/uploaded_1794450433353_4f52o.png';
+      if (logoToUse) { try { doc.addImage(logoToUse, 'JPEG', 25, y, 30, 12); y += 14; } catch(_) {} }
       doc.text('Lote: LOT-042   Kg: 1250.00', 5, y); y += 5;
       doc.text('Precio: $48.50   Total: $60,625.00', 5, y); y += 8;
       doc.setFontSize(8);
-      doc.text(form.footer_text || 'Conserve este ticket', 5, y);
-      doc.save(`Ticket_Termico_${(form.template_name||'tkt')}.pdf`);
+      doc.text(form.footer_text || 'Conserve este ticket • Control Administración', 5, y);
+      doc.save(`Ticket_Termico_${(form.template_name||'tkt')}_${folio}.pdf`);
     });
+    generateNextCentralFolio();
   }
 
   return (
@@ -310,6 +367,17 @@ export default function TicketsYDocumentos() {
                 <div className="grid grid-cols-1 gap-2 mb-2 text-sm">
                   <input value={form.header_text||''} onChange={e=>handleField('header_text',e.target.value)} placeholder="Texto de encabezado corporativo" className="border px-2 py-1 rounded" />
                   <input value={form.footer_text||''} onChange={e=>handleField('footer_text',e.target.value)} placeholder="Texto de pie corporativo" className="border px-2 py-1 rounded" />
+                </div>
+
+                {/* CENTRAL ASCENDING FOLIO CONTROL - linked to Administración module for ALL tickets/notas across system */}
+                <div className="bg-emerald-50 border border-emerald-200 p-3 rounded mb-2">
+                  <div className="text-xs font-semibold text-emerald-800 mb-1">FOLIO ASCENDENTE CENTRAL (vinculado a Módulo Administración)</div>
+                  <div className="flex gap-2 items-center">
+                    <input value={folioPrefix} onChange={e=>{setFolioPrefix(e.target.value); handleField('folio_prefix', e.target.value);}} className="border w-20 px-2 py-1 rounded text-sm font-mono" placeholder="DOC-" />
+                    <input value={centralFolio} onChange={e=>{setCentralFolio(e.target.value); handleField('current_folio', e.target.value);}} className="border flex-1 px-2 py-1 rounded text-sm font-mono" placeholder="DOC-0001" />
+                    <button onClick={generateNextCentralFolio} className="px-3 py-1 bg-emerald-700 text-white rounded text-xs">Siguiente Folio</button>
+                  </div>
+                  <div className="text-[10px] text-emerald-700 mt-1">Todos los módulos que generan tickets, notas, etc. deben usar este folio ascendente para control centralizado desde Administración.</div>
                 </div>
 
                 <div className="grid grid-cols-4 gap-2 mb-2 text-sm">

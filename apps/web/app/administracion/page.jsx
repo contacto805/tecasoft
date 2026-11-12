@@ -393,7 +393,7 @@ export default function AdministracionPage() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <button onClick={() => router.push('/admin/authorizations')} className="px-4 py-2 bg-brand-600 text-white rounded-lg font-medium hover:bg-brand-700 transition-colors">Ver Autorizaciones Pendientes</button>
-            <button onClick={() => router.push('/admin/audit-log')} className="px-4 py-2 bg-slate-200 text-slate-900 rounded-lg font-medium hover:bg-slate-300 transition-colors">Ver Registro de Auditoría</button>
+            <button onClick={() => router.push('/admin/audit-log')} className="px-4 py-2 bg-slate-200 text-slate-900 rounded-lg font-medium hover:bg-slate-300 transition-colors">Ver Registro de Auditoría (folios y documentos)</button>
             <button onClick={() => router.push('/administracion/tickets-y-documentos')} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700 transition-colors flex items-center gap-2"><span>📄</span> Tickets y Documentos</button>
           </div>
         </div>
