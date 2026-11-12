@@ -74,7 +74,7 @@ export default function AuditLogPage() {
               <tbody className="divide-y">
                 {logs.length === 0 && <tr><td colSpan={6} className="p-8 text-center text-slate-400">No hay registros de auditoría para los filtros.</td></tr>}
                 {logs.map((log, idx) => (
-                  <tr key={idx} className="hover:bg-slate-50">
+                  <tr key={log.id || `log-${idx}`} className="hover:bg-slate-50">
                     <td className="p-3 text-xs text-slate-500 font-mono">{new Date(log.timestamp || log.created_at).toLocaleString('es-MX')}</td>
                     <td className="p-3 text-sm">{log.user_name || log.user_id || '—'}</td>
                     <td className="p-3"><span className="px-2 py-0.5 bg-slate-200 rounded text-xs">{log.module || '—'}</span></td>

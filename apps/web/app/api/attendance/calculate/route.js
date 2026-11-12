@@ -35,7 +35,8 @@ export async function calculateDayAttendance(employee, date, recordsForDay, sala
   const requiredHrs = parseFloat(schedule.required_effective_hours || (jornType === 'media' ? 4 : 8));
   const unpaidMeal = parseInt(schedule.unpaid_meal_minutes || 60);
 
-  // 2. Aggregate intervals from records (support multiple in/out)
+  // 2. Aggregate intervals from records (support multiple in/out for horas extra)
+  // Horas extra se cuentan sin importar cruce de día laboral. Fuente única.
   let totalMinutes = 0;
   let firstIn = null;
   let lastOut = null;
@@ -51,7 +52,9 @@ export async function calculateDayAttendance(employee, date, recordsForDay, sala
     }
     if (r.check_out_time && openIn) {
       const out = new Date(r.check_out_time);
-      const mins = Math.max(0, (out - openIn) / 60000);
+      let mins = (out - openIn) / 60000;
+      if (mins < 0) mins += 24 * 60; // cruce de medianoche permitido para horas extra
+      mins = Math.max(0, mins);
       intervals.push({ start: openIn, end: out, mins });
       totalMinutes += mins;
       lastOut = out;
@@ -62,7 +65,9 @@ export async function calculateDayAttendance(employee, date, recordsForDay, sala
     // open shift, use now or end of day
     const { time: mx } = getMexicoCityTime();
     const tentative = new Date(`${date}T${mx}`);
-    const mins = Math.max(0, (tentative - openIn) / 60000);
+    let mins = (tentative - openIn) / 60000;
+    if (mins < 0) mins += 24 * 60;
+    mins = Math.max(0, mins);
     totalMinutes += mins;
     lastOut = tentative;
   }
@@ -205,7 +210,7 @@ export async function POST(request) {
 
     const { enriched, incidents } = await calculateDayAttendance(emp, date, atts, dailySal);
 
-    // Persist enriched values
+    // Persist enriched values (fuente única). Horas extra = todo el exceso (sin importar cruce).
     if (atts.length > 0) {
       await sql`
         UPDATE attendance_records SET
@@ -214,6 +219,7 @@ export async function POST(request) {
           effective_hours = ${enriched.effective_hours},
           ordinary_hours = ${enriched.ordinary_hours},
           extra_hours = ${enriched.extra_hours},
+          overtime_hours = ${enriched.extra_hours},
           meal_minutes = ${enriched.meal_minutes},
           retardo_minutes = ${enriched.retardo_minutes},
           early_exit_minutes = ${enriched.early_exit_minutes},

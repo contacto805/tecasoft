@@ -94,110 +94,89 @@ export async function POST(request) {
       // Por ahora asumimos que la huella coincide
     }
 
-    // 2. Verificar si ya existe un registro para hoy
+    // 2. Buscar registros del día (fuente única). Soporta múltiples intervalos para horas extra.
+    // Regla: para iniciar horas extra se debe checar SALIDA y luego ENTRADA inmediatamente.
+    // Horas extra se cuentan sin importar cruce de día laboral ni cantidad de horas.
     const existing = await sql`
       SELECT * FROM attendance_records
       WHERE employee_id = ${employeeId} AND date = ${today}
+      ORDER BY check_in_time ASC
     `;
 
     if (type === 'check_in') {
-      // Registro de entrada
-      if (existing.length > 0 && existing[0].check_in_time) {
+      // Regla estricta de horas extra: no permitir nueva entrada si hay turno abierto sin salida
+      const openShift = existing.find(r => r.check_in_time && !r.check_out_time);
+      if (openShift) {
         return NextResponse.json(
-          { error: 'Ya existe un registro de entrada para hoy', record: existing[0] },
+          { error: 'Debe registrar SALIDA primero. Para iniciar horas extra: salida + entrada inmediata.', record: openShift },
           { status: 409 }
         );
       }
 
       const nowTs = `${today}T${mxTime}`;
-      if (existing.length > 0) {
-        // Actualizar registro existente
-        const [updated] = await sql`
-          UPDATE attendance_records
-          SET check_in_time = ${nowTs},
-              is_manual = ${isManual},
-              manual_entry_reason = ${manualEntryReason || null},
-              manual_entry_by = ${manualEntryBy || null},
-              device_id = ${deviceId ? parseInt(deviceId) : null},
-              updated_at = CURRENT_TIMESTAMP
-          WHERE id = ${existing[0].id}
-          RETURNING *
-        `;
-        return NextResponse.json({ success: true, record: updated, action: 'check_in' });
-      } else {
-        // Crear nuevo registro
-        const [created] = await sql`
-          INSERT INTO attendance_records (
-            employee_id,
-            employee_name,
-            date,
-            check_in_time,
-            is_manual,
-            manual_entry_reason,
-            manual_entry_by,
-            device_id,
-            status
-          )
-          VALUES (
-            ${employeeId},
-            ${employeeName},
-            ${today},
-            ${nowTs},
-            ${isManual},
-            ${manualEntryReason || null},
-            ${manualEntryBy || null},
-            ${deviceId ? parseInt(deviceId) : null},
-            'presente'
-          )
-          RETURNING *
-        `;
-        try {
-          const base = new URL(request.url).origin;
-          await fetch(`${base}/api/attendance/calculate`, {
-            method: 'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ employeeId, date: today })
-          });
-        } catch(e){}
-        return NextResponse.json({ success: true, record: created, action: 'check_in' });
-      }
+      // Siempre crear nuevo registro (permite segunda/tercera entrada tras salida = horas extra)
+      const [created] = await sql`
+        INSERT INTO attendance_records (
+          employee_id,
+          employee_name,
+          date,
+          check_in_time,
+          is_manual,
+          manual_entry_reason,
+          manual_entry_by,
+          device_id,
+          status
+        )
+        VALUES (
+          ${employeeId},
+          ${employeeName},
+          ${today},
+          ${nowTs},
+          ${isManual},
+          ${manualEntryReason || null},
+          ${manualEntryBy || null},
+          ${deviceId ? parseInt(deviceId) : null},
+          'presente'
+        )
+        RETURNING *
+      `;
+      try {
+        const base = new URL(request.url).origin;
+        await fetch(`${base}/api/attendance/calculate`, {
+          method: 'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ employeeId, date: today })
+        });
+      } catch(e){}
+      return NextResponse.json({ success: true, record: created, action: 'check_in' });
     }
 
     if (type === 'check_out') {
-      // Registro de salida
-      if (existing.length === 0 || !existing[0].check_in_time) {
+      // Buscar el turno abierto más reciente (soporta múltiples)
+      const openShift = existing.find(r => r.check_in_time && !r.check_out_time);
+      if (!openShift) {
         return NextResponse.json(
-          { error: 'No se ha registrado entrada para hoy' },
+          { error: 'No se ha registrado entrada abierta para hoy' },
           { status: 400 }
         );
       }
 
-      if (existing[0].check_out_time) {
-        return NextResponse.json(
-          { error: 'Ya existe un registro de salida para hoy', record: existing[0] },
-          { status: 409 }
-        );
-      }
-
-      // Calcular horas trabajadas (usando hora oficial CDMX)
+      // Calcular horas del intervalo (sin cap, el motor decide ordinario vs extra)
       const nowTsOut = `${today}T${mxTime}`;
-      const checkIn = new Date(existing[0].check_in_time);
+      const checkIn = new Date(openShift.check_in_time);
       const checkOut = new Date(nowTsOut);
-      const hoursWorked = (checkOut - checkIn) / (1000 * 60 * 60); // convertir ms a horas
-
-      // Importante: NO generar horas extras, solo contar las horas de la jornada laboral
-      const standardWorkHours = 8;
-      const recordedHours = Math.min(hoursWorked, standardWorkHours);
+      let hoursWorked = (checkOut - checkIn) / (1000 * 60 * 60);
+      if (hoursWorked < 0) hoursWorked += 24; // cruce de medianoche
 
       const [updated] = await sql`
         UPDATE attendance_records
         SET check_out_time = ${nowTsOut},
-            hours_worked = ${recordedHours.toFixed(2)},
+            hours_worked = ${hoursWorked.toFixed(2)},
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = ${existing[0].id}
+        WHERE id = ${openShift.id}
         RETURNING *
       `;
 
-      // Run advanced engine for fixed/flex + discounts
+      // Motor central recalcula todo (efectivas + extra + descuentos) desde fuente única
       try {
         const base = new URL(request.url).origin;
         await fetch(`${base}/api/attendance/calculate`, {
@@ -211,7 +190,7 @@ export async function POST(request) {
         success: true, 
         record: updated, 
         action: 'check_out',
-        hoursWorked: recordedHours.toFixed(2)
+        hoursWorked: hoursWorked.toFixed(2)
       });
     }
 
@@ -244,6 +223,11 @@ export async function PUT(request) {
       );
     }
 
+    // Solo Administración puede editar/cancelar horas extra, descuentos, bonos y ajustes
+    if (!authorizedBy) {
+      return NextResponse.json({ error: 'Edición requiere autorización de Administración' }, { status: 403 });
+    }
+
     // Obtener el registro actual
     const [current] = await sql`
       SELECT * FROM attendance_records WHERE id = ${parseInt(recordId)}
@@ -253,14 +237,15 @@ export async function PUT(request) {
       return NextResponse.json({ error: 'Registro no encontrado' }, { status: 404 });
     }
 
-    // Calcular nuevas horas trabajadas si hay entrada y salida
+    // Calcular nuevas horas trabajadas (edición manual solo por Administración)
+    // Permite horas extra sin límite (cruce de día o turnos múltiples)
     let hoursWorked = hours_worked !== undefined ? hours_worked : current.hours_worked;
     if (checkInTime && checkOutTime) {
       const checkIn = new Date(checkInTime);
       const checkOut = new Date(checkOutTime);
-      const hours = (checkOut - checkIn) / (1000 * 60 * 60);
-      const standardWorkHours = 12;
-      hoursWorked = Math.max(0, Math.min(hours, standardWorkHours)).toFixed(2);
+      let hours = (checkOut - checkIn) / (1000 * 60 * 60);
+      if (hours < 0) hours += 24; // soporte cruce medianoche
+      hoursWorked = Math.max(0, hours).toFixed(2);
     }
 
     const [updated] = await sql`

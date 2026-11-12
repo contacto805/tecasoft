@@ -36,7 +36,15 @@ export async function GET(request) {
       LIMIT 400
     `;
 
-    const entries = rows.map((r) => {
+    // Dedupe by lot id (LEFT JOIN on payment_schedule can duplicate rows if multiple schedules per lot)
+    const seen = new Set();
+    const uniqueRows = rows.filter(r => {
+      if (seen.has(r.id)) return false;
+      seen.add(r.id);
+      return true;
+    });
+
+    const entries = uniqueRows.map((r) => {
       const kg = parseFloat(r.weighed_kg || r.kg || 0) || 0;
       const price = parseFloat(r.fruit_price || 0) || 0;
       const estAmount = Math.round(kg * price * 100) / 100;

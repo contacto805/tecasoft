@@ -791,6 +791,7 @@ export default function ControlPersonalNominaPage() {
             <div className="p-6 border-b border-slate-200">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-lg font-bold text-slate-900">Registro de Asistencia - {new Date(selectedDate).toLocaleDateString('es-MX', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</h2>
+              <div className="text-[11px] text-slate-500 mt-1">Fuente única • Para horas extra: SALIDA + ENTRADA inmediata (se cuentan sin importar cruce de día). Solo Administración puede editar/cancelar horas extra, descuentos, bonos y ajustes.</div>
                 <div className="flex gap-2">
                   <button 
                     onClick={() => setShowBiometricGuide(true)}
@@ -877,13 +878,13 @@ export default function ControlPersonalNominaPage() {
                     <th className="px-4 py-3 text-left text-xs font-bold text-brand-900 uppercase tracking-wider">Nombre</th>
                     <th className="px-4 py-3 text-left text-xs font-bold text-brand-900 uppercase tracking-wider">Área</th>
                     <th className="px-4 py-3 text-left text-xs font-bold text-brand-900 uppercase tracking-wider">Puesto</th>
-                  <th className="px-4 py-3 text-left text-xs font-bold text-brand-900 uppercase tracking-wider">Entrada</th>
+                  <th className="px-4 py-3 text-left text-xs font-bold text-brand-900 uppercase tracking-wider">Entrada (Admin puede ajustar para extra)</th>
                   <th className="px-4 py-3 text-left text-xs font-bold text-brand-900 uppercase tracking-wider">Salida</th>
                   <th className="px-4 py-3 text-left text-xs font-bold text-brand-900 uppercase tracking-wider">Efectivas</th>
                   <th className="px-4 py-3 text-left text-xs font-bold text-brand-900 uppercase tracking-wider">Jornada</th>
                   <th className="px-4 py-3 text-left text-xs font-bold text-brand-900 uppercase tracking-wider">Desc.</th>
                   <th className="px-4 py-3 text-left text-xs font-bold text-brand-900 uppercase tracking-wider">Estatus</th>
-                    <th className="px-4 py-3 text-left text-xs font-bold text-green-700 uppercase tracking-wider">Bono Extra</th>
+                    <th className="px-4 py-3 text-left text-xs font-bold text-green-700 uppercase tracking-wider">Bono Extra (solo Admin)</th>
                     <th className="px-4 py-3 text-center text-xs font-bold text-blue-700 uppercase tracking-wider">Asistencia Biométrica</th>
                     <th className="px-4 py-3 text-left text-xs font-bold text-brand-900 uppercase tracking-wider">Observaciones</th>
                   </tr>
