@@ -61,6 +61,12 @@ export default function ControlPersonalNominaPage() {
   });
   const [loanActionLoading, setLoanActionLoading] = useState(false);
 
+  // Integrated Empleados management (unified panel)
+  const [empModalOpen, setEmpModalOpen] = useState(false);
+  const [editingEmp, setEditingEmp] = useState(null);
+  const [empFormData, setEmpFormData] = useState({ employeeNumber: '', nombre: '', apellido: '', hireDate: '', weeklySalary: '', department: '', position: '', notes: '' });
+  const [empSearch, setEmpSearch] = useState('');
+
   // Initialize viewMode from URL query if coming from nav (Atrás/Siguiente contextual) 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -69,6 +75,7 @@ export default function ControlPersonalNominaPage() {
       if (v === 'bonuses' || v === 'bonos') setViewMode('bonuses');
       else if (v === 'payroll' || v === 'nomina') setViewMode('payroll');
       else if (v === 'attendance' || v === 'asistencia') setViewMode('attendance');
+      else if (v === 'empleados') setViewMode('empleados');
     }
   }, []);
 
@@ -98,6 +105,96 @@ export default function ControlPersonalNominaPage() {
     return 0;
   };
 
+  const getNameParts = (fullName) => {
+    if (!fullName) return { nombre: '', apellido: '' };
+    const parts = fullName.trim().split(' ');
+    if (parts.length === 1) return { nombre: parts[0], apellido: '' };
+    const apellido = parts.pop();
+    const nombre = parts.join(' ');
+    return { nombre, apellido };
+  };
+
+  const filteredEmpsForList = employees.filter(emp => {
+    const full = (emp.employee_name || '').toLowerCase();
+    const num = (emp.employee_number || emp.employee_id || '').toLowerCase();
+    const s = empSearch.toLowerCase();
+    return full.includes(s) || num.includes(s);
+  });
+
+  const openAddEmp = () => {
+    setEditingEmp(null);
+    setEmpFormData({ employeeNumber: '', nombre: '', apellido: '', hireDate: '', weeklySalary: '', department: '', position: '', notes: '' });
+    setEmpModalOpen(true);
+  };
+
+  const openEditEmp = (emp) => {
+    const parts = getNameParts(emp.employee_name || '');
+    setEditingEmp(emp);
+    setEmpFormData({
+      employeeNumber: emp.employee_number || emp.employee_id || '',
+      nombre: parts.nombre,
+      apellido: parts.apellido,
+      hireDate: emp.hire_date ? emp.hire_date.split('T')[0] : '',
+      weeklySalary: emp.weekly_salary || '',
+      department: emp.department || '',
+      position: emp.position || '',
+      notes: emp.notes || ''
+    });
+    setEmpModalOpen(true);
+  };
+
+  const closeEmpModal = () => {
+    setEmpModalOpen(false);
+    setEditingEmp(null);
+  };
+
+  const handleEmpInput = (e) => {
+    const { name, value } = e.target;
+    setEmpFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleEmpSave = async () => {
+    if (!empFormData.nombre.trim()) {
+      alert('Nombre es obligatorio');
+      return;
+    }
+    const employeeName = `${empFormData.nombre.trim()} ${empFormData.apellido.trim()}`.trim();
+    const employeeId = empFormData.employeeNumber.trim() || (editingEmp?.employee_id) || `EMP${Date.now()}`;
+
+    const payload = {
+      employeeId: editingEmp ? editingEmp.employee_id : employeeId,
+      employeeName,
+      employeeNumber: empFormData.employeeNumber || employeeId,
+      hireDate: empFormData.hireDate || null,
+      weeklySalary: parseFloat(empFormData.weeklySalary) || 0,
+      department: empFormData.department || 'General',
+      position: empFormData.position || '',
+      notes: empFormData.notes || ''
+    };
+
+    try {
+      const method = editingEmp ? 'PUT' : 'POST';
+      const res = await fetch('/api/employees', {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) throw new Error('Error al guardar');
+      closeEmpModal();
+      await fetchData();
+    } catch (err) {
+      alert('No se pudo guardar el empleado');
+    }
+  };
+
+  const handleEmpDelete = async (emp) => {
+    if (!confirm(`¿Desactivar al empleado "${emp.employee_name}"?`)) return;
+    try {
+      await fetch(`/api/employees?employeeId=${encodeURIComponent(emp.employee_id)}`, { method: 'DELETE' });
+      await fetchData();
+    } catch (e) {}
+  };
+
   useEffect(() => {
     fetchData();
   }, [selectedDate]);
@@ -118,8 +215,8 @@ export default function ControlPersonalNominaPage() {
     try {
       setLoading(true);
       
-      // Fetch employees
-      const empRes = await fetch('/api/employees');
+      // Fetch employees (with balances for unified view)
+      const empRes = await fetch('/api/employees?withBalances=true');
       const empData = await empRes.ok ? await empRes.json() : [];
       setEmployees(Array.isArray(empData) ? empData : []);
 
@@ -660,8 +757,8 @@ export default function ControlPersonalNominaPage() {
         <div className="mb-8">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h1 className="text-3xl font-bold text-slate-900">Asistencia • Préstamos y Adelantos</h1>
-              <p className="text-slate-600 mt-2">Módulo unificado. Un dato se captura una vez y fluye a nómina, gastos, balance y cierres automáticamente.</p>
+              <h1 className="text-3xl font-bold text-slate-900">Empleados • Asistencia • Nómina</h1>
+              <p className="text-slate-600 mt-2">Panel unificado. Gestiona empleados, asistencia y nómina aquí. Usa el botón para Préstamos y Adelantos.</p>
             </div>
             <div className="flex gap-3">
               <input
@@ -671,10 +768,16 @@ export default function ControlPersonalNominaPage() {
                 className="px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
               <button 
-                onClick={() => router.push('/empleados')}
+                onClick={() => setViewMode('empleados')}
                 className="px-4 py-2 bg-emerald-700 text-white rounded-lg font-medium hover:bg-emerald-800"
               >
-                Editar Empleados
+                Empleados
+              </button>
+              <button 
+                onClick={() => setViewMode('deductions')}
+                className="px-4 py-2 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700"
+              >
+                Préstamos y Adelantos
               </button>
               <button 
                 onClick={exportToExcel}
@@ -702,8 +805,18 @@ export default function ControlPersonalNominaPage() {
             </div>
           </div>
 
-          {/* View Mode Tabs */}
+          {/* View Mode Tabs - unified Empleados + Asistencia + Nómina */}
           <div className="flex gap-2 mb-6">
+            <button
+              onClick={() => setViewMode('empleados')}
+              className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                viewMode === 'empleados'
+                  ? 'bg-brand-600 text-white'
+                  : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              Empleados
+            </button>
             <button
               onClick={() => setViewMode('attendance')}
               className={`px-4 py-2 rounded-lg font-medium transition-colors ${
@@ -725,16 +838,6 @@ export default function ControlPersonalNominaPage() {
               Bonos
             </button>
             <button
-              onClick={() => setViewMode('deductions')}
-              className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                viewMode === 'deductions'
-                  ? 'bg-brand-600 text-white'
-                  : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
-              }`}
-            >
-              Préstamos y Adelantos
-            </button>
-            <button
               onClick={() => setViewMode('payroll')}
               className={`px-4 py-2 rounded-lg font-medium transition-colors ${
                 viewMode === 'payroll'
@@ -743,6 +846,16 @@ export default function ControlPersonalNominaPage() {
               }`}
             >
               Pre-Nómina
+            </button>
+            <button
+              onClick={() => setViewMode('deductions')}
+              className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                viewMode === 'deductions'
+                  ? 'bg-amber-600 text-white'
+                  : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              Préstamos y Adelantos
             </button>
           </div>
 
@@ -785,6 +898,71 @@ export default function ControlPersonalNominaPage() {
           </div>
         </div>
 
+        {/* Empleados unified view (single panel with asistencia + nómina) */}
+        {viewMode === 'empleados' && (
+          <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden mb-6">
+            <div className="p-6 border-b flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Catálogo de Empleados</h2>
+                <p className="text-sm text-slate-600">Unificado con Asistencia y Nómina. Los datos fluyen automáticamente.</p>
+              </div>
+              <div className="flex gap-2">
+                <input 
+                  type="text" 
+                  value={empSearch} 
+                  onChange={(e) => setEmpSearch(e.target.value)} 
+                  placeholder="Buscar nombre o ID..." 
+                  className="border border-slate-300 rounded-xl px-3 py-2 text-sm w-64" 
+                />
+                <button onClick={openAddEmp} className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm rounded-lg font-medium">+ Agregar Empleado</button>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-100 text-slate-700">
+                  <tr>
+                    <th className="px-5 py-3 text-left font-semibold">ID</th>
+                    <th className="px-5 py-3 text-left font-semibold">Nombre</th>
+                    <th className="px-5 py-3 text-left font-semibold">Depto / Puesto</th>
+                    <th className="px-5 py-3 text-right font-semibold">Sueldo Semanal</th>
+                    <th className="px-5 py-3 text-right font-semibold">Saldo Préstamo</th>
+                    <th className="px-5 py-3 text-center font-semibold">Préstamos</th>
+                    <th className="px-4 py-3 w-36"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredEmpsForList.length === 0 ? (
+                    <tr><td colSpan={7} className="py-12 text-center text-slate-500">No hay empleados. Agrega el primero.</td></tr>
+                  ) : filteredEmpsForList.map((emp) => {
+                    const parts = getNameParts(emp.employee_name);
+                    return (
+                      <tr key={emp.employee_id} className="hover:bg-slate-50">
+                        <td className="px-5 py-3.5 text-slate-600 font-mono text-sm">{emp.employee_number || emp.employee_id}</td>
+                        <td className="px-5 py-3.5 font-medium text-slate-900">{parts.nombre} {parts.apellido}</td>
+                        <td className="px-5 py-3.5 text-slate-700 text-sm">{emp.department || '-'} / {emp.position || '-'}</td>
+                        <td className="px-5 py-3.5 text-right font-semibold">${Number(emp.weekly_salary || 0).toLocaleString('es-MX')}</td>
+                        <td className="px-5 py-3.5 text-right font-medium text-orange-700">${Number(emp.loan_balance || 0).toLocaleString('es-MX')}</td>
+                        <td className="px-5 py-3.5 text-center">
+                          <span className={`inline-flex items-center justify-center min-w-[26px] h-6 px-2 rounded-full text-xs font-semibold ${(emp.loan_count || 0) > 0 ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-600'}`}>
+                            {emp.loan_count || 0}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <div className="flex items-center justify-end gap-1">
+                            <button onClick={() => openEditEmp(emp)} className="px-3 py-1.5 text-emerald-700 hover:bg-emerald-50 text-xs rounded-lg">Editar</button>
+                            <button onClick={() => handleEmpDelete(emp)} className="px-3 py-1.5 text-red-600 hover:bg-red-50 text-xs rounded-lg">Desactivar</button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="px-5 py-3 text-[11px] text-slate-500 border-t">Los saldos de préstamos se actualizan desde el módulo de Préstamos y Adelantos y fluyen a nómina.</div>
+          </div>
+        )}
+
         {/* Attendance Table */}
         {viewMode === 'attendance' && (
           <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
@@ -800,10 +978,10 @@ export default function ControlPersonalNominaPage() {
                     Conectar lector (IP / Bio Time Cloud)
                   </button>
                   <button 
-                    onClick={() => router.push('/empleados')}
+                    onClick={() => setViewMode('empleados')}
                     className="px-4 py-2 bg-emerald-700 text-white text-sm rounded-lg font-medium hover:bg-emerald-800 flex items-center gap-2"
                   >
-                    Editar Empleados
+                    Ver Empleados
                   </button>
                 </div>
               </div>
@@ -1297,6 +1475,70 @@ export default function ControlPersonalNominaPage() {
               <button onClick={generatePayroll} className="px-6 py-2 rounded-lg bg-brand-700 text-white hover:bg-brand-800 text-sm">
                 Ir a Generar Nómina Completa
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Empleados Add/Edit Modal (integrated in unified panel) */}
+        {empModalOpen && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40 p-5">
+            <div className="bg-white rounded-3xl w-full max-w-lg shadow-xl border border-slate-200">
+              <div className="px-5 pt-5 pb-4 border-b flex items-center">
+                <div className="font-semibold text-lg text-slate-900">
+                  {editingEmp ? 'Editar Empleado' : 'Nuevo Empleado'}
+                </div>
+                <button onClick={closeEmpModal} className="ml-auto text-xl text-slate-400 hover:text-slate-700">×</button>
+              </div>
+
+              <div className="p-5 space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1.5">ID / Número de Empleado</label>
+                    <input type="text" name="employeeNumber" value={empFormData.employeeNumber} onChange={handleEmpInput} disabled={!!editingEmp} className="border text-sm border-slate-300 rounded-xl w-full px-3 py-2.5 focus:outline-emerald-400 disabled:bg-slate-50" placeholder="EMP001" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1.5">Sueldo Semanal (MXN)</label>
+                    <input type="number" step="0.01" name="weeklySalary" value={empFormData.weeklySalary} onChange={handleEmpInput} className="border text-sm border-slate-300 rounded-xl w-full px-3 py-2.5 focus:outline-emerald-400" placeholder="0.00" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1.5">Nombre</label>
+                    <input type="text" name="nombre" value={empFormData.nombre} onChange={handleEmpInput} className="border text-sm border-slate-300 rounded-xl w-full px-3 py-2.5 focus:outline-emerald-400" placeholder="Juan" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1.5">Apellido</label>
+                    <input type="text" name="apellido" value={empFormData.apellido} onChange={handleEmpInput} className="border text-sm border-slate-300 rounded-xl w-full px-3 py-2.5 focus:outline-emerald-400" placeholder="Pérez" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1.5">Fecha de inicio</label>
+                    <input type="date" name="hireDate" value={empFormData.hireDate} onChange={handleEmpInput} className="border text-sm border-slate-300 rounded-xl w-full px-3 py-2.5 focus:outline-emerald-400" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1.5">Departamento</label>
+                    <input type="text" name="department" value={empFormData.department} onChange={handleEmpInput} className="border text-sm border-slate-300 rounded-xl w-full px-3 py-2.5 focus:outline-emerald-400" placeholder="Empaque" />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1.5">Puesto</label>
+                  <input type="text" name="position" value={empFormData.position} onChange={handleEmpInput} className="border text-sm border-slate-300 rounded-xl w-full px-3 py-2.5 focus:outline-emerald-400" placeholder="Operador" />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1.5">Observaciones</label>
+                  <textarea name="notes" value={empFormData.notes} onChange={handleEmpInput} rows={2} className="border text-sm border-slate-300 rounded-xl w-full px-3 py-2 focus:outline-emerald-400 resize-y" placeholder="Notas..." />
+                </div>
+              </div>
+
+              <div className="border-t px-5 py-4 flex items-center gap-3 justify-end bg-slate-50 rounded-b-3xl">
+                <button onClick={closeEmpModal} className="px-5 py-2.5 text-sm rounded-xl border text-slate-700 bg-white hover:bg-slate-50">Cancelar</button>
+                <button onClick={handleEmpSave} className="px-6 py-2.5 text-sm rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-semibold">Guardar</button>
+              </div>
             </div>
           </div>
         )}
