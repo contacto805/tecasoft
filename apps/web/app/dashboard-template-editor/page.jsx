@@ -32,8 +32,8 @@ export default function TemplateEditorPage() {
 
   const fetchUser = async () => {
     try {
-      const res = await fetch('/api/auth/user');
-      const data = await res.json();
+      const res = await fetch('/api/auth/user', { credentials: 'include' });
+      const data = res.ok ? await res.json().catch(() => ({})) : {};
       setUserId(data.id);
     } catch (error) {
       console.error('Error:', error);

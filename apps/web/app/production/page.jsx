@@ -111,7 +111,7 @@ export default function ProductionPage() {
 
   // XIII: Cargar rol para permisos (edita borradores propios; super confirma precios/correcciones; inventarios/acopios conservan)
   useEffect(() => {
-    fetch('/api/auth/user').then(r => r.json()).then(u => {
+    fetch('/api/auth/user', { credentials: 'include' }).then(r => r.ok ? r.json() : Promise.resolve({})).then(u => {
       const r = (u?.admin_role || '').toLowerCase();
       if (u?.is_super_admin || r.includes('super')) setUserRole('super');
       else if (r.includes('encarg') || r.includes('oper')) setUserRole('encargado');

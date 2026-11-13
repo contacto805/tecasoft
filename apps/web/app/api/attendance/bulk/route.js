@@ -39,7 +39,7 @@ export async function POST(request) {
     const useCheckIn = checkInTime || prev.check_in_time || null;
     const useCheckOut = checkOutTime || prev.check_out_time || null;
     const providedHours = hours_worked !== undefined ? hours_worked : undefined;
-    const hCalc = providedHours !== undefined ? providedHours : ((useCheckIn && useCheckOut) ? calculateHours(useCheckIn, useCheckOut) : (prev.hours_worked || 0));
+    const hCalc = providedHours !== undefined ? providedHours : (prev.hours_worked || 0);
 
     if (existing.length > 0) {
       // Update existing
@@ -109,11 +109,4 @@ export async function POST(request) {
     console.error('Error creating bulk attendance:', error);
     return NextResponse.json({ error: 'No fue posible registrar la asistencia' }, { status: 500 });
   }
-}
-
-function calculateHours(checkIn, checkOut) {
-  const inDate = new Date(checkIn);
-  const outDate = new Date(checkOut);
-  const hours = (outDate - inDate) / (1000 * 60 * 60);
-  return Math.max(0, Math.min(hours, 12)); // Max 12 hours per day
 }

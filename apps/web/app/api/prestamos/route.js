@@ -1,12 +1,11 @@
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
 
-// Generate automatic folio like PR-2025-0001
+// Enriched central ascending folio generator (global, no year reset) to match admin/tickets central control and eliminate per-module duplicates
 async function generateFolio() {
-  const year = new Date().getFullYear();
   const max = await sql`SELECT COALESCE(MAX(id), 0) as maxid FROM employee_loans`;
   const nextNum = (max[0]?.maxid || 0) + 1;
-  return `PR-${year}-${String(nextNum).padStart(4, '0')}`;
+  return `PR-${String(nextNum).padStart(6, '0')}`;
 }
 
 export async function GET(request) {
