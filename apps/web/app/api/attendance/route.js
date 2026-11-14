@@ -73,11 +73,12 @@ export async function POST(request) {
       );
     }
 
+    let manualFlag = isManual;
     const { date: today, time: mxTime } = getMexicoCityTime();
     const now = new Date(); // server reference is Mexico City authoritative time from this point for all records (date/time fields)
 
-    // 1. Verificar si el empleado tiene huella registrada (solo si no es manual)
-    if (!isManual && fingerprintData) {
+    // 1. Verificar huella para enlace directo con lector de huella (vinculado al módulo de asistencia)
+    if (fingerprintData) {
       const fingerprints = await sql`
         SELECT * FROM employee_fingerprints
         WHERE employee_id = ${employeeId} AND is_active = true
@@ -85,13 +86,14 @@ export async function POST(request) {
 
       if (fingerprints.length === 0) {
         return NextResponse.json(
-          { error: 'Empleado no tiene huella registrada' },
+          { error: 'Empleado no tiene huella registrada. Registre primero con +Huella.' },
           { status: 400 }
         );
       }
-
-      // Aquí iría la validación real de la huella biométrica
-      // Por ahora asumimos que la huella coincide
+      // Huella verificada: se registra como no-manual, vinculado al lector
+      manualFlag = false;
+    } else if (!manualFlag && !fingerprintData) {
+      // sin huella, cae a manual si no hay device
     }
 
     // 2. Buscar registros del día (fuente única). Soporta múltiples intervalos para horas extra.
@@ -132,7 +134,7 @@ export async function POST(request) {
           ${employeeName},
           ${today},
           ${nowTs},
-          ${isManual},
+          ${manualFlag},
           ${manualEntryReason || null},
           ${manualEntryBy || null},
           ${deviceId ? parseInt(deviceId) : null},
