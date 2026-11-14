@@ -1051,7 +1051,7 @@ ${fmt(gsemis)}`;
                             </h3>
                             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                                 {allCalibres.map((grade) => (
-                                    <div key={grade} className="p-3 bg-slate-50 rounded-lg border border-slate-200 hover:border-brand-300 hover:bg-brand-50 transition-colors">
+                                    <div key={`10kg-${grade}`} className="p-3 bg-slate-50 rounded-lg border border-slate-200 hover:border-brand-300 hover:bg-brand-50 transition-colors">
                                         <span className="text-sm font-medium text-slate-700">{grade}</span>
                                         <p className="text-lg font-bold text-brand-700 mt-1">{resumen.summary10kg[grade] || 0}</p>
                                     </div>
@@ -1067,7 +1067,7 @@ ${fmt(gsemis)}`;
                             </h3>
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                                 {allCalibres.map((grade) => (
-                                    <div key={grade} className="p-3 bg-slate-50 rounded-lg border border-slate-200 hover:border-brand-300 hover:bg-brand-50 transition-colors">
+                                    <div key={`6kg-${grade}`} className="p-3 bg-slate-50 rounded-lg border border-slate-200 hover:border-brand-300 hover:bg-brand-50 transition-colors">
                                         <span className="text-sm font-medium text-slate-700">{grade}</span>
                                         <p className="text-lg font-bold text-brand-700 mt-1">{resumen.summary6kg[grade] || 0}</p>
                                     </div>
