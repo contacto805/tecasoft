@@ -162,12 +162,14 @@ export default function ControlPersonalNominaPage() {
     const employeeName = `${empFormData.nombre.trim()} ${empFormData.apellido.trim()}`.trim();
     const employeeId = empFormData.employeeNumber.trim() || (editingEmp?.employee_id) || `EMP${Date.now()}`;
 
+    const weekly = parseFloat(empFormData.weeklySalary) || 0;
     const payload = {
       employeeId: editingEmp ? editingEmp.employee_id : employeeId,
       employeeName,
       employeeNumber: empFormData.employeeNumber || employeeId,
       hireDate: empFormData.hireDate || null,
-      weeklySalary: parseFloat(empFormData.weeklySalary) || 0,
+      weeklySalary: weekly,
+      dailySalary: weekly > 0 ? Math.round((weekly / 6) * 100) / 100 : 0,
       department: empFormData.department || 'General',
       position: empFormData.position || '',
       notes: empFormData.notes || ''
@@ -302,6 +304,7 @@ export default function ControlPersonalNominaPage() {
       setAttendance(mergedWithLoans);
       setLoans(activeLoansData);
 
+      const totalAttDisc = merged.reduce((s, e) => s + Number(e.discount_amount || 0), 0);
       setStats({
         activeEmployees: empData.length,
         presentToday: present,
@@ -309,7 +312,7 @@ export default function ControlPersonalNominaPage() {
         weekHours: weekHours,
         weekPayroll: weekPayroll,
         weekBonuses: weekBonuses,
-        weekDeductions: Math.round(totalWeekLoanDeds * 100) / 100
+        weekDeductions: Math.round((totalWeekLoanDeds + totalAttDisc) * 100) / 100
       });
 
     } catch (error) {
@@ -529,7 +532,7 @@ export default function ControlPersonalNominaPage() {
   };
 
   const generatePayroll = () => {
-    router.push('/nomina');
+    setViewMode('payroll');
   };
 
   // PROGRAMACIÓN HORARIOS MAÑANA (per spec: un día antes, flexible)
@@ -566,7 +569,7 @@ export default function ControlPersonalNominaPage() {
   // Navigation helpers (consistent across modules)
   const goBack = () => router.push('/');
   const goPrev = () => router.push('/brokers');
-  const goNext = () => router.push('/nomina');
+  const goNext = () => router.push('/administracion');
 
   // Marcado directo enlazado al módulo de asistencia vía lector de huella (verifica huella registrada y graba en attendance_records)
   const markBiometric = async (employee, type = 'check_in') => {
@@ -1444,9 +1447,10 @@ export default function ControlPersonalNominaPage() {
                     <th className="px-4 py-3 text-right text-xs font-bold text-slate-700">Salario Diario</th>
                     <th className="px-4 py-3 text-center text-xs font-bold text-slate-700">Estado Hoy</th>
                     <th className="px-4 py-3 text-right text-xs font-bold text-slate-700">Base Día</th>
-                    <th className="px-4 py-3 text-right text-xs font-bold text-green-700">+ Bono Extra</th>
-                    <th className="px-4 py-3 text-right text-xs font-bold text-orange-700">- Préstamo/ Adelanto</th>
-                    <th className="px-4 py-3 text-right text-xs font-bold text-slate-700">Neto Semana</th>
+                  <th className="px-4 py-3 text-right text-xs font-bold text-green-700">+ Bono Extra</th>
+                  <th className="px-4 py-3 text-right text-xs font-bold text-orange-700">- Préstamo/ Adelanto</th>
+                  <th className="px-4 py-3 text-right text-xs font-bold text-orange-600">- Desc. Asistencia</th>
+                  <th className="px-4 py-3 text-right text-xs font-bold text-slate-700">Neto Semana</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1455,7 +1459,8 @@ export default function ControlPersonalNominaPage() {
                     const paidToday = getEffectivePayment(emp);
                     const bono = Number(emp.extra_bonus || 0);
                     const loanDed = Number(emp.loan_deduction || 0);
-                    const net = Math.max(0, paidToday + bono - loanDed);
+                    const attDisc = Number(emp.discount_amount || 0);
+                    const net = Math.max(0, paidToday + bono - loanDed - attDisc);
                     const isRetardo = emp.status === 'retardo';
                     return (
                       <tr key={emp.employee_id} className="border-b last:border-none">
@@ -1474,6 +1479,7 @@ export default function ControlPersonalNominaPage() {
                         </td>
                         <td className="px-4 py-3 text-sm text-right text-green-600 font-medium">+ ${bono.toFixed(2)}</td>
                         <td className="px-4 py-3 text-sm text-right text-orange-700 font-medium">- ${loanDed.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-sm text-right text-orange-600 font-medium">- ${attDisc.toFixed(2)}</td>
                         <td className="px-4 py-3 text-sm text-right font-semibold">${net.toFixed(2)}</td>
                       </tr>
                     );
@@ -1481,7 +1487,7 @@ export default function ControlPersonalNominaPage() {
                 </tbody>
                 <tfoot>
                   <tr className="bg-brand-50">
-                     <td colSpan={5} className="px-4 py-3 font-semibold text-right text-sm">Totales Pre-Nómina (con descuentos de Préstamos y Adelantos):</td>
+                     <td colSpan={5} className="px-4 py-3 font-semibold text-right text-sm">Totales Pre-Nómina (sueldo de Empleados + bonos + desc. asistencia + préstamos):</td>
                     <td className="px-4 py-3 text-right font-bold">
                       ${attendance.reduce((s, e) => s + getEffectivePayment(e), 0).toFixed(2)}
                     </td>
@@ -1491,17 +1497,44 @@ export default function ControlPersonalNominaPage() {
                     <td className="px-4 py-3 text-right font-bold text-orange-700">
                       - ${Number(stats.weekDeductions || 0).toFixed(2)}
                     </td>
+                    <td className="px-4 py-3 text-right font-bold text-orange-600">
+                      - ${attendance.reduce((s, e) => s + Number(e.discount_amount || 0), 0).toFixed(2)}
+                    </td>
                     <td className="px-4 py-3 text-right font-bold text-lg">
-                      ${(attendance.reduce((s, e) => s + getEffectivePayment(e), 0) + Number(stats.weekBonuses || 0) - Number(stats.weekDeductions || 0)).toFixed(2)}
+                      ${(attendance.reduce((s, e) => s + getEffectivePayment(e), 0) + Number(stats.weekBonuses || 0) - Number(stats.weekDeductions || 0) - attendance.reduce((s, e) => s + Number(e.discount_amount || 0), 0)).toFixed(2)}
                     </td>
                   </tr>
                 </tfoot>
               </table>
             </div>
-            <div className="p-4 border-t bg-slate-50 flex justify-end">
-              <button onClick={generatePayroll} className="px-6 py-2 rounded-lg bg-brand-700 text-white hover:bg-brand-800 text-sm">
-                Ir a Generar Nómina Completa
-              </button>
+            <div className="p-4 border-t bg-slate-50 flex flex-wrap items-center justify-between gap-3">
+              <div className="text-xs text-slate-600">Sueldo tomado del módulo Empleados. Bonos y descuentos (asistencia + préstamos/adelantos) aplicados aquí.</div>
+              <div className="flex gap-2">
+                <button 
+                  onClick={async () => {
+                    const ws = getWeekStart(selectedDate);
+                    const we = getWeekEnd(selectedDate);
+                    try {
+                      const res = await fetch('/api/payroll/calculate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ week_start_date: ws, week_end_date: we })
+                      });
+                      const d = await res.json();
+                      if (res.ok) {
+                        alert(`Nómina sincronizada: ${d.employee_count || 0} empleados. Total $${(d.total_amount || 0).toFixed(2)}`);
+                        await fetchData();
+                      } else alert(d.error || 'Error al sincronizar');
+                    } catch(e){ alert('No se pudo sincronizar nómina'); }
+                  }}
+                  className="px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 text-sm"
+                >
+                  Sincronizar Nómina Completa (Asistencia → Nómina)
+                </button>
+                <button onClick={generatePayroll} className="px-6 py-2 rounded-lg bg-brand-700 text-white hover:bg-brand-800 text-sm">
+                  Ver Períodos y Trazabilidad
+                </button>
+              </div>
             </div>
           </div>
         )}
