@@ -91,6 +91,21 @@ export default function AdministracionPage() {
     fetchDashboard();
   }, []);
 
+  // Cierre semanal auto - todo converge aquí para diagnóstico de dinero (gastos/ingresos/inventario frio por semana de ingreso)
+  const [cierreActual, setCierreActual] = useState(null);
+  useEffect(() => {
+    const loadCierre = async () => {
+      try {
+        const r = await fetch('/api/admin/weekly-closings');
+        if (r.ok) {
+          const d = await r.json();
+          setCierreActual(Array.isArray(d.closings) ? d.closings[0] : (Array.isArray(d) ? d[0] : d));
+        }
+      } catch (_) {}
+    };
+    loadCierre();
+  }, []);
+
   useEffect(() => {
     const loadWidgetConfig = async () => {
       try {
@@ -347,10 +362,33 @@ export default function AdministracionPage() {
             <p className="text-2xl font-bold text-slate-900">${(dashboardData.pendingLoans || 0).toLocaleString()}</p>
           </div>
           <div className="bg-white rounded-lg border border-slate-200 p-6 shadow-sm hover:shadow-md transition-shadow">
-            <p className="text-sm font-medium text-slate-600 uppercase tracking-wide mb-2">Anticipos Pendientes</p>
-            <p className="text-2xl font-bold text-slate-900">${(dashboardData.pendingAdvances || 0).toLocaleString()}</p>
-          </div>
+          <p className="text-sm font-medium text-slate-600 uppercase tracking-wide mb-2">Anticipos Pendientes</p>
+          <p className="text-2xl font-bold text-slate-900">${(dashboardData.pendingAdvances || 0).toLocaleString()}</p>
         </div>
+      </div>
+
+      {/* Diagnóstico de Dinero - Cierre Semanal Automático (converge gastos/ingresos/ventas/inventario frio aquí) */}
+      <div className="bg-white border border-emerald-200 rounded-2xl p-6 mb-8">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="font-bold text-lg text-emerald-900">Diagnóstico de Dinero — Cierre Semanal</h3>
+            <p className="text-xs text-slate-600">Auto-llenado desde Embarques (ventas en semana de ingreso a frío), Gastos, Abonos, Inventario Frio y Producción. Fuente única para Administración.</p>
+          </div>
+          <button onClick={() => window.location.reload()} className="text-xs px-3 py-1 border rounded">Actualizar</button>
+        </div>
+        {cierreActual ? (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
+            <div className="bg-emerald-50 p-3 rounded"><div className="text-emerald-700 text-xs">Ingresos</div><div className="font-bold text-xl">${parseFloat(cierreActual.total_ingresos_dinero || cierreActual.total_cargas_dinero || 0).toLocaleString()}</div></div>
+            <div className="bg-red-50 p-3 rounded"><div className="text-red-700 text-xs">Gastos / Egresos</div><div className="font-bold text-xl">${parseFloat(cierreActual.total_gastos || cierreActual.total_egresos_dinero || 0).toLocaleString()}</div></div>
+            <div className="bg-amber-50 p-3 rounded"><div className="text-amber-700 text-xs">Ventas Desecho</div><div className="font-bold text-xl">${parseFloat(cierreActual.total_ventas_desecho_dinero || 0).toLocaleString()}</div></div>
+            <div className="bg-blue-50 p-3 rounded"><div className="text-blue-700 text-xs">Inventario Frío (kg)</div><div className="font-bold text-xl">{parseFloat(cierreActual.valor_inventario_frio || 0).toLocaleString()}</div></div>
+            <div className="bg-slate-100 p-3 rounded"><div className="text-slate-700 text-xs">Resultado Semana</div><div className="font-bold text-xl">${parseFloat(cierreActual.resultado_dinero || 0).toLocaleString()}</div></div>
+          </div>
+        ) : (
+          <div className="text-xs text-slate-500">El cierre se llena automáticamente al registrar ventas o gastos. Los datos convergen aquí desde todos los módulos.</div>
+        )}
+        <div className="mt-3 text-[10px] text-emerald-600">Las ventas de inventario frío se registran en la semana de ingreso del lote (no solo fecha de venta) para diagnóstico correcto.</div>
+      </div>
 
         <div className="bg-white rounded-lg border border-slate-200 p-6 shadow-sm mb-8">
           <div className="flex justify-between items-center mb-4">

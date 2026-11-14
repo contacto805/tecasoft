@@ -176,6 +176,35 @@ export async function POST(request) {
                 VALUES (${mainLoad.id}, ${affectedLots[0]}, ${driver_name}, ${truck_plates}, ${trailer_plates}, ${loadDateStr}, ${notes})`;
     }
 
+    // === AUTO CIERRE SEMANAL + INVENTARIO FRIO ===
+    // Inventory frio already updated above (pallet_output_summary -> EMBARCADA)
+    // Register the sale in the WEEK THE FRUIT ENTERED (entry week) for correct money diagnosis
+    try {
+      const [entryInfo] = await sql`
+        SELECT COALESCE(
+          (SELECT MIN(public_scale_date) FROM fruit_input_weighings WHERE lot_id = ANY(ARRAY[${affectedLots}::int[]])),
+          (SELECT MIN(date) FROM lots WHERE id = ANY(ARRAY[${affectedLots}::int[]]))
+        ) as entry_dt
+      `;
+      const entryDt = entryInfo?.entry_dt || loadDateStr;
+
+      // Sync carga using entry week date so the venta registers in the week it entered frio
+      await fetch('/api/admin/weekly-closings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          addCarga: true,
+          load_date: entryDt,
+          factura_folio: factura_folio || null,
+          total_kg: finalTotalKg,
+          total_amount: finalTotalAmount,
+          customer_name: customer[0]?.customer_name || ''
+        })
+      });
+    } catch (syncErr) {
+      // non-fatal, closing can be recalculated later from admin
+    }
+
     return NextResponse.json({
       load: mainLoad,
       details: loadDetailsAll,

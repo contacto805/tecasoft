@@ -144,6 +144,26 @@ export async function PUT(request) {
       if (result.length === 0) {
         return NextResponse.json({ error: 'Gasto no encontrado' }, { status: 404 });
       }
+
+      // Auto sync to cierre semanal so gastos flow automatically into Administración / Cierre
+      try {
+        const exp = result[0];
+        if (exp?.expense_date) {
+          await fetch('/api/admin/weekly-closings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              addCarga: true,
+              load_date: exp.expense_date,
+              factura_folio: 'GASTO-' + exp.id,
+              total_kg: 0,
+              total_amount: 0,
+              customer_name: 'GASTO'
+            })
+          });
+        }
+      } catch (_) {}
+
       return NextResponse.json(result[0]);
     }
 

@@ -1013,18 +1013,18 @@ ${fmt(gsemis)}`;
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                 <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
                     <p className="text-sm font-medium text-slate-500 mb-1">Valor Total Fruta (Frío)</p>
-                    <h3 className="text-3xl font-bold text-slate-900">$425,840.00</h3>
-                    <p className="text-xs text-emerald-600 mt-2 font-medium">+12% vs semana anterior</p>
+                    <h3 className="text-3xl font-bold text-slate-900">${(resumen.total * 280).toLocaleString()}</h3>
+                    <p className="text-xs text-emerald-600 mt-2 font-medium">Actualizado desde mapa de frío</p>
                 </div>
                 <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
                     <p className="text-sm font-medium text-slate-500 mb-1">Tarimas en Stock</p>
-                    <h3 className="text-3xl font-bold text-slate-900">142</h3>
-                    <p className="text-xs text-orange-600 mt-2 font-medium">8 pendientes por despacho</p>
+                    <h3 className="text-3xl font-bold text-slate-900">{resumen.total}</h3>
+                    <p className="text-xs text-orange-600 mt-2 font-medium">Cajas totales desde pallet_output_summary</p>
                 </div>
                 <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
                     <p className="text-sm font-medium text-slate-500 mb-1">Materiales Críticos</p>
-                    <h3 className="text-3xl font-bold text-slate-900">3</h3>
-                    <p className="text-xs text-red-600 mt-2 font-medium">Stock bajo: Etiquetas A3</p>
+                    <h3 className="text-3xl font-bold text-slate-900">{materials.filter(m => m.quantity_available < (m.minimum_stock||50)).length}</h3>
+                    <p className="text-xs text-red-600 mt-2 font-medium">Stock bajo en tiempo real</p>
                 </div>
             </div>
 

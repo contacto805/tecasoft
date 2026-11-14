@@ -103,6 +103,51 @@ export async function POST(request) {
       WHERE id = ${closing.id}
     `;
 
+    // Enrich automatically with gastos (expenses + operating), ingresos (loads/abonos), inventario frio value, etc.
+    // This ensures the cierre semanal is fully populated from all modules and converges in Administración
+    try {
+      const [gastosRow] = await sql`
+        SELECT COALESCE(SUM(total),0) as g FROM expenses WHERE expense_date BETWEEN ${weekStartStr} AND ${weekEndStr}
+      `;
+      const [opGastosRow] = await sql`
+        SELECT COALESCE(SUM(amount_mxn),0) as g FROM operating_costs 
+        WHERE cost_date BETWEEN ${weekStartStr} AND ${weekEndStr} AND status IN ('aprobado','pagado','pendiente')
+      `;
+      const totalGastos = parseFloat(gastosRow?.g || 0) + parseFloat(opGastosRow?.g || 0);
+
+      const [ingresosRow] = await sql`
+        SELECT COALESCE(SUM(total_amount),0) as i FROM load_history WHERE load_date BETWEEN ${weekStartStr} AND ${weekEndStr}
+      `;
+      const [abonosRow] = await sql`
+        SELECT COALESCE(SUM(equivalente_usd),0) as a FROM abonos WHERE fecha BETWEEN ${weekStartStr} AND ${weekEndStr}
+      `;
+      const totalIngresos = parseFloat(ingresosRow?.i || 0) + parseFloat(abonosRow?.a || 0);
+
+      // Ventas desecho/proceso
+      const [desRow] = await sql`SELECT COALESCE(SUM(total_price),0) as d FROM sales_of_process_and_waste WHERE waste_kg > 0 AND date BETWEEN ${weekStartStr} AND ${weekEndStr}`;
+      const [procRow] = await sql`SELECT COALESCE(SUM(total_price),0) as p FROM sales_of_process_and_waste WHERE process_kg > 0 AND date BETWEEN ${weekStartStr} AND ${weekEndStr}`;
+
+      // Valor inventario frio actual (no embarcadas)
+      const [frioRow] = await sql`
+        SELECT COALESCE(SUM(total_kg),0) as kg FROM pallet_output_summary 
+        WHERE COALESCE(estado,'') NOT IN ('EMBARCADA','CANCELADA')
+      `;
+
+      await sql`
+        UPDATE weekly_closings SET
+          total_gastos = ${totalGastos},
+          total_ingresos_dinero = ${totalIngresos},
+          total_egresos_dinero = COALESCE(total_egresos_dinero, 0) + ${totalGastos},
+          total_ventas_desecho_dinero = ${parseFloat(desRow?.d || 0)},
+          total_ventas_proceso_dinero = ${parseFloat(procRow?.p || 0)},
+          valor_inventario_frio = ${parseFloat(frioRow?.kg || 0)},
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ${closing.id}
+      `;
+    } catch (enrichErr) {
+      // non blocking
+    }
+
     return NextResponse.json({ success: true, week_label: weekLabel, updated_kg: newKg, updated_dinero: newDin, origen: 'embarque', estado: 'actualizado' });
   } catch (error) {
     console.error("Error POST weekly-closings carga sync:", error);
