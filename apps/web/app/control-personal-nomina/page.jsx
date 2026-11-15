@@ -755,12 +755,19 @@ export default function ControlPersonalNominaPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            <button onClick={goPrev} className="flex items-center gap-1 px-3 py-1.5 border border-slate-300 hover:bg-slate-100 rounded-lg text-xs text-slate-700 font-medium transition-colors">
-              ← Atrás
-            </button>
-            <button onClick={goNext} className="flex items-center gap-1 px-3 py-1.5 border border-slate-300 hover:bg-slate-100 rounded-lg text-xs text-slate-700 font-medium transition-colors">
-              Siguiente →
-            </button>
+            <select 
+              onChange={(e) => { if (e.target.value) router.push(e.target.value); }}
+              className="px-2 py-1 text-xs border border-slate-300 rounded-lg bg-white text-slate-700"
+              defaultValue=""
+            >
+              <option value="">Ir a panel...</option>
+              <option value="/">Dashboard Principal</option>
+              <option value="/brokers">Atrás (Brokers)</option>
+              <option value="/administracion">Siguiente (Administración)</option>
+              <option value="/inventory">Inventario Fruta</option>
+              <option value="/production">Producción</option>
+              <option value="/embarques">Embarques</option>
+            </select>
           </div>
         </div>
       </header>

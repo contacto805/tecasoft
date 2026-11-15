@@ -205,6 +205,7 @@ ${fmt(gsemis)}`;
           caliber: p.caliber || '',
           quality: p.class_name || 'A',
           lot_id: p.lot_id || null,
+          lot_number: p.lot_number || '',
           presentation: is6 ? '6 kg' : '10 kg',
           folio: p.folio_tarima || ('TAR-' + String(p.id).padStart(6, '0')),
           pallet_id: p.id
@@ -250,10 +251,10 @@ ${fmt(gsemis)}`;
 
   const loadLots = async () => {
     try {
-      const response = await fetch('/api/lots?status=selection');
+      const response = await fetch('/api/lots');
       if (response.ok) {
         const data = await response.json();
-        setLots(data);
+        setLots(Array.isArray(data) ? data : []);
       }
     } catch (err) {
       console.error('Error loading lots:', err);
@@ -937,35 +938,25 @@ ${fmt(gsemis)}`;
                     <span className="font-bold text-lg tracking-tight">Tecavo Fruits Soft</span>
                 </div>
                 
-                <nav className="hidden lg:flex items-center gap-1">
-                    <button onClick={() => router.push('/')} className="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-medium text-sm transition-colors">
-                        Dashboard Principal
-                    </button>
-                    <button onClick={() => router.push('/inventory')} className="px-4 py-2 rounded-lg bg-brand-50 text-brand-700 font-medium text-sm transition-colors cursor-default">
-                        Inventario Fruta
-                    </button>
-                    <button onClick={() => router.push('/materials')} className="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-medium text-sm transition-colors">
-                        Inventario Materiales
-                    </button>
-                    <button onClick={() => router.push('/embarques')} className="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-medium text-sm transition-colors">
-                        Embarques
-                    </button>
-                    <button onClick={() => router.push('/acopios')} className="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-medium text-sm transition-colors">
-                        Acopios
-                    </button>
-                    <button onClick={() => router.push('/cutting-orders')} className="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-medium text-sm transition-colors">
-                        Orden de corte
-                    </button>
-                    <button onClick={() => router.push('/precios-fruta')} className="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-medium text-sm transition-colors">
-                        Precios de fruta
-                    </button>
-                    <button onClick={() => router.push('/fruit-input')} className="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-medium text-sm transition-colors">
-                        Ingreso de Fruta
-                    </button>
-                    <button onClick={() => router.push('/production?tab=seleccion')} className="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-medium text-sm transition-colors">
-                        Producción (Selección)
-                    </button>
-                </nav>
+                <div className="flex items-center gap-2">
+                    <select 
+                      onChange={(e) => { if (e.target.value) router.push(e.target.value); }}
+                      className="px-3 py-1.5 text-sm border border-slate-300 rounded-lg bg-white text-slate-700 font-medium focus:outline-none focus:ring-1 focus:ring-brand-500"
+                      defaultValue="/inventory"
+                    >
+                      <option value="/">Dashboard Principal</option>
+                      <option value="/inventory">Inventario Fruta</option>
+                      <option value="/materials">Inventario Materiales</option>
+                      <option value="/embarques">Embarques</option>
+                      <option value="/acopios">Acopios</option>
+                      <option value="/cutting-orders">Orden de corte</option>
+                      <option value="/precios-fruta">Precios de fruta</option>
+                      <option value="/fruit-input">Ingreso de Fruta</option>
+                      <option value="/production?tab=seleccion">Producción (Selección)</option>
+                      <option value="/administracion">Administración</option>
+                      <option value="/control-personal-nomina">Personal y Nómina</option>
+                    </select>
+                </div>
             </div>
             <div className="flex items-center gap-4">
                 <div className="w-8 h-8 rounded-full bg-slate-200"></div>
@@ -1096,8 +1087,10 @@ ${fmt(gsemis)}`;
                       <tr>
                         <th className="px-4 py-3 text-left">Folio / Lote</th>
                         <th className="px-4 py-3 text-left">Calibre / Clase</th>
-                        <th className="px-4 py-3 text-right">Tarimas</th>
-                        <th className="px-4 py-3 text-right">Kg</th>
+                      <th className="px-4 py-3 text-right">Tarimas</th>
+                      <th className="px-4 py-3 text-right">Cajas (aprox)</th>
+                      <th className="px-4 py-3 text-right">Kg</th>
+                      <th className="px-4 py-3 text-left">Empacado</th>
                         <th className="px-4 py-3 text-left">Empacado</th>
                         <th className="px-4 py-3 text-left">Estado</th>
                       </tr>
@@ -1108,6 +1101,7 @@ ${fmt(gsemis)}`;
                           <td className="px-4 py-2 font-medium">{item.folio_tarima || 'TAR-' + String(item.id).padStart(6,'0')} • {item.lot_number || '—'}</td>
                           <td className="px-4 py-2">{item.caliber || '—'} / {item.class_name || '—'}</td>
                           <td className="px-4 py-2 text-right font-semibold">{item.pallet_count || 0}</td>
+                          <td className="px-4 py-2 text-right font-semibold">{((item.pallet_count || 1) * ((String(item.pallet_type||'').toLowerCase().includes('6') ? 40 : 96)) )}</td>
                           <td className="px-4 py-2 text-right">{parseFloat(item.total_kg || 0).toFixed(0)}</td>
                           <td className="px-4 py-2 text-xs text-slate-500">{item.packing_date || item.cold_date || '—'}</td>
                           <td className="px-4 py-2"><span className="px-2 py-0.5 text-xs rounded bg-amber-100 text-amber-700">{item.estado || 'PENDIENTE_UBICACION'}</span></td>
@@ -1193,11 +1187,10 @@ ${fmt(gsemis)}`;
                                         <>
                                           <div className="text-[10px] text-slate-600">📅 {slotData.date}</div>
                                           <div className="text-[10px] font-medium text-slate-900">{slotData.boxes} cajas × {slotData.presentation || '10 kg'}</div>
-                                          <div className="text-[10px] text-slate-600">Calibre: {slotData.caliber}</div>
+                                          <div className="text-[10px] text-slate-600">Calibre: {slotData.caliber || '—'}</div>
                                           <div className="text-[10px] text-brand-600 font-semibold">✓ {slotData.quality}</div>
-                                          {slotData.lot_id && lots.find(l => l.id === slotData.lot_id) && (
-                                            <div className="text-[9px] text-slate-400 mt-1 font-mono">📦 {lots.find(l => l.id === slotData.lot_id).lot_number}</div>
-                                          )}
+                                          <div className="text-[9px] text-emerald-700 font-mono mt-0.5">Lote: {slotData.lot_number || (slotData.lot_id ? '#' + slotData.lot_id : '—')}</div>
+                                          <div className="text-[9px] text-slate-500">Folio: {slotData.folio}</div>
                                         </>
                                       ) : (
                                         <div className="text-[10px] text-slate-400">Vacío</div>
