@@ -85,6 +85,10 @@ function LayoutContent({ children }) {
   const [iaInput, setIaInput] = useState('');
   const [iaLoading, setIaLoading] = useState(false);
 
+  // Friendly group navigation — modules exactly as configured in Administración / Super
+  const [currentGroupModules, setCurrentGroupModules] = useState([]);
+  const [currentGroupLabel, setCurrentGroupLabel] = useState('');
+
   const getGroupDashboard = () => {
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem('groupDashboard');
@@ -165,6 +169,34 @@ function LayoutContent({ children }) {
     return () => controller.abort();
   }, []);
 
+  // Load modules for current group (from admin configuration) — friendly horizontal nav
+  useEffect(() => {
+    if (!isAuthenticated) { setCurrentGroupModules([]); setCurrentGroupLabel(''); return; }
+    const loadGroupNav = async () => {
+      try {
+        let cred = 'operaciones';
+        if (typeof window !== 'undefined') {
+          const stored = localStorage.getItem('groupDashboard') || '';
+          const p = (pathname || '').toLowerCase();
+          if (stored.includes('acop') || p.includes('acop') || p.includes('campo')) cred = 'campo';
+          else if (stored.includes('admin') || p.includes('admin')) cred = 'administrador';
+          else if (stored.includes('embar') || p.includes('embar') || p.includes('produccion')) cred = 'operaciones';
+        }
+        const res = await fetch(`/api/menu?credential=${cred}`, { credentials: 'include' });
+        const groups = res.ok ? await res.json().catch(()=>[]) : [];
+        const flat = (groups || []).flatMap(g => (g.modules || []).filter(m => m && m.is_active !== false).map(m => ({...m, _group: g.group_name})));
+        setCurrentGroupModules(flat.slice(0, 12)); // limit for clean UI
+        // pick a nice label
+        const first = flat[0];
+        setCurrentGroupLabel(first?._group || (cred === 'campo' ? 'ACOPIOS' : cred === 'administrador' ? 'ADMINISTRACIÓN' : 'OPERACIONES'));
+      } catch (_) { setCurrentGroupModules([]); }
+    };
+    loadGroupNav();
+    const onF = () => loadGroupNav();
+    window.addEventListener('focus', onF);
+    return () => window.removeEventListener('focus', onF);
+  }, [isAuthenticated, pathname]);
+
   // Live Mexico City official reference clock — authoritative source for all system timestamps/records
   useEffect(() => {
     let baseData = null;
@@ -234,7 +266,7 @@ function LayoutContent({ children }) {
   return (
     <>
       {isAuthenticated && (
-        <div className="fixed bottom-3 right-3 z-[120] flex items-center shadow-xl border rounded-2xl overflow-hidden text-xs" style={{ backgroundColor: 'var(--mod-tab-bg, #3E2723)', color: 'var(--mod-tab-text, #ffffff)', borderColor: '#5C4035' }}>
+        <div className="fixed bottom-3 right-3 z-[250] flex items-center shadow-xl border rounded-2xl overflow-hidden text-xs" style={{ backgroundColor: 'var(--mod-tab-bg, #3E2723)', color: 'var(--mod-tab-text, #ffffff)', borderColor: '#5C4035' }}>
           <button 
             onClick={() => router.back()} 
             className="px-2.5 py-2 hover:opacity-80 transition flex items-center" 
@@ -254,28 +286,49 @@ function LayoutContent({ children }) {
           <button 
             onClick={() => router.push('/')} 
             className="px-3 py-2 hover:opacity-80 flex items-center gap-1 border-l" 
-            title="Ir a Home"
+            title="Ir a Inicio (acceso a grupos)"
             style={{ color: 'inherit', borderColor: 'rgba(255,255,255,0.35)' }}
           >
             <i className="ph ph-house text-base"></i>
-            <span className="font-medium" style={{ color: 'inherit' }}>Home</span>
+            <span className="font-medium" style={{ color: 'inherit' }}>Inicio</span>
           </button>
           <button 
             onClick={() => router.push(getGroupDashboard())} 
             className="px-3 py-2 hover:opacity-80 flex items-center gap-1 border-l" 
-            title="Ir al Dashboard del Grupo"
+            title="Ir al panel principal de tu grupo"
             style={{ color: 'inherit', borderColor: 'rgba(255,255,255,0.35)' }}
           >
             <i className="ph ph-layout text-base"></i>
-            <span className="font-medium" style={{ color: 'inherit' }}>Dashboard Grupo</span>
+            <span className="font-medium" style={{ color: 'inherit' }}>Mi Grupo</span>
           </button>
-          <a href="/portal-productores" className="px-3 py-2 hover:opacity-80 flex items-center gap-1 border-l text-[10px]" style={{ color: 'inherit', borderColor: 'rgba(255,255,255,0.35)' }}>Portal Productor</a>
+          <a href="/portal-productores" className="px-3 py-2 hover:opacity-80 flex items-center gap-1 border-l text-[10px]" style={{ color: 'inherit', borderColor: 'rgba(255,255,255,0.35)' }}>Portal</a>
         </div>
       )}
       {isAuthenticated && mxDisplay && (
         <div className="fixed top-3 left-3 z-[160] px-3 py-1 bg-white/95 border border-emerald-800 text-emerald-900 rounded-full shadow text-[10px] font-semibold flex items-center gap-1.5" title="Hora, fecha y semana oficial Ciudad de México. Referencia autorizada para todos los registros del sistema.">
           <i className="ph ph-globe text-sm"></i>
           <span>{mxDisplay}</span>
+        </div>
+      )}
+
+      {/* Navegación amigable e intuitiva DENTRO del grupo — solo módulos configurados en Administración */}
+      {isAuthenticated && currentGroupModules.length > 0 && (
+        <div className="fixed top-9 left-1/2 -translate-x-1/2 z-[140] max-w-[92%] px-3 py-1 bg-white/95 border border-emerald-200 shadow-sm rounded-2xl text-[11px] flex items-center gap-2 overflow-hidden">
+          <span className="font-semibold text-emerald-800 pr-1 whitespace-nowrap">{currentGroupLabel || 'GRUPO'}</span>
+          <div className="flex gap-1 overflow-x-auto no-scrollbar">
+            {currentGroupModules.map((mod, i) => (
+              <button
+                key={i}
+                onClick={() => router.push(mod.module_route || '/')}
+                className="px-2.5 py-0.5 rounded-full border text-emerald-700 bg-emerald-50 hover:bg-emerald-100 active:bg-emerald-200 whitespace-nowrap flex items-center gap-1"
+                title={mod.module_name}
+              >
+                <i className={`ph ${mod.module_icon || 'ph-cube'} text-[12px]`}></i>
+                <span className="text-[10px] font-medium">{(mod.display_name || mod.module_name || '').slice(0, 18)}</span>
+              </button>
+            ))}
+          </div>
+          <span className="text-[9px] text-emerald-600 pl-1">• Configurado en Admin</span>
         </div>
       )}
 
