@@ -1255,6 +1255,11 @@ export default function FruitInputPage() {
             <div>
               <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Ingreso de Fruta</h1>
               <p className="text-slate-500 mt-1">Registra el ingreso de fruta con pesadas y fotografías</p>
+              {/* Tipo de recepción - Fruta empacada support */}
+              <div className="mt-2 inline-flex rounded-xl border text-sm overflow-hidden">
+                <button type="button" onClick={() => {}} className="px-3 py-1 bg-emerald-700 text-white">Fruta de campo / a granel</button>
+                <button type="button" onClick={() => alert('Ruta de fruta ya empacada: usa el módulo Reempaque para validación e ingreso de tarimas empacadas de terceros.')} className="px-3 py-1 hover:bg-slate-50">Fruta ya empacada</button>
+              </div>
             </div>
             
             <div className="flex gap-3">
