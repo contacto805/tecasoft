@@ -146,7 +146,23 @@ export async function POST(request) {
       `;
     } catch (_) {}
 
-    // TODO: integrate with inventory and weekly if needed (reuse existing pallet and production logic)
+    // Integrar costo adicional al cierre (fecha real de operación) y operating_costs para finanzas
+    try {
+      const ac = additional_costs || {};
+      const totalAdd = (parseFloat(ac.mano_obra)||0) + (parseFloat(ac.materiales)||0) + (parseFloat(ac.otros)||0);
+      if (totalAdd > 0) {
+        await sql`
+          INSERT INTO operating_costs (folio, cost_date, week_number, week_year, cost_type, cost_category, cost_concept, description, amount, currency, module_origin, status, created_at)
+          VALUES (${folio}, ${date}, EXTRACT(WEEK FROM ${date}::date), EXTRACT(YEAR FROM ${date}::date), 'reempaque', 'operativo', 'Reempaque', ${reason || 'Reempaque'}, ${totalAdd}, 'MXN', 'reempaque', 'confirmado', NOW())
+        `;
+      }
+      // Notificar cierre (0 kg/dinero, solo para que se enriquezca con el gasto en la semana correcta)
+      await fetch('/api/admin/weekly-closings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ addCarga: true, load_date: date, factura_folio: folio, total_kg: 0, total_amount: 0, customer_name: 'REEMPAQUE' })
+      }).catch(()=>{});
+    } catch (_) {}
 
     return NextResponse.json({ success: true, op, folio });
   } catch (e) {

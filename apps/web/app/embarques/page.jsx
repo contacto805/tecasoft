@@ -1326,8 +1326,11 @@ export default function EmbarquesPage() {
     setShowNotaDrawer(true);
   };
 
+  const [submitting, setSubmitting] = useState(false);
+
   // Confirm load to DB — enlaza NOTA como VENTA para cierre semanal,  deduct de inventario (existencias) y salida fruta en lotes
   const confirmarCarga = async () => {
+    if (submitting) return;
     if (trailerPalletsList.length === 0) {
       alert('Agrega tarimas al tráiler');
       return;
@@ -1337,6 +1340,7 @@ export default function EmbarquesPage() {
       return;
     }
 
+    setSubmitting(true);
     const notaKg = getNotaTotalKg() || trailerPalletsList.reduce((s, p) => s + Math.round(p.kilos || 0), 0);
     const notaMoney = parseFloat(getNotaGrandTotal() || 0);
 
@@ -1365,9 +1369,11 @@ export default function EmbarquesPage() {
       const allForSave = [...liveCaliberRows];
       caliberPriceTable.filter(r => !liveCaliberRows.some(l => (l.caliber||'').toLowerCase()===(r.caliber||'').toLowerCase())).forEach(r => allForSave.push(r));
 
+      // Enviar tarimas EXACTAS + precios consistentes (por caja o kg) para integridad total
+      const exactPalletIds = trailerPalletsList.map(p => p.originalPalletId || p.id).filter(Boolean);
       const caliberDetailsForSave = allForSave.map(r => {
-        // find a pallet of this caliber to carry its lot_id
         const sample = trailerPalletsList.find(p => (p.caliber||'').toLowerCase() === (r.caliber||'').toLowerCase());
+        const isPerBox = true; // UI tabla = precio por caja
         return {
           lot_id: sample?.lot_id || null,
           caliber: r.caliber,
@@ -1375,7 +1381,8 @@ export default function EmbarquesPage() {
           pallets: 1,
           boxes: parseInt(r.boxes) || 0,
           total_kg: Math.round((parseInt(r.boxes) || 0) * 10),
-          price_per_kg: parseFloat(r.price) || 0
+          price_per_box: parseFloat(r.price) || 0,
+          unit: 'caja'
         };
       });
 
@@ -1390,7 +1397,8 @@ export default function EmbarquesPage() {
         notes: `Embarque Nota Venta • Folio:${currentFolio || ''} • SADER:${saderRegistro} • Chofer:${driverName} • Tracto:${tractoPlates} Termo:${termoPlates} • Dir:${selectedCustomer.destination || ''} • Temp:${temperaturaConsignacion || ''} • Termografo:${termografoUrl || ''}`,
         factura_folio: currentFolio || '',
         nota_total_amount: notaMoney,
-        nota_total_kg: notaKg
+        nota_total_kg: notaKg,
+        selected_pallet_ids: exactPalletIds
       };
 
       const res = await fetch('/api/loads/complete', {
@@ -1492,6 +1500,8 @@ export default function EmbarquesPage() {
       setTrailerSlots(Array.from({ length: 28 }, () => null));
       setTimeout(() => printPreLoadWarehouseMap(preLoadSnapshot), 420);
       alert('Carga guardada (datos locales actualizados). Inventario visual descontado.');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -1906,7 +1916,7 @@ export default function EmbarquesPage() {
                   className="border px-4 py-2 rounded-xl text-sm font-medium bg-white hover:bg-slate-50"
                 >🗺️ Generar Mapa de Carga</button>
 
-                <button onClick={confirmarCarga} className="bg-emerald-600 px-5 py-2 text-sm rounded-xl text-white font-medium">✓ Confirmar Carga y Guardar</button>
+                <button onClick={confirmarCarga} disabled={submitting} className="bg-emerald-600 px-5 py-2 text-sm rounded-xl text-white font-medium disabled:opacity-60">{submitting ? 'Confirmando...' : '✓ Confirmar Carga y Guardar'}</button>
 
                 {/* Block 16: documento transporte fiel (usa templates existentes, no asume CFDI/Carta Porte, respeta datos del embarque) */}
                 <button onClick={async ()=>{ 
