@@ -53,11 +53,16 @@ export default function PaymentSchedulePage() {
 
   useEffect(() => {
     fetchPayments();
-    fetchStats();
     checkAdmin();
     fetchFrutaAlerts();
     if (isSuperAdmin) fetchHolidays();
   }, [filter, isSuperAdmin]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchStats(controller.signal);
+    return () => controller.abort();
+  }, [calendarMonth, calendarYear]);
 
   const checkAdmin = async () => {
     try {
@@ -87,45 +92,16 @@ export default function PaymentSchedulePage() {
     }
   };
 
-  // Derivar stats localmente desde payments (sin dependencia de /stats faltante)
-  const fetchStats = async () => {
+  const fetchStats = async (signal) => {
     try {
-      const res = await fetch('/api/payment-schedule');
-      const list = await res.json();
-      const arr = Array.isArray(list) ? list : [];
-      const now = new Date();
-      const month = calendarMonth;
-      const yr = calendarYear;
-      let weekly = 0, monthly = 0, overdueA = 0, pendingP = new Set();
-      const calMap = {};
-      arr.forEach(p => {
-        const amt = parseFloat(p.amount || 0);
-        const sp = p.scheduled_payment_date ? new Date(p.scheduled_payment_date) : null;
-        if (sp && sp.getMonth() + 1 === month && sp.getFullYear() === yr) {
-          monthly += amt;
-          const key = p.scheduled_payment_date;
-          if (!calMap[key]) calMap[key] = { scheduled_payment_date: key, payment_count: 0, total_amount: 0, producers: [] };
-          calMap[key].payment_count++;
-          calMap[key].total_amount += amt;
-          if (p.producer_name && !calMap[key].producers.includes(p.producer_name)) calMap[key].producers.push(p.producer_name);
-        }
-          if (p.status !== 'paid') {
-          pendingP.add(p.producer_name);
-          const sal = (p.saldo_pendiente != null ? parseFloat(p.saldo_pendiente) : amt);
-          if (sp && Math.floor((Number(sp.getTime()) - Number(now.getTime())) / 86400000) < 0) overdueA += sal;
-        }
-      });
-      const cal = Object.values(calMap);
-      setStats({
-        weekly_scheduled: weekly,
-        monthly_scheduled: monthly,
-        pending_producers: pendingP.size,
-        total_liabilities: arr.filter(p => p.status !== 'paid').reduce((s, p) => s + (p.saldo_pendiente != null ? parseFloat(p.saldo_pendiente) : parseFloat(p.amount || 0)), 0),
-        overdue_amount: overdueA,
-        calendar_data: cal.slice(0, 8)
-      });
+      const res = await fetch(`/api/payment-schedule/stats?month=${calendarMonth}&year=${calendarYear}`, { signal });
+      if (!res.ok) throw new Error('No se pudieron consultar las estadísticas de pagos');
+      const report = await res.json();
+      if (!signal?.aborted) setStats(report);
     } catch (error) {
-      console.error('Error deriving stats:', error);
+      if (signal?.aborted) return;
+      console.error('Error fetching payment stats:', error);
+      setStats(null);
     }
   };
 
@@ -668,7 +644,7 @@ export default function PaymentSchedulePage() {
             {monthCalendar.length === 0 && <div className="text-xs text-gray-400 py-3">No hay pagos programados en este mes (selecciona en filtros).</div>}
             {monthCalendar.map((row, i) => (
               <div key={i} className="px-4 py-3 rounded-xl bg-emerald-50 border border-emerald-100">
-                <div className="font-semibold text-emerald-700">{new Date(row.scheduled_payment_date).toLocaleDateString('es-MX', { weekday: 'long', month:'short', day:'numeric' })}</div>
+                <div className="font-semibold text-emerald-700">{new Date(`${row.scheduled_payment_date}T12:00:00`).toLocaleDateString('es-MX', { weekday: 'long', month:'short', day:'numeric' })}</div>
                 <div className="text-sm mt-0.5">{row.payment_count} pagos • ${parseFloat(row.total_amount||0).toLocaleString('es-MX')}</div>
                 <div className="text-[11px] text-emerald-800 mt-1">Productores: {(row.producers||[]).slice(0,3).join(', ')}{(row.producers||[]).length>3?'…':''}</div>
               </div>

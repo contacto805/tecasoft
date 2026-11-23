@@ -1,9 +1,17 @@
 import sql from "@/app/api/utils/sql";
+import { getReceivableBalance, getPayableBalances } from "@/app/api/utils/financial-balances";
+import { getCurrentUser } from "@/app/api/utils/super-admin";
 import { NextResponse } from "next/server";
 
 // GET - Dashboard ejecutivo con indicadores en tiempo real
 export async function GET() {
   try {
+    const user = await getCurrentUser({ allowLegacyToken: false });
+    if (!user) return NextResponse.json({ error: 'Se requiere sesión' }, { status: 401 });
+    if (!user.is_super_admin && !['administrador', 'superadministrador'].includes(user.admin_role)) {
+      return NextResponse.json({ error: 'Se requiere acceso administrativo' }, { status: 403 });
+    }
+
     const today = new Date().toISOString().split('T')[0];
     const weekStart = new Date();
     weekStart.setDate(weekStart.getDate() - weekStart.getDay());
@@ -15,7 +23,7 @@ export async function GET() {
 
     // Safe query helper
     const safeQuery = async (q, fallback = [{ total: 0 }]) => {
-      try { return await sql(q); } catch (e) { return fallback; }
+      try { return await q; } catch (e) { return fallback; }
     };
 
     // Total de ventas del día
@@ -27,11 +35,10 @@ export async function GET() {
     // Total de ventas del mes
     const ventasMes = await safeQuery(sql`SELECT COALESCE(SUM(total_amount), 0) as total FROM load_history WHERE load_date >= ${monthStartStr}`);
 
-    // Cuentas por cobrar
-    const cuentasPorCobrar = await safeQuery(sql`SELECT COALESCE(SUM(amount_usd), 0) as total FROM customer_accounts WHERE transaction_type = 'debit' AND description LIKE '%pendiente%'`);
-
-    // Cuentas por pagar
-    const cuentasPorPagar = await safeQuery(sql`SELECT COALESCE(SUM(total_amount), 0) as total FROM producer_payments WHERE payment_status = 'pendiente'`);
+    const [cuentasPorCobrar, cuentasPorPagar] = await Promise.all([
+      getReceivableBalance(),
+      getPayableBalances()
+    ]);
 
     // Saldo bancario consolidado (placeholder)
     const saldoBancario = await safeQuery(sql`SELECT COALESCE(SUM(bancos), 0) as total FROM weekly_closings ORDER BY week_start_date DESC LIMIT 1`);
@@ -76,8 +83,6 @@ export async function GET() {
     const rendCal = await safeQuery(sql`SELECT COALESCE(AVG(performance_percentage), 0) as rend, COALESCE(AVG(waste_percentage), 0) as merma FROM lot_performance WHERE generated_at >= ${weekStartStr}`, [{ rend: 0, merma: 0 }]);
     const tarimasDisp = await safeQuery(sql`SELECT COALESCE(SUM(pallet_count), 0) as tarimas FROM pallet_output_summary WHERE estado IN ('disponible','en_bodega') OR estado IS NULL`, [{ tarimas: 0 }]);
     const embarquesCnt = await safeQuery(sql`SELECT COUNT(*) as cnt FROM load_history WHERE load_date >= ${today}`, [{ cnt: 0 }]);
-    const cartera = await safeQuery(sql`SELECT COALESCE(SUM(amount_usd), 0) as usd FROM customer_accounts WHERE transaction_type = 'cargo' AND created_at >= ${weekStartStr}`, [{ usd: 0 }]);
-    const pagosProx = await safeQuery(sql`SELECT COUNT(*) as cnt, COALESCE(SUM(amount), 0) as total FROM payment_schedule WHERE due_date BETWEEN ${today} AND ${new Date(Date.now()+7*86400000).toISOString().split('T')[0]} AND status = 'pendiente'`, [{ cnt: 0, total: 0 }]);
     const rentab = await safeQuery(sql`SELECT COALESCE(AVG(net_profit), 0) as util, COUNT(*) as lotes FROM lots WHERE net_profit IS NOT NULL AND date >= ${weekStartStr}`, [{ util: 0, lotes: 0 }]);
     const alertasDif = await safeQuery(sql`SELECT COUNT(*) as cnt FROM system_audit_log WHERE module IN ('lotification','cargas','costos') AND action LIKE '%diferencia%' AND timestamp >= ${weekStartStr}`, [{ cnt: 0 }]);
 
@@ -86,8 +91,8 @@ export async function GET() {
         ventasDia: parseFloat(ventasDia[0]?.total || 0),
         ventasSemana: parseFloat(ventasSemana[0]?.total || 0),
         ventasMes: parseFloat(ventasMes[0]?.total || 0),
-        cuentasPorCobrar: parseFloat(cuentasPorCobrar[0]?.total || 0),
-        cuentasPorPagar: parseFloat(cuentasPorPagar[0]?.total || 0),
+        cuentasPorCobrar: cuentasPorCobrar,
+        cuentasPorPagar: cuentasPorPagar.total,
         saldoBancario: parseFloat(saldoBancario[0]?.total || 0),
         prestamosPendientes: {
           count: parseInt(prestamosPendientes[0]?.count || 0),
@@ -110,8 +115,8 @@ export async function GET() {
         mermaPromedio: parseFloat(rendCal[0]?.merma || 0),
         tarimasDisponibles: parseInt(tarimasDisp[0]?.tarimas || 0),
         embarquesPeriodo: parseInt(embarquesCnt[0]?.cnt || 0),
-        carteraUSD: parseFloat(cartera[0]?.usd || 0),
-        pagosProximos: { count: parseInt(pagosProx[0]?.cnt || 0), total: parseFloat(pagosProx[0]?.total || 0) },
+        carteraUSD: cuentasPorCobrar,
+        pagosProximos: { count: cuentasPorPagar.upcoming_count, total: cuentasPorPagar.upcoming_total },
         rentabilidadLotes: { utilidad_prom: parseFloat(rentab[0]?.util || 0), lotes: parseInt(rentab[0]?.lotes || 0) },
         alertasDiferencias: parseInt(alertasDif[0]?.cnt || 0)
       },
@@ -128,22 +133,12 @@ export async function GET() {
         ultima_actualizacion: new Date().toISOString(),
         origen: 'db_queries_con_filtros_estado_y_status',
         estado: 'actualizado',
-        fuente: 'executive-dashboard + lot_cost_summary + lot_performance + pallet_output_summary + payment_schedule + customer_accounts (sin inventar, COALESCE en fuentes reales)',
+        fuente: 'executive-dashboard + lot_cost_summary + lot_performance + pallet_output_summary + payment_schedule + notas (sin inventar, COALESCE en fuentes reales)',
         nota: 'datos con ID estable + estado + origen para evitar doble conteo. Cada indicador incluye fecha y estado en meta.'
       }
     });
   } catch (error) {
     console.error('Error fetching executive dashboard:', error);
-    // Return full safe defaults on any error
-    return NextResponse.json({
-      indicadores: { ventasDia:0, ventasSemana:0, ventasMes:0, cuentasPorCobrar:0, cuentasPorPagar:0, saldoBancario:0, prestamosPendientes:{count:0,total:0}, anticiposPendientes:{count:0,total:0}, solicitudesPorAutorizar:0, permisosPendientes:0, modificacionesPendientes:0, viajesActivos:0, viajesFinalizados:0, alertasCriticas:0 },
-      resumenModulos: { clientes:0, ventas:0, operaciones:0, recursosHumanos:0, gastos:0, cierres:0, inventarios:0 },
-      meta: {
-        ultima_actualizacion: new Date().toISOString(),
-        origen: 'fallback',
-        estado: 'pendiente_estimado',
-        fuente: 'executive-dashboard (sin inventar ceros ni duplicar)'
-      }
-    });
+    return NextResponse.json({ error: 'No se pudieron consultar los indicadores' }, { status: 503 });
   }
 }

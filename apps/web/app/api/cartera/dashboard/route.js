@@ -1,4 +1,5 @@
 import sql from "@/app/api/utils/sql";
+import { getReceivableBalance } from "@/app/api/utils/financial-balances";
 import { NextResponse } from "next/server";
 
 export async function GET() {
@@ -9,9 +10,7 @@ export async function GET() {
     const d30 = new Date(now.getTime() - 30*86400000).toISOString().slice(0,10);
     const d60 = new Date(now.getTime() - 60*86400000).toISOString().slice(0,10);
 
-    const totalPorCobrar = await sql`
-      SELECT COALESCE(SUM(saldo_usd),0) as s FROM notas WHERE estatus IN ('Pendiente','Parcial','Vencida')
-    `;
+    const totalPorCobrar = await getReceivableBalance();
     const totalCobrado = await sql`
       SELECT COALESCE(SUM(total_abonado_usd),0) as s FROM notas
     `;
@@ -36,7 +35,7 @@ export async function GET() {
     `;
 
     return NextResponse.json({
-      total_por_cobrar_usd: Math.round((totalPorCobrar[0]?.s || 0) * 100) / 100,
+      total_por_cobrar_usd: totalPorCobrar,
       total_cobrado_usd: Math.round((totalCobrado[0]?.s || 0) * 100) / 100,
       anticipos_usd: Math.round((anticipos[0]?.s || 0) * 100) / 100,
       clientes_con_saldo: parseInt(clientesConSaldo[0]?.c || 0),
