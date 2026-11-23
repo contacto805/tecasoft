@@ -1,22 +1,10 @@
+import {getVerifiedErpUser} from "@/app/api/utils/erp-session-proof";
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
-import { calculateIntegralLotCost, calculateNetIncome, calculateUtility, calculateMargin } from "@/app/api/utils/financial-engine";
+import { calculateIntegralLotCost, calculateUtility, calculateMargin } from "@/app/api/utils/financial-engine";
 
-// Helper: Monday-Sunday week (Mexico style)
-function getWeekBounds(startStr) {
-  const d = startStr ? new Date(startStr) : new Date();
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  const monday = new Date(d);
-  monday.setDate(diff);
-  monday.setHours(0, 0, 0, 0);
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
-  return {
-    start: monday.toISOString().slice(0, 10),
-    end: sunday.toISOString().slice(0, 10),
-  };
-}
+import {closingForm, getManualRent, getWeeklySummary, withLiveClosing} from "@/app/api/utils/weekly-summary";
+import {closingTotals, closingWeek, dateKey, validWeek} from "@/utils/closing-period";
 
 // Core integral calculator - queries ONLY confirmed source tables. No duplication.
 function toNum(v) { return (v == null || isNaN(parseFloat(v))) ? 0 : parseFloat(v); }
@@ -37,14 +25,19 @@ async function calcularCierreIntegral(startDate, endDate) {
 
   const prodLotif = await sql`
     SELECT 
-      COALESCE(SUM(CASE WHEN psd.class_name IN ('A','SUPER','EXTRA','PRIMERA') THEN psd.total_kg ELSE 0 END), 0) as calidad_a,
-      COALESCE(SUM(CASE WHEN psd.class_name IN ('B','MEDIANO','TERCERA','CUARTA') THEN psd.total_kg ELSE 0 END), 0) as calidad_b,
+      COALESCE(SUM(psd.kg_a), 0) as calidad_a,
+      COALESCE(SUM(psd.kg_b), 0) as calidad_b,
       COALESCE(SUM(pb.process_kg), 0) as proceso,
       COALESCE(SUM(pb.desecho_kg), 0) as desecho,
       COALESCE(SUM(pb.merma_kg), 0) as merma,
       COALESCE(SUM(psd.total_kg), 0) as total_lotificado
     FROM production_batches pb
-    LEFT JOIN production_selection_details psd ON psd.production_batch_id = pb.id
+    LEFT JOIN LATERAL (
+      SELECT SUM(total_kg) AS total_kg,
+        SUM(total_kg) FILTER (WHERE class_name IN ('A','SUPER','EXTRA','PRIMERA')) AS kg_a,
+        SUM(total_kg) FILTER (WHERE class_name IN ('B','MEDIANO','TERCERA','CUARTA')) AS kg_b
+      FROM production_selection_details WHERE production_batch_id = pb.id
+    ) psd ON true
     WHERE pb.production_date BETWEEN ${weekStart} AND ${weekEnd}
       AND COALESCE(pb.status, 'CONFIRMADO') != 'BORRADOR'
   `;
@@ -60,14 +53,22 @@ async function calcularCierreIntegral(startDate, endDate) {
       l.id, l.lot_number, l.producer,
       COALESCE(fiw.total_kg_weighed, 0) as kg_recibidos,
       COALESCE(SUM(psd.total_kg), 0) as kg_lotificado,
-      COALESCE(SUM(CASE WHEN psd.class_name IN ('A','SUPER','EXTRA','PRIMERA') THEN psd.total_kg ELSE 0 END), 0) as a,
+      COALESCE(SUM(psd.kg_a), 0) as a,
       COALESCE(SUM(pb.process_kg),0) as proceso,
       COALESCE(SUM(pb.desecho_kg),0) as desecho,
       COALESCE(SUM(pb.merma_kg),0) as merma
     FROM lots l
-    LEFT JOIN fruit_input_weighings fiw ON fiw.lot_id = l.id
+    LEFT JOIN LATERAL (
+      SELECT sum(total_kg_weighed) AS total_kg_weighed, min(public_scale_date) AS public_scale_date
+      FROM fruit_input_weighings WHERE lot_id = l.id AND public_scale_date BETWEEN ${weekStart} AND ${weekEnd}
+    ) fiw ON true
     LEFT JOIN production_batches pb ON pb.lot_id = l.id AND pb.production_date BETWEEN ${weekStart} AND ${weekEnd}
-    LEFT JOIN production_selection_details psd ON psd.production_batch_id = pb.id
+    LEFT JOIN LATERAL (
+      SELECT SUM(total_kg) AS total_kg,
+        SUM(total_kg) FILTER (WHERE class_name IN ('A','SUPER','EXTRA','PRIMERA')) AS kg_a,
+        SUM(total_kg) FILTER (WHERE class_name IN ('B','MEDIANO','TERCERA','CUARTA')) AS kg_b
+      FROM production_selection_details WHERE production_batch_id = pb.id
+    ) psd ON true
     WHERE (fiw.public_scale_date BETWEEN ${weekStart} AND ${weekEnd} OR pb.production_date BETWEEN ${weekStart} AND ${weekEnd})
     GROUP BY l.id, l.lot_number, l.producer, fiw.total_kg_weighed
     ORDER BY kg_recibidos DESC LIMIT 30
@@ -100,7 +101,7 @@ async function calcularCierreIntegral(startDate, endDate) {
     SELECT COALESCE(SUM(pr.quantity_received * COALESCE(mi.cost_per_unit, 0)), 0) as valor_entradas
     FROM purchase_receptions pr
     JOIN purchase_orders po ON po.id = pr.purchase_order_id
-    JOIN materials_inventory mi ON mi.id = po.product_or_service::int OR mi.material_name ILIKE '%' || po.product_or_service || '%'
+    JOIN materials_inventory mi ON mi.id = CASE WHEN po.product_or_service ~ '^[0-9]{1,9}$' THEN po.product_or_service::int END OR mi.material_name ILIKE '%' || po.product_or_service || '%'
     WHERE pr.reception_date BETWEEN ${weekStart} AND ${weekEnd}
   `;
 
@@ -146,19 +147,19 @@ async function calcularCierreIntegral(startDate, endDate) {
     FROM cutting_orders WHERE cutting_date BETWEEN ${weekStart} AND ${weekEnd}
   `;
 
-  const fletesComerciales = await sql`SELECT COALESCE(SUM(price),0) FROM crew_freights WHERE freight_date BETWEEN ${weekStart} AND ${weekEnd}`;
+  const fletesComerciales = await sql`SELECT COALESCE(SUM(price),0) AS total FROM crew_freights WHERE freight_date BETWEEN ${weekStart} AND ${weekEnd}`;
 
   const materialesConsumidosCosto = consumosMat; // same as above
 
-  const nomina = await sql`SELECT COALESCE(SUM(net_salary),0) FROM payroll_records pr JOIN payroll_periods pp ON pp.id=pr.payroll_period_id WHERE pp.week_start_date >= ${weekStart} AND pp.week_end_date <= ${weekEnd}`;
+  const nomina = await sql`SELECT COALESCE(SUM(net_salary),0) AS total FROM payroll_records pr JOIN payroll_periods pp ON pp.id=pr.payroll_period_id WHERE pp.week_start_date >= ${weekStart} AND pp.week_end_date <= ${weekEnd}`;
 
   const gastosBancarios = await sql`
-    SELECT COALESCE(SUM(charge),0) FROM bank_movements bm
+    SELECT COALESCE(SUM(charge),0) AS total FROM bank_movements bm
     JOIN bank_statements bs ON bs.id=bm.statement_id
     WHERE bm.movement_date BETWEEN ${weekStart} AND ${weekEnd} AND (bm.category ILIKE '%comision%' OR bm.description ILIKE '%comision%')
   `;
 
-  const otrosGastos = await sql`SELECT COALESCE(SUM(amount_mxn),0) FROM operating_costs WHERE cost_date BETWEEN ${weekStart} AND ${weekEnd} AND cost_category NOT IN ('produccion','compra_inventario')`;
+  const otrosGastos = await sql`SELECT COALESCE(SUM(amount_mxn),0) AS total FROM operating_costs WHERE cost_date BETWEEN ${weekStart} AND ${weekEnd} AND cost_category NOT IN ('produccion','compra_inventario')`;
 
   // =====================
   // PESTAÑA 4: BANCOS Y COBRANZA (integrates FASE 07)
@@ -173,26 +174,44 @@ async function calcularCierreIntegral(startDate, endDate) {
     WHERE bm.movement_date BETWEEN ${weekStart} AND ${weekEnd}
   `;
 
-  const cobrosClientes = await sql`SELECT COALESCE(SUM(equivalente_usd),0) FROM abonos WHERE fecha BETWEEN ${weekStart} AND ${weekEnd}`;
+  const cobrosClientes = await sql`SELECT COALESCE(SUM(equivalente_usd),0) AS total FROM abonos WHERE fecha BETWEEN ${weekStart} AND ${weekEnd}`;
 
-  const pagosProductores = await sql`SELECT COALESCE(SUM(monto_pagado),0) FROM payment_schedule WHERE paid_at::date BETWEEN ${weekStart} AND ${weekEnd}`;
+  const pagosProductores = await sql`SELECT COALESCE(SUM(monto_pagado),0) AS total FROM payment_schedule WHERE paid_at::date BETWEEN ${weekStart} AND ${weekEnd}`;
 
-  const pagosProveedores = await sql`SELECT COALESCE(SUM(amount),0) FROM producer_payments WHERE actual_payment_date BETWEEN ${weekStart} AND ${weekEnd}`;
+  const pagosProveedores = await sql`SELECT COALESCE(SUM(amount),0) AS total FROM producer_payments WHERE actual_payment_date BETWEEN ${weekStart} AND ${weekEnd}`;
 
   const pagosFletes = fletesComerciales; // reuse
 
   // =====================
   // PESTAÑA 5: RENTABILIDAD (usando MOTOR FINANCIERO CENTRALIZADO V9)
   // =====================
-  const ingresosNetosRes = await calculateNetIncome({ weekStart, weekEnd });
-  const ingresosNetos = ingresosNetosRes.ingreso_neto || 0;
+  const [salesOperation] = await sql`
+    SELECT COALESCE(SUM(CASE WHEN h.currency='MXN' THEN h.total_amount
+      WHEN h.currency='USD' AND r.fx>0 THEN round((h.total_amount * r.fx)::numeric,2) END),0) AS mxn,
+      COUNT(*) FILTER (WHERE h.currency IS NULL OR h.currency NOT IN ('MXN','USD')
+        OR (h.currency='USD' AND COALESCE(r.fx,0)<=0)) AS pendientes
+    FROM load_history h LEFT JOIN LATERAL (
+      SELECT ca.exchange_rate AS fx FROM customer_accounts ca JOIN load_history linked
+        ON linked.id::text=ca.trip_reference_id::text
+      WHERE ca.trip_type='load' AND ca.transaction_type='receivable' AND ca.exchange_rate>0
+        AND (linked.id=h.id OR (NULLIF(h.factura_folio,'') IS NOT NULL AND linked.factura_folio=h.factura_folio))
+      ORDER BY ca.id LIMIT 1
+    ) r ON true
+    WHERE h.load_date BETWEEN ${weekStart} AND ${weekEnd}
+      AND lower(COALESCE(h.payment_status,'')) NOT IN ('cancelado','cancelada','cancelled','canceled','anulado')
+      AND NOT EXISTS (SELECT 1 FROM notas n WHERE n.folio=h.factura_folio AND lower(COALESCE(n.estatus,'')) IN ('cancelado','cancelada','cancelled','canceled','anulado'))
+  `;
+  const ingresosNetos = toNum(salesOperation.mxn);
 
   // Costo de ventas via motor (histórico por lote) - NUNCA estimado 65%
   // Si no hay datos suficientes para calcular costo real, se marca explícitamente como PENDIENTE
   let costoVentas = 0;
   let costoVentasPendiente = false;
   try {
-    const loads = await sql`SELECT lot_id, total_kg FROM load_details ld JOIN load_history lh ON lh.id=ld.load_id WHERE lh.load_date BETWEEN ${weekStart} AND ${weekEnd} LIMIT 200`;
+    const loads = await sql`SELECT ld.lot_id, SUM(ld.total_kg) AS total_kg FROM load_details ld JOIN load_history lh ON lh.id=ld.load_id WHERE lh.load_date BETWEEN ${weekStart} AND ${weekEnd}
+      AND lower(COALESCE(lh.payment_status,'')) NOT IN ('cancelado','cancelada','cancelled','canceled','anulado')
+      AND NOT EXISTS (SELECT 1 FROM notas n WHERE n.folio=lh.factura_folio AND lower(COALESCE(n.estatus,'')) IN ('cancelado','cancelada','cancelled','canceled','anulado'))
+      GROUP BY ld.lot_id`;
     for (const l of loads) {
       if (l.lot_id) {
         const c = await calculateIntegralLotCost(l.lot_id);
@@ -268,6 +287,7 @@ async function calcularCierreIntegral(startDate, endDate) {
     },
     rentabilidad: {
       ingresos_netos: ingresosNetos,
+      ventas_sin_conversion: toNum(salesOperation.pendientes),
       costo_ventas: costoVentas,
       costo_ventas_label: costoVentasLabel,
       costo_ventas_pendiente: costoVentasPendiente,
@@ -288,201 +308,54 @@ async function calcularCierreIntegral(startDate, endDate) {
 // GET: list all closings or get summary data for a date range
 export async function GET(request) {
   try {
+    if (!await getVerifiedErpUser()) return NextResponse.json({error:"Inicia sesión en Tecavo Soft."},{status:401});
     const { searchParams } = new URL(request.url);
     const startDate = searchParams.get("startDate");
     const endDate = searchParams.get("endDate");
     const summary = searchParams.get("summary");
 
-    // Return live summary data for a week range (used when creating/editing a closing)
-    if (summary === "true" && startDate && endDate) {
-      // NEW V7 INTEGRAL - full 6 tabs from confirmed data
-      try {
-        const integral = await calcularCierreIntegral(startDate, endDate);
-        return NextResponse.json({
-          ...integral,
-          // backward compat for old form
-          total_entradas_fruta_kg: integral.produccion.kg_recibidos,
-          total_cargas_kg: integral.produccion.kg_lotificados,
-          total_proceso_kg: integral.produccion.proceso,
-          total_desecho_kg: integral.produccion.desecho,
-          valor_inventario_materiales: integral.inventarios.materiales_final,
-          total_cuadrilla_dinero: integral.costos_gastos.cuadrillas,
-        });
-      } catch (e) {
-        console.error('Integral calc error, falling back', e);
+    if (summary === "true") {
+      if (!validWeek(startDate,endDate)) return NextResponse.json({error:"Selecciona un período de lunes a domingo."},{status:400});
+      const flow = await getWeeklySummary(startDate,endDate);
+      const [stored] = await sql`SELECT id, status, porcentaje_renta, detalle_integral, total_ingresos_dinero,
+        total_egresos_dinero, resultado_dinero FROM weekly_closings
+        WHERE id = ${flow.closing_id}`;
+      let supplemental = {};
+      if (searchParams.get("live") !== "true") {
+        try { supplemental = await calcularCierreIntegral(startDate,endDate); }
+        catch (error) {
+          console.error("Detalle integral no disponible:",error);
+          supplemental = {detalle_pendiente:true};
+        }
       }
-      const [
-        cargas,
-        desechos,
-        procesos,
-        gastos,
-        lotsFruta,
-        matInv,
-        inventarioTarimas,
-        crewsPeriod,
-        fletesPeriod,
-        brokersData,
-        cargasKg,
-        fruitInputKg,
-        desechoKg,
-        procesoKg,
-        produccionKg,
-      ] = await Promise.all([
-        // Total cargas: dinero de cargas (load_history) en el rango de fecha (DINERO)
-        sql`SELECT COALESCE(SUM(total_amount), 0) as total FROM load_history WHERE load_date BETWEEN ${startDate} AND ${endDate}`,
-        // Ventas desecho: registros donde waste_kg > 0 (DINERO)
-        sql`SELECT COALESCE(SUM(total_price), 0) as total FROM sales_of_process_and_waste WHERE waste_kg > 0 AND date BETWEEN ${startDate} AND ${endDate}`,
-        // Ventas proceso: registros donde process_kg > 0 (DINERO)
-        sql`SELECT COALESCE(SUM(total_price), 0) as total FROM sales_of_process_and_waste WHERE process_kg > 0 AND date BETWEEN ${startDate} AND ${endDate}`,
-        // Gastos del periodo (DINERO)
-        sql`SELECT COALESCE(SUM(total), 0) as total FROM expenses WHERE expense_date BETWEEN ${startDate} AND ${endDate}`,
-        // Entradas de fruta: usar fruit_input_weighings con precio del lote (DINERO)
-        sql`SELECT COALESCE(SUM(f.total_kg_weighed * l.fruit_price), 0) as total
-            FROM fruit_input_weighings f
-            JOIN lots l ON f.lot_id = l.id
-            WHERE f.public_scale_date BETWEEN ${startDate} AND ${endDate}`,
-        // Valor inventario materiales (valor actual total del inventario) (DINERO)
-        sql`SELECT COALESCE(SUM(quantity_available * cost_per_unit), 0) as total FROM materials_inventory`,
-        // Inventario en frío: total de tarimas por calibre del periodo
-        sql`SELECT caliber, COALESCE(SUM(pallet_count), 0) as total_pallets
-            FROM pallet_output_summary
-            WHERE packing_date BETWEEN ${startDate} AND ${endDate}
-            GROUP BY caliber`,
-        // Datos de Cuadrillas del Período (cutting_orders + lógica idéntica al módulo Cuadrillas)
-        sql`
-          SELECT 
-            co.crew_workers_count,
-            COALESCE(
-              (SELECT fiw.total_kg_weighed FROM fruit_input_weighings fiw WHERE fiw.lot_id = co.lot_id LIMIT 1),
-              co.net_weight,
-              (SELECT SUM(w.net_weight) FROM weighings w WHERE w.lot_id = co.lot_id)
-            ) AS total_kg
-          FROM cutting_orders co
-          WHERE co.cutting_date BETWEEN ${startDate} AND ${endDate}
-        `,
-        // Total fletes del período (crew_freights)
-        sql`SELECT COALESCE(SUM(price), 0) as total FROM crew_freights 
-            WHERE (freight_date BETWEEN ${startDate} AND ${endDate}) 
-               OR (freight_date IS NULL AND created_at::date BETWEEN ${startDate} AND ${endDate})`,
-        // Total notas de corredores (broker_notes) del periodo (DINERO)
-        sql`SELECT COALESCE(SUM(amount), 0) as total FROM broker_notes WHERE note_date BETWEEN ${startDate} AND ${endDate}`,
-        // Total kg empacados enviados (cargas) desde load_history
-        sql`SELECT COALESCE(SUM(total_kg), 0) as total FROM load_history WHERE load_date BETWEEN ${startDate} AND ${endDate}`,
-        // Total kg de entradas de fruta desde fruit_input_weighings
-        sql`SELECT COALESCE(SUM(total_kg_weighed), 0) as total FROM fruit_input_weighings WHERE public_scale_date BETWEEN ${startDate} AND ${endDate}`,
-        // Total kg desecho desde sales_of_process_and_waste
-        sql`SELECT COALESCE(SUM(waste_kg), 0) as total FROM sales_of_process_and_waste WHERE waste_kg > 0 AND date BETWEEN ${startDate} AND ${endDate}`,
-        // Total kg proceso desde sales_of_process_and_waste
-        sql`SELECT COALESCE(SUM(process_kg), 0) as total FROM sales_of_process_and_waste WHERE process_kg > 0 AND date BETWEEN ${startDate} AND ${endDate}`,
-        // Total kg producidos/empacados desde production_batches
-        sql`SELECT COALESCE(SUM(psd.total_kg), 0) as total 
-            FROM production_batches pb
-            JOIN production_selection_details psd ON pb.id = psd.production_batch_id
-            WHERE pb.production_date BETWEEN ${startDate} AND ${endDate}`,
-      ]);
-
-      // Detalle de Ingreso de Fruta por lote (para mostrar registros independientes)
-      const ingresoFrutaDetalleRaw = await sql`
-        SELECT 
-          l.lot_number,
-          COALESCE(f.public_scale_date, l.date) as fecha,
-          l.producer,
-          COALESCE(f.total_kg_weighed, 0) as kg,
-          (COALESCE(f.total_kg_weighed, 0) * COALESCE(l.fruit_price, 0)) as dinero
-        FROM fruit_input_weighings f
-        JOIN lots l ON f.lot_id = l.id
-        WHERE f.public_scale_date BETWEEN ${startDate} AND ${endDate}
-        ORDER BY f.public_scale_date DESC, l.lot_number ASC
-      `;
-      const ingresoFrutaDetalle = (ingresoFrutaDetalleRaw || []).map(r => ({
-        lot_number: r.lot_number,
-        fecha: r.fecha,
-        productor: r.producer,
-        kg: parseFloat(r.kg),
-        dinero: parseFloat(r.dinero)
-      }));
-
-      // Detalle de Cargas / Embarques (Notas de Venta por embarque) - integracion automatica desde load_history
-      const cargasDetalleRaw = await sql`
-        SELECT 
-          lh.id,
-          lh.load_date as fecha,
-          lh.customer_name as cliente,
-          COALESCE(
-            (SELECT lot_number FROM lots l 
-             JOIN master_batches mb ON mb.lot_id = l.id 
-             WHERE mb.id = lh.master_batch_id LIMIT 1),
-            ''
-          ) as lote,
-          COALESCE(lh.total_kg, 0) as kg,
-          COALESCE(lh.total_amount, 0) as dinero
-        FROM load_history lh
-        WHERE lh.load_date BETWEEN ${startDate} AND ${endDate}
-        ORDER BY lh.load_date DESC, lh.id DESC
-      `;
-      const cargasDetalle = (cargasDetalleRaw || []).map(r => ({
-        nota: `Nota-${r.id}`,
-        fecha: r.fecha,
-        lote: r.lote || '-',
-        cliente: r.cliente || '-',
-        kg: parseFloat(r.kg),
-        dinero: parseFloat(r.dinero)
-      }));
-
-      // Convertir inventario de tarimas en objeto por calibre
-      const inventarioPorCalibre = {};
-      inventarioTarimas.forEach(row => {
-        inventarioPorCalibre[row.caliber] = parseFloat(row.total_pallets);
-      });
-
-      // Cálculo automático de Egresos de Cuadrillas usando la misma lógica del módulo Cuadrillas
-      let totalCuadrillaKgCalc = 0;
-      let totalCuadrillaDineroCalc = 0;
-      (crewsPeriod || []).forEach((row) => {
-        const kg = parseFloat(row.total_kg) || 0;
-        const workers = parseInt(row.crew_workers_count) || 0;
-        totalCuadrillaKgCalc += kg;
-        const pago = kg > 4500 ? kg * 1.4 : ((workers * 500) + 2500);
-        totalCuadrillaDineroCalc += pago;
-      });
-
-      const fletesTotal = parseFloat((fletesPeriod && fletesPeriod[0] && fletesPeriod[0].total) || 0);
-
+      const rent = getManualRent(stored);
+      const live = closingTotals(closingForm(flow,rent));
       return NextResponse.json({
-        // INGRESOS (dinero)
-        total_cargas_dinero: parseFloat(cargas[0].total),
-        total_ventas_desecho_dinero: parseFloat(desechos[0].total),
-        total_ventas_proceso_dinero: parseFloat(procesos[0].total),
-        valor_inventario_materiales: parseFloat(matInv[0].total),
-        inventario_tarimas_por_calibre: inventarioPorCalibre,
-
-        // EGRESOS (dinero)
-        total_gastos: parseFloat(gastos[0].total),
-        total_entradas_fruta_dinero: parseFloat(lotsFruta[0].total),
-        total_cuadrilla_dinero: totalCuadrillaDineroCalc,
-        total_broker_notes: parseFloat(brokersData[0].total),
-        total_fletes_dinero: fletesTotal,
-
-        // KG (usando datos reales del período de Cuadrillas)
-        total_cargas_kg: parseFloat(cargasKg[0].total),
-        total_cuadrilla_kg: totalCuadrillaKgCalc,
-        total_entradas_fruta_kg: parseFloat(fruitInputKg[0].total),
-        total_desecho_kg: parseFloat(desechoKg[0].total),
-        total_proceso_kg: parseFloat(procesoKg[0].total),
-        total_produccion_kg: parseFloat(produccionKg[0].total),
-
-        // Ingreso de Fruta detallado por lote
-        ingreso_fruta_detalle: ingresoFrutaDetalle,
-        // Cargas / Embarques detallado por Nota de Venta (integración Ingreso de Embarques)
-        cargas_detalle: cargasDetalle,
-      });
+        ...supplemental, ...flow, renta_manual:rent, totales_vivos:live,
+        guardado:stored && {
+          id:stored.id, estado:stored.status, ingresos:stored.total_ingresos_dinero,
+          egresos:stored.total_egresos_dinero, resultado:stored.resultado_dinero,
+        },
+        conciliacion: {
+          estado_general: Math.abs(live.kilosPendientes) <= 5 && !flow.origen.embarques_sin_recepcion.length &&
+            !flow.origen.ventas_pendientes_mxn.length && !flow.origen.lotes.some(lot => lot.cost == null) &&
+            !flow.movimientos_mxn.some(row => row.amount == null)
+            ? 'conciliado' : 'pendiente_revision',
+          diferencias: [{clave:'Kilos recibidos sin aplicación o diferencia física',valor:live.kilosPendientes}],
+        },
+      }, {headers:{"Cache-Control":"no-store"}});
     }
 
     // List all closings
     const closings = await sql`
       SELECT * FROM weekly_closings ORDER BY week_start_date DESC
     `;
-    return NextResponse.json(closings);
+    const {start,end} = closingWeek();
+    const position = closings.findIndex(closing => dateKey(closing.week_start_date) === start && dateKey(closing.week_end_date) === end);
+    const active = position < 0 ? {id:null,week_start_date:start,week_end_date:end,
+      week_label:`Semana ${start}`,status:'abierto',virtual:true} : closings.splice(position,1)[0];
+    closings.unshift(await withLiveClosing(active));
+    return NextResponse.json(closings, {headers:{"Cache-Control":"no-store"}});
   } catch (error) {
     console.error("Error fetching weekly closings:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -490,9 +363,32 @@ export async function GET(request) {
 }
 
 // POST: create a new closing
+async function prepareClosing(input, existing = null) {
+  const start = existing ? dateKey(existing.week_start_date) : input.weekStartDate;
+  const end = existing ? dateKey(existing.week_end_date) : input.weekEndDate;
+  if (!validWeek(start,end)) return {error:"El cierre debe cubrir de lunes a domingo."};
+  const manual = Object.hasOwn(input,'porcentajeRenta')
+    ? (input.porcentajeRenta === '' || input.porcentajeRenta == null ? null : Number(input.porcentajeRenta))
+    : getManualRent(existing);
+  if (manual !== null && (!Number.isFinite(manual) || manual < 0 || manual > 1000000000)) {
+    return {error:"Renta manual inválida."};
+  }
+  const flow = await getWeeklySummary(start,end);
+  return {
+    ...input, ...closingForm(flow,manual), weekStartDate:start, weekEndDate:end,
+    weekLabel:input.weekLabel ?? existing?.week_label ?? `Semana ${start}`,
+    status:input.status ?? existing?.status ?? 'abierto', notes:input.notes ?? existing?.notes ?? null,
+    bancos:input.bancos ?? existing?.bancos ?? 0,
+    efectivoDisponible:input.efectivoDisponible ?? existing?.efectivo_disponible ?? 0,
+    detalle_integral:{...flow,renta_manual:manual,calculado_en:new Date().toISOString()},
+  };
+}
+
 export async function POST(request) {
   try {
-    const body = await request.json();
+    if (!await getVerifiedErpUser()) return NextResponse.json({error:"Inicia sesión en Tecavo Soft."},{status:401});
+    const body = await prepareClosing(await request.json());
+    if (body.error) return NextResponse.json({error:body.error},{status:400});
     const {
       weekStartDate, weekEndDate, weekLabel,
       totalCargasDinero, totalVentasDesechoDinero, totalVentasProcesoDinero,
@@ -503,53 +399,15 @@ export async function POST(request) {
       totalFletes, ingresoFrutaDetalle, cargasDetalle, notes, status,
     } = body;
 
-    const totalIngresosDinero =
-      (parseFloat(totalCargasDinero) || 0) +
-      (parseFloat(totalVentasDesechoDinero) || 0) +
-      (parseFloat(totalVentasProcesoDinero) || 0) +
-      (parseFloat(valorInventarioMateriales) || 0) +
-      (parseFloat(bancos) || 0);
-
-    const totalEgresosDinero =
-      (parseFloat(totalEntradasFrutaDinero) || 0) +
-      (parseFloat(totalGastos) || 0) +
-      (parseFloat(totalCuadrillaDinero) || 0) +
-      (parseFloat(totalBrokerNotes) || 0) +
-      (parseFloat(nominaSemanal) || 0) +
-      (parseFloat(porcentajeRenta) || 0) +
-      (parseFloat(porcentajeLuz) || 0);
-
-    const resultadoDinero = totalIngresosDinero - totalEgresosDinero;
-
-    const totalIngresosKg = (parseFloat(totalCargasKg) || 0);
-
-    const totalEgresosKg =
-      (parseFloat(totalCuadrillaKg) || 0) +
-      (parseFloat(totalDesechoKg) || 0) +
-      (parseFloat(totalProcesoKg) || 0);
-
-    // Kg de la semana: Entrada - (Proceso + Desecho + Inventario + Venta Empacado)
-    let inventarioTarimasTotal = 0;
-    if (inventarioTarimas) {
-      const inv = typeof inventarioTarimas === 'string' ? JSON.parse(inventarioTarimas) : inventarioTarimas;
-      inventarioTarimasTotal = Object.values(inv).reduce((sum, val) => sum + (parseFloat(val) || 0), 0);
-    }
-    const kgDeLaSemana = 
-      (parseFloat(totalEntradasFrutaKg) || 0) - 
-      (parseFloat(totalProcesoKg) || 0) - 
-      (parseFloat(totalDesechoKg) || 0) - 
-      inventarioTarimasTotal -
-      (parseFloat(totalCargasKg) || 0);
-
-    const resultadoKg = totalIngresosKg - totalEgresosKg;
-
-    // Ensure inventarioTarimas is properly stored as JSON
-    const inventarioTarimasJson = inventarioTarimas ? JSON.stringify(inventarioTarimas) : null;
+    const totals = closingTotals(body);
+    const inventarioTarimasJson = JSON.stringify(inventarioTarimas);
 
     const detalleIntegral = body.detalle_integral || body.detalleIntegral || null;
     const estadoConc = body.estado_conciliacion || body.estadoConciliacion || (status === 'cerrado' ? 'cerrado' : 'borrador');
 
-    const result = await sql`
+    const [, result] = await sql.transaction([
+      sql`SELECT pg_advisory_xact_lock(hashtext(${'weekly-closing:' + weekStartDate}))`,
+      sql`
       INSERT INTO weekly_closings (
         week_start_date, week_end_date, week_label,
         total_cargas_dinero, total_ventas_desecho_dinero, total_ventas_proceso_dinero,
@@ -563,25 +421,28 @@ export async function POST(request) {
         total_ingresos_dinero, total_egresos_dinero, resultado_dinero,
         total_ingresos_kg, total_egresos_kg, resultado_kg,
         status, notes, estado_conciliacion, detalle_integral, snapshot_cierre
-      ) VALUES (
-        ${weekStartDate}, ${weekEndDate}, ${weekLabel || null},
+      ) SELECT
+        ${weekStartDate}::date, ${weekEndDate}::date, ${weekLabel || null},
         ${parseFloat(totalCargasDinero) || 0}, ${parseFloat(totalVentasDesechoDinero) || 0}, ${parseFloat(totalVentasProcesoDinero) || 0},
-        ${parseFloat(valorInventarioMateriales) || 0}, ${parseFloat(bancos) || 0}, ${inventarioTarimasJson}, ${parseFloat(efectivoDisponible) || 0},
+        ${parseFloat(valorInventarioMateriales) || 0}, ${parseFloat(bancos) || 0}, ${inventarioTarimasJson}::jsonb, ${parseFloat(efectivoDisponible) || 0},
         ${parseFloat(totalGastos) || 0}, ${parseFloat(totalEntradasFrutaDinero) || 0}, ${parseFloat(totalCuadrillaDinero) || 0}, ${parseFloat(totalBrokerNotes) || 0},
         ${parseFloat(nominaSemanal) || 0}, ${parseFloat(porcentajeRenta) || 0}, ${parseFloat(porcentajeLuz) || 0},
         ${parseFloat(totalCargasKg) || 0}, ${parseFloat(totalCuadrillaKg) || 0}, ${parseFloat(totalEntradasFrutaKg) || 0}, ${parseFloat(totalDesechoKg) || 0}, ${parseFloat(totalProcesoKg) || 0},
         ${parseFloat(totalFletes) || 0},
-        ${ingresoFrutaDetalle ? JSON.stringify(ingresoFrutaDetalle) : null},
-        ${cargasDetalle ? JSON.stringify(cargasDetalle) : null},
-        ${totalIngresosDinero}, ${totalEgresosDinero}, ${resultadoDinero},
-        ${totalIngresosKg}, ${totalEgresosKg}, ${resultadoKg},
+        ${JSON.stringify(ingresoFrutaDetalle)}::jsonb,
+        ${JSON.stringify(cargasDetalle)}::jsonb,
+        ${totals.ingresos}, ${totals.egresos}, ${totals.resultado},
+        ${totalEntradasFrutaKg}, ${totals.salidas}, ${totals.kilosPendientes},
         ${status || 'abierto'}, ${notes || null},
         ${estadoConc},
-        ${detalleIntegral ? JSON.stringify(detalleIntegral) : null},
-        ${detalleIntegral ? JSON.stringify(detalleIntegral) : null}
-      )
+        ${JSON.stringify(detalleIntegral)}::jsonb,
+        CASE WHEN ${status} = 'cerrado' THEN ${JSON.stringify(detalleIntegral)}::jsonb END
+      WHERE NOT EXISTS (
+        SELECT 1 FROM weekly_closings WHERE week_start_date=${weekStartDate}::date
+           AND week_end_date=${weekEndDate}::date)
       RETURNING *
-    `;
+    `]);
+    if (!result.length) return NextResponse.json({error:"La semana ya tiene un cierre guardado."},{status:409});
 
     return NextResponse.json(result[0], { status: 201 });
   } catch (error) {
@@ -593,7 +454,16 @@ export async function POST(request) {
 // PUT: update an existing closing
 export async function PUT(request) {
   try {
-    const body = await request.json();
+    if (!await getVerifiedErpUser()) return NextResponse.json({error:"Inicia sesión en Tecavo Soft."},{status:401});
+    const input = await request.json();
+    if (!/^\d+$/.test(String(input.id))) return NextResponse.json({error:"Selecciona un cierre guardado."},{status:400});
+    const [existing] = await sql`SELECT * FROM weekly_closings WHERE id = ${input.id}`;
+    if (!existing) return NextResponse.json({error:"Cierre no encontrado."},{status:404});
+    if (existing.status === 'cerrado' && input.status !== 'abierto') {
+      return NextResponse.json({error:"Reabre el cierre para modificar la captura manual."},{status:409});
+    }
+    const body = await prepareClosing(input,existing);
+    if (body.error) return NextResponse.json({error:body.error},{status:400});
     const {
       id, weekStartDate, weekEndDate, weekLabel,
       totalCargasDinero, totalVentasDesechoDinero, totalVentasProcesoDinero,
@@ -604,47 +474,8 @@ export async function PUT(request) {
       totalFletes, ingresoFrutaDetalle, cargasDetalle, status, notes,
     } = body;
 
-    const totalIngresosDinero =
-      (parseFloat(totalCargasDinero) || 0) +
-      (parseFloat(totalVentasDesechoDinero) || 0) +
-      (parseFloat(totalVentasProcesoDinero) || 0) +
-      (parseFloat(valorInventarioMateriales) || 0) +
-      (parseFloat(bancos) || 0);
-
-    const totalEgresosDinero =
-      (parseFloat(totalEntradasFrutaDinero) || 0) +
-      (parseFloat(totalGastos) || 0) +
-      (parseFloat(totalCuadrillaDinero) || 0) +
-      (parseFloat(totalBrokerNotes) || 0) +
-      (parseFloat(nominaSemanal) || 0) +
-      (parseFloat(porcentajeRenta) || 0) +
-      (parseFloat(porcentajeLuz) || 0);
-
-    const resultadoDinero = totalIngresosDinero - totalEgresosDinero;
-
-    const totalIngresosKg = (parseFloat(totalCargasKg) || 0);
-
-    const totalEgresosKg =
-      (parseFloat(totalCuadrillaKg) || 0) +
-      (parseFloat(totalDesechoKg) || 0) +
-      (parseFloat(totalProcesoKg) || 0);
-
-    // Kg de la semana: Entrada - (Proceso + Desecho + Inventario + Venta Empacado)
-    let inventarioTarimasTotal = 0;
-    if (inventarioTarimas) {
-      const inv = typeof inventarioTarimas === 'string' ? JSON.parse(inventarioTarimas) : inventarioTarimas;
-      inventarioTarimasTotal = Object.values(inv).reduce((sum, val) => sum + (parseFloat(val) || 0), 0);
-    }
-    const kgDeLaSemana = 
-      (parseFloat(totalEntradasFrutaKg) || 0) - 
-      (parseFloat(totalProcesoKg) || 0) - 
-      (parseFloat(totalDesechoKg) || 0) - 
-      inventarioTarimasTotal -
-      (parseFloat(totalCargasKg) || 0);
-
-    const resultadoKg = totalIngresosKg - totalEgresosKg;
-
-    const inventarioTarimasJson = inventarioTarimas ? JSON.stringify(inventarioTarimas) : null;
+    const totals = closingTotals(body);
+    const inventarioTarimasJson = JSON.stringify(inventarioTarimas);
 
     const detalleIntegral = body.detalle_integral || body.detalleIntegral || null;
     const estadoConc = body.estado_conciliacion || body.estadoConciliacion || (status === 'cerrado' ? 'cerrado' : null);
@@ -676,12 +507,12 @@ export async function PUT(request) {
         total_fletes_dinero = ${parseFloat(totalFletes) || 0},
         ingreso_fruta_detalle = ${ingresoFrutaDetalle ? JSON.stringify(ingresoFrutaDetalle) : null},
         cargas_detalle = ${cargasDetalle ? JSON.stringify(cargasDetalle) : null},
-        total_ingresos_dinero = ${totalIngresosDinero},
-        total_egresos_dinero = ${totalEgresosDinero},
-        resultado_dinero = ${resultadoDinero},
-        total_ingresos_kg = ${totalIngresosKg},
-        total_egresos_kg = ${totalEgresosKg},
-        resultado_kg = ${resultadoKg},
+        total_ingresos_dinero = ${totals.ingresos},
+        total_egresos_dinero = ${totals.egresos},
+        resultado_dinero = ${totals.resultado},
+        total_ingresos_kg = ${totalEntradasFrutaKg},
+        total_egresos_kg = ${totals.salidas},
+        resultado_kg = ${totals.kilosPendientes},
         status = ${status || 'abierto'},
         notes = ${notes || null},
         estado_conciliacion = COALESCE(${estadoConc}, estado_conciliacion),
@@ -702,6 +533,7 @@ export async function PUT(request) {
 // DELETE
 export async function DELETE(request) {
   try {
+    if (!await getVerifiedErpUser()) return NextResponse.json({error:"Inicia sesión en Tecavo Soft."},{status:401});
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
     await sql`DELETE FROM weekly_closings WHERE id = ${parseInt(id)}`;

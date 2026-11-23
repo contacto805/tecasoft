@@ -1,3 +1,4 @@
+import {mexicoToday,validDate} from "@/utils/closing-period";
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
 import { logMovement, recalculateLotPerformance } from "@/app/api/utils/recalculate";
@@ -12,7 +13,6 @@ export async function POST(request) {
   try {
     const body = await request.json();
     const {
-      lot_id,
       customer_id,
       load_date,
       caliber_details = [],
@@ -20,11 +20,9 @@ export async function POST(request) {
       truck_plates,
       trailer_plates,
       currency = 'USD',
+      exchange_rate,
       notes,
-      factura_folio,
-      nota_total_amount,
-      nota_total_kg,
-      selected_pallet_ids = []  // EXACT pallet ids from trailer selection for traceability
+      factura_folio
     } = body;
 
     if (!customer_id || !Array.isArray(caliber_details) || caliber_details.length === 0) {
@@ -34,217 +32,136 @@ export async function POST(request) {
     const customer = await sql`SELECT * FROM customers WHERE id = ${customer_id}`;
     if (!customer.length) return NextResponse.json({ error: "Customer not found" }, { status: 404 });
 
-    // Normalize items. Support price per caja (preferred for UI) or per kg. Compute amount correctly.
-    const allItems = caliber_details.map(d => {
-      const isPerBox = (d.unit || 'caja') === 'caja' || !d.price_per_kg; // default UI is per caja
-      const p = parseFloat(d.price_per_kg || d.price_per_box || d.price || 0);
-      const boxes = parseInt(d.boxes) || 0;
-      const kg = parseFloat(d.total_kg) || 0;
-      const amt = isPerBox ? (boxes * p) : (kg * p);
-      return {
-        lot_id: parseInt(d.lot_id || lot_id),
-        caliber: d.caliber,
-        class_name: d.class_name || '',
-        pallets: parseInt(d.pallets) || 0,
-        boxes,
-        total_kg: kg,
-        price: p,
-        unit: isPerBox ? 'caja' : 'kg',
-        amount: amt
-      };
-    }).filter(i => i.lot_id && (i.total_kg > 0 || i.boxes > 0));
-
-    if (allItems.length === 0) {
-      return NextResponse.json({ error: "Sin detalles válidos" }, { status: 400 });
+    const selection = caliber_details.map(row => ({
+      pallet_id:Number(row.pallet_id),
+      boxes:Number(row.boxes),
+      price:Number(row.price_per_box)
+    }));
+    const palletIds = selection.map(row => row.pallet_id);
+    if (!selection.every(row => Number.isSafeInteger(row.pallet_id) && row.pallet_id > 0 &&
+      Number.isSafeInteger(row.boxes) && row.boxes > 0 &&
+      Number.isFinite(row.price) && row.price >= 0 && row.price <= 1000000000) ||
+      new Set(palletIds).size !== palletIds.length) {
+      return NextResponse.json({error:"Selecciona tarimas físicas distintas y verifica cajas y precios."},{status:400});
     }
 
-    const targetAmount = parseFloat(nota_total_amount) || allItems.reduce((s, i) => s + i.amount, 0);
-    const targetKg = parseFloat(nota_total_kg) || allItems.reduce((s, i) => s + i.total_kg, 0);
-    const loadDateStr = load_date || new Date().toISOString().slice(0,10);
-
-    // Idempotencia fuerte por folio comercial (permite dos ventas iguales legítimas de mismo cliente/día si folio distinto)
-    if (factura_folio) {
-      const dupLoad = await sql`SELECT id FROM load_history WHERE factura_folio = ${factura_folio} LIMIT 1`;
-      if (dupLoad.length) {
-        return NextResponse.json({ deduped: true, load: dupLoad[0], message: 'Embarque ya confirmado (folio único)' });
-      }
-      const dupNota = await sql`SELECT * FROM notas WHERE folio = ${factura_folio} LIMIT 1`;
-      if (dupNota.length) {
-        return NextResponse.json({ deduped: true, nota: dupNota[0], message: 'Nota ya emitida para este folio' });
-      }
+    const loadDateStr = load_date || mexicoToday();
+    if (!validDate(loadDateStr) || !['USD','MXN'].includes(currency)) {
+      return NextResponse.json({error:"Verifica la fecha y moneda del embarque."},{status:400});
     }
-
-    // Verificar stock usando IDs exactos si se envían (preferido), sino por calibre
-    const palletIds = Array.isArray(selected_pallet_ids) ? selected_pallet_ids.map(Number).filter(Boolean) : [];
-    if (palletIds.length > 0) {
-      const availPallets = await sql`
-        SELECT id, lot_id, caliber, class_name, total_kg 
-        FROM pallet_output_summary 
-        WHERE id = ANY(${palletIds}) 
-          AND COALESCE(estado,'PENDIENTE_UBICACION') NOT IN ('EMBARCADA','CANCELADA','REEMPACADA')
-      `;
-      const availMap = {};
-      availPallets.forEach(p => { availMap[p.id] = p; });
-      // Basic sum check
-      let sumAvail = 0;
-      palletIds.forEach(pid => { if (availMap[pid]) sumAvail += parseFloat(availMap[pid].total_kg || 0); });
-      if (sumAvail + 0.1 < targetKg) {
-        return NextResponse.json({ error: 'Stock insuficiente en tarimas seleccionadas' }, { status: 400 });
-      }
-    } else {
-      // fallback
-      for (const item of allItems) {
-        const [avail] = await sql`
-          SELECT COALESCE(SUM(total_kg),0) as kg
-          FROM pallet_output_summary
-          WHERE lot_id = ${item.lot_id}
-            AND caliber = ${item.caliber}
-            AND COALESCE(class_name,'') = ${item.class_name}
-            AND COALESCE(estado,'PENDIENTE_UBICACION') NOT IN ('EMBARCADA','CANCELADA')
-        `;
-        if (parseFloat(avail?.kg || 0) < item.total_kg - 0.01) {
-          return NextResponse.json({ error: `Stock insuficiente para lote ${item.lot_id} ${item.caliber}` }, { status: 400 });
-        }
-      }
+    const fx = currency === 'MXN' ? null : Number(exchange_rate);
+    if (currency === 'USD' && !(fx > 0 && fx <= 1000)) {
+      return NextResponse.json({error:"Captura un tipo de cambio válido para el embarque en USD."},{status:400});
     }
-
-    const finalTotalAmount = targetAmount;
-    const finalTotalKg = targetKg;
-
-    // Términos de pago
-    const [custTerms] = await sql`SELECT COALESCE(payment_terms_days,30) as days FROM customers WHERE id = ${customer_id}`;
-    const days = parseInt(custTerms?.days || 30);
-    const due = new Date(loadDateStr);
-    due.setDate(due.getDate() + days);
+    const [custTerms] = await sql`SELECT COALESCE(payment_terms_days,30) AS days FROM customers WHERE id=${customer_id}`;
+    const due = new Date(loadDateStr + 'T00:00:00Z');
+    due.setUTCDate(due.getUTCDate() + Number(custTerms.days));
     const fechaCompromiso = due.toISOString().slice(0,10);
 
-    // UNA SOLA NOTA (canónica)
-    let notaFolio = factura_folio;
-    if (!notaFolio) {
-      const maxNota = await sql`SELECT folio FROM notas WHERE folio LIKE 'N-%' ORDER BY id DESC LIMIT 1`;
-      let nNum = 1;
-      if (maxNota.length && maxNota[0].folio) nNum = (parseInt(String(maxNota[0].folio).replace('N-','')) || 0) + 1;
-      notaFolio = 'N-' + String(nNum).padStart(6,'0');
+    // Lock before reading stock, so two requests cannot dispatch the same tarima.
+    const [, , [result]] = await sql.transaction([
+      sql`SELECT pg_advisory_xact_lock(hashtext('tecavo-confirm-shipment'))`,
+      sql`SELECT id FROM pallet_output_summary WHERE id=ANY(${palletIds}::bigint[]) ORDER BY id FOR UPDATE`,
+      sql`
+        WITH requested AS (
+          SELECT * FROM jsonb_to_recordset(${JSON.stringify(selection)}::jsonb)
+          AS d(pallet_id bigint, boxes integer, price numeric)
+        ), stock AS (
+          SELECT p.id, p.lot_id, p.caliber, COALESCE(p.class_name,'') AS class_name,
+                 p.total_kg, COALESCE(p.pallet_count,1) AS pallets,
+                 r.boxes, r.price, round(r.boxes * r.price,2) AS amount
+          FROM requested r JOIN pallet_output_summary p ON p.id=r.pallet_id
+          WHERE p.embarque_id IS NULL AND UPPER(COALESCE(p.estado,'')) NOT IN ('EMBARCADA','CANCELADA','REEMPACADA')
+            AND p.total_kg > 0 AND p.lot_id IS NOT NULL
+        ), totals AS (
+          SELECT SUM(amount) AS amount, SUM(total_kg) AS kg FROM stock HAVING COUNT(*)=${selection.length}
+        ), ref AS (
+          SELECT COALESCE(NULLIF(${factura_folio || ''},''),
+             'N-' || LPAD((COALESCE((SELECT MAX(substring(folio FROM 3)::bigint)
+                    FROM notas WHERE folio ~ '^N-[0-9]{1,12}$'),0) + 1)::text,6,'0')) AS folio
+        ), existing AS (
+          SELECT h.id,h.factura_folio,
+            (h.customer_id = ${customer_id} AND
+             (SELECT array_agg(p.id::bigint ORDER BY p.id) FROM pallet_output_summary p
+              JOIN load_history h2 ON h2.id = p.embarque_id WHERE h2.factura_folio=r.folio)
+              = (SELECT array_agg(pallet_id ORDER BY pallet_id) FROM requested)) AS same_shipment
+          FROM load_history h JOIN ref r ON h.factura_folio=r.folio
+          ORDER BY h.id LIMIT 1
+        ), note AS (
+          INSERT INTO notas(folio,customer_id,viaje_id,fecha,importe_original_usd,total_abonado_usd,saldo_usd,fecha_compromiso,estatus)
+          SELECT r.folio,${customer_id},NULL,${loadDateStr}::date,t.amount,0,t.amount,${fechaCompromiso}::date,'Pendiente'
+          FROM totals t CROSS JOIN ref r WHERE NOT EXISTS (SELECT 1 FROM notas n WHERE n.folio=r.folio)
+            AND NOT EXISTS (SELECT 1 FROM existing)
+          RETURNING folio
+        ), loads AS (
+          INSERT INTO load_history(lot_id,load_date,customer_id,customer_name,destination,
+            caliber,pallets_count,boxes_count,total_kg,unit_price,total_amount,currency,
+            driver_name,truck_plates,trailer_plates,notes,payment_status,factura_folio)
+          SELECT s.lot_id,${loadDateStr}::date,${customer_id},${customer[0].customer_name},${customer[0].destination || ''},
+            string_agg(DISTINCT s.caliber,','),SUM(s.pallets),SUM(s.boxes),SUM(s.total_kg),MIN(s.price),SUM(s.amount),
+            ${currency},${driver_name ?? null},${truck_plates ?? null},${trailer_plates ?? null},${notes ?? null},'pending',n.folio
+          FROM stock s CROSS JOIN note n GROUP BY s.lot_id,n.folio
+          RETURNING *
+        ), details AS (
+          INSERT INTO load_details(load_id,lot_id,caliber,class_name,pallets,boxes,total_kg,unit_price,subtotal)
+          SELECT l.id,s.lot_id,s.caliber,s.class_name,s.pallets,s.boxes,s.total_kg,s.price,s.amount
+          FROM stock s JOIN loads l USING(lot_id) RETURNING id
+        ), dispatch AS (
+          UPDATE pallet_output_summary p SET estado='EMBARCADA', embarque_id=l.id,
+            version_registro=COALESCE(p.version_registro,1)+1,updated_at=NOW()
+          FROM stock s JOIN loads l USING(lot_id) WHERE p.id=s.id RETURNING p.id
+        ), receivable AS (
+          INSERT INTO customer_accounts(customer_id,trip_type,trip_reference_id,trip_date,description,amount_usd,amount_mxn,exchange_rate,transaction_type,notes)
+          SELECT ${customer_id},'load',l.id::text,${loadDateStr}::date,'Embarque '||l.id,
+            CASE WHEN ${currency}='USD' THEN t.amount ELSE 0 END,
+            CASE WHEN ${currency}='MXN' THEN t.amount ELSE 0 END,${fx},'receivable',${notes || ''}
+          FROM (SELECT id FROM loads ORDER BY id LIMIT 1) l CROSS JOIN totals t RETURNING id
+        )
+        SELECT (SELECT to_jsonb(l) FROM loads l ORDER BY id LIMIT 1) AS load,
+          (SELECT to_jsonb(e) FROM existing e) AS existing,
+          (SELECT folio FROM note) AS folio,
+          (SELECT kg FROM totals) AS kg,(SELECT amount FROM totals) AS amount,
+          (SELECT jsonb_agg(lot_id) FROM loads) AS lot_ids,
+          (SELECT count(*) FROM dispatch) AS pallet_count
+      `
+    ]);
+    if (result.existing) {
+      if (!factura_folio || !result.existing.same_shipment) return NextResponse.json({error:"Folio ocupado por otro embarque. Genera un folio nuevo."},{status:409});
+      return NextResponse.json({deduped:true, load:result.existing, message:"Embarque ya confirmado."});
     }
+    if (!result.load) return NextResponse.json({error:"Cambió el inventario o el folio ya está en uso. Revisa las tarimas seleccionadas."},{status:409});
+    const {load:mainLoad, folio:notaFolio, lot_ids:affectedLots} = result;
+    const finalTotalKg = Number(result.kg);
+    const finalTotalAmount = Number(result.amount);
+    const useLoad = mainLoad;
 
-    await sql`
-      INSERT INTO notas (folio, customer_id, viaje_id, fecha, importe_original_usd, total_abonado_usd, saldo_usd, fecha_compromiso, estatus)
-      VALUES (${notaFolio}, ${customer_id}, NULL, ${loadDateStr}, ${finalTotalAmount}, 0, ${finalTotalAmount}, ${fechaCompromiso}, 'Pendiente')
-    `;
-
-    // Agrupar por lote
-    const lotsMap = {};
-    allItems.forEach(i => {
-      if (!lotsMap[i.lot_id]) lotsMap[i.lot_id] = [];
-      lotsMap[i.lot_id].push(i);
-    });
-
-    let mainLoad = null;
-    const loadDetailsAll = [];
-
-    for (const [lid, items] of Object.entries(lotsMap)) {
-      const lotIdNum = parseInt(lid);
-      const subKg = items.reduce((s,i)=>s+i.total_kg,0);
-      const subAmount = items.reduce((s,i)=>s + i.amount, 0);
-      const [lotRow] = await sql`SELECT * FROM lots WHERE id = ${lotIdNum}`;
-      const lotName = lotRow?.lot_number || String(lotIdNum);
-
-      const [load] = await sql`
-        INSERT INTO load_history (
-          lot_id, load_date, customer_id, customer_name, destination,
-          caliber, pallets_count, boxes_count, total_kg, unit_price, total_amount,
-          currency, driver_name, truck_plates, trailer_plates, notes, payment_status, factura_folio
-        ) VALUES (
-          ${lotIdNum}, ${loadDateStr}, ${customer_id}, ${customer[0].customer_name}, ${customer[0].destination || ''},
-          ${items.map(d=>d.caliber).join(',')},
-          ${items.reduce((s,d)=>s+d.pallets,0)}, ${items.reduce((s,d)=>s+d.boxes,0)},
-          ${subKg}, ${items[0]?.price || 0}, ${subAmount},
-          ${currency}, ${driver_name}, ${truck_plates}, ${trailer_plates}, ${notes}, 'pending', ${notaFolio}
-        ) RETURNING *
-      `;
-      if (!mainLoad) mainLoad = load;
-
-      for (const d of items) {
-        await sql`
-          INSERT INTO load_details (load_id, lot_id, caliber, class_name, pallets, boxes, total_kg, unit_price, subtotal)
-          VALUES (${load.id}, ${lotIdNum}, ${d.caliber}, ${d.class_name}, ${d.pallets}, ${d.boxes}, ${d.total_kg}, ${d.price}, ${d.amount})
-        `;
-        loadDetailsAll.push(d);
-      }
-    }
-
-    const useLoad = mainLoad || { id: 0 };
-
-    // EXACT TARIMAS: marcar solo las seleccionadas por ID (trazabilidad)
-    if (palletIds.length > 0) {
-      for (const pid of palletIds) {
-        await sql`
-          UPDATE pallet_output_summary 
-          SET estado = 'EMBARCADA', embarque_id = ${useLoad.id}, version_registro = COALESCE(version_registro,1)+1, updated_at = NOW()
-          WHERE id = ${pid} AND COALESCE(estado,'PENDIENTE_UBICACION') NOT IN ('EMBARCADA','CANCELADA','REEMPACADA')
-        `;
-      }
-    } else {
-      // fallback por calibre (menos preciso)
-      for (const d of allItems) {
-        await sql`
-          UPDATE pallet_output_summary
-          SET estado = 'EMBARCADA', embarque_id = ${useLoad.id}, version_registro = COALESCE(version_registro,1)+1, updated_at = NOW()
-          WHERE lot_id = ${d.lot_id}
-            AND caliber = ${d.caliber}
-            AND COALESCE(class_name,'') = ${d.class_name}
-            AND COALESCE(estado,'PENDIENTE_UBICACION') NOT IN ('EMBARCADA','CANCELADA')
-          LIMIT 20
-        `;
-      }
-    }
-
-    // Una sola CxC
-    await sql`
-      INSERT INTO customer_accounts (customer_id, trip_type, trip_reference_id, trip_date, description, amount_usd, amount_mxn, transaction_type, notes)
-      VALUES (${customer_id}, 'load', ${String(useLoad.id)}, ${loadDateStr}, ${'Embarque ' + useLoad.id},
-              ${currency === 'USD' ? finalTotalAmount : 0}, ${currency !== 'USD' ? finalTotalAmount : 0}, 'receivable', ${notes || ''})
-    `;
-
-    // Recalcs
-    const affectedLots = [...new Set(allItems.map(i => i.lot_id))];
-    const { recalculateLot } = await import('@/app/api/utils/recalculate');
-    for (const lid of affectedLots) {
-      await recalculateLot(lid);
-      await recalculateLotPerformance(lid);
-    }
-    await logMovement({ entity_type: 'load', entity_id: useLoad.id, lot_id: affectedLots[0], movement_type: 'VENTA_EMBARQUE', qty: finalTotalKg, unit: 'kg', module: 'embarques', reference: String(notaFolio || useLoad.id), notes: `Embarque ${customer[0].customer_name} ${finalTotalKg}kg ${finalTotalAmount} ${currency}` });
-
-    try { await syncCommercialTripFromLoad(useLoad.id, 'embarque'); } catch(e){}
-
-    if (driver_name && mainLoad) {
-      await sql`INSERT INTO foreign_freights (load_id, lot_id, driver_name, truck_plates, trailer_plates, freight_date, notes)
-                VALUES (${mainLoad.id}, ${affectedLots[0]}, ${driver_name}, ${truck_plates}, ${trailer_plates}, ${loadDateStr}, ${notes})`;
-    }
-
-    // Cierre semanal con fecha de venta confirmada (load_date)
+    // La confirmación ya es definitiva. Las integraciones derivadas pueden reintentarse por folio.
+    let tripLinked = false;
     try {
-      await fetch('/api/admin/weekly-closings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          addCarga: true,
-          load_date: loadDateStr,
-          factura_folio: notaFolio || null,
-          total_kg: finalTotalKg,
-          total_amount: finalTotalAmount,
-          customer_name: customer[0]?.customer_name || ''
-        })
-      });
-    } catch (syncErr) {}
+      const { recalculateLot } = await import('@/app/api/utils/recalculate');
+      for (const lid of affectedLots) {
+        await recalculateLot(lid);
+        await recalculateLotPerformance(lid);
+      }
+      await logMovement({ entity_type:'load',entity_id:useLoad.id,lot_id:affectedLots[0],
+        movement_type:'VENTA_EMBARQUE',qty:finalTotalKg,unit:'kg',module:'embarques',
+        reference:notaFolio,notes:`Embarque ${customer[0].customer_name} ${finalTotalKg}kg ${finalTotalAmount} ${currency}` });
+      const trip = await syncCommercialTripFromLoad(useLoad.id,'embarque');
+      tripLinked = Boolean(trip && !trip.skipped);
+      if (driver_name) {
+        await sql`INSERT INTO foreign_freights (load_id,lot_id,driver_name,truck_plates,trailer_plates,freight_date,notes)
+          VALUES (${mainLoad.id},${affectedLots[0]},${driver_name},${truck_plates},${trailer_plates},${loadDateStr},${notes})`;
+      }
+    } catch(error) {
+      console.error("Integración posterior de embarque:",notaFolio,error.message);
+    }
 
     return NextResponse.json({
       load: mainLoad,
-      details: loadDetailsAll,
       totalAmount: finalTotalAmount,
       nota_folio: notaFolio,
-      tripLinked: true,
-      pallets_marked: palletIds.length,
+      tripLinked,
+      pallets_marked: Number(result.pallet_count),
       message: 'Una sola venta/CxC/nota/mapa/inventario/cierre (tarimas exactas)'
     });
   } catch (error) {

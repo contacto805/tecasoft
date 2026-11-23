@@ -1,3 +1,4 @@
+import {fixedExpenseType} from "@/app/api/utils/fixed-expenses";
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
 
@@ -10,7 +11,7 @@ export async function GET(request) {
     const status = searchParams.get('status');
 
     let where = sql``;
-    const conditions = [];
+    const conditions = [sql`expense_type IS DISTINCT FROM ${fixedExpenseType}`];
     if (department && department !== 'Todos') conditions.push(sql`department = ${department}`);
     if (startDate) conditions.push(sql`expense_date >= ${startDate}`);
     if (endDate) conditions.push(sql`expense_date <= ${endDate}`);
@@ -40,6 +41,7 @@ export async function POST(request) {
   try {
     const { productName, costPerUnit, quantity, total, department, notes, expenseDate, photoUrl, expenseType, relatedId, documentUrl, concept, bypassDuplicateCheck = false, superAdminAuthorization = false, prestamoId, recordedBy, recipientName } = await request.json();
 
+    if (expenseType === fixedExpenseType) return NextResponse.json({error:"Usa la sección Gastos fijos."},{status:400});
     if (!productName || !costPerUnit || !quantity || !total || !department) {
       return NextResponse.json(
         { error: 'Todos los campos requeridos deben ser completados' },
@@ -123,6 +125,8 @@ export async function PUT(request) {
       );
     }
 
+    if (expenseType === fixedExpenseType) return NextResponse.json({error:"Usa la sección Gastos fijos."},{status:400});
+
     // Two-level approval workflow: second general admin approves
     if (action === 'approve' || approvedBy) {
       const approver = approvedBy || 'Admin General';
@@ -138,31 +142,12 @@ export async function PUT(request) {
             approved_by = ${approver},
             approved_at = NOW(),
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = ${parseInt(id)}
+        WHERE id = ${parseInt(id)} AND expense_type IS DISTINCT FROM ${fixedExpenseType}
         RETURNING *
       `;
       if (result.length === 0) {
         return NextResponse.json({ error: 'Gasto no encontrado' }, { status: 404 });
       }
-
-      // Auto sync to cierre semanal so gastos flow automatically into Administración / Cierre
-      try {
-        const exp = result[0];
-        if (exp?.expense_date) {
-          await fetch('/api/admin/weekly-closings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              addCarga: true,
-              load_date: exp.expense_date,
-              factura_folio: 'GASTO-' + exp.id,
-              total_kg: 0,
-              total_amount: 0,
-              customer_name: 'GASTO'
-            })
-          });
-        }
-      } catch (_) {}
 
       return NextResponse.json(result[0]);
     }
@@ -173,7 +158,7 @@ export async function PUT(request) {
         SET status = 'rechazado',
             rejection_reason = ${rejectionReason || 'Rechazado por admin general'},
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = ${parseInt(id)}
+        WHERE id = ${parseInt(id)} AND expense_type IS DISTINCT FROM ${fixedExpenseType}
         RETURNING *
       `;
       return NextResponse.json(result[0] || { success: false });
@@ -198,7 +183,7 @@ export async function PUT(request) {
           recipient_name = ${recipientName || null},
           signature_confirmed_by = COALESCE(${recipientName || null}, signature_confirmed_by),
           updated_at = CURRENT_TIMESTAMP
-      WHERE id = ${parseInt(id)}
+      WHERE id = ${parseInt(id)} AND expense_type IS DISTINCT FROM ${fixedExpenseType}
       RETURNING *
     `;
 
@@ -233,7 +218,7 @@ export async function DELETE(request) {
 
     const result = await sql`
       DELETE FROM expenses
-      WHERE id = ${parseInt(id)}
+      WHERE id = ${parseInt(id)} AND expense_type IS DISTINCT FROM ${fixedExpenseType}
       RETURNING *
     `;
 

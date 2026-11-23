@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import FixedExpenses from '@/components/fixed-expenses';
 
 const EXPENSE_TYPES = [
   { value: 'general', label: 'Gasto General' },
@@ -760,6 +761,7 @@ export default function ExpensesPage() {
           </div>
         </div>
 
+        {(canAccessSection('registro') || isGeneralAdmin) && <FixedExpenses editable={!!isGeneralAdmin} />}
         {/* Filters */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 mb-8">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">

@@ -1,158 +1,15 @@
+import {getVerifiedErpUser} from "@/app/api/utils/erp-session-proof";
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
 
-// POST: auto-sync desde Embarques (nota de venta totals to weekly closing) - instant reflect
+import {withLiveClosing} from "@/app/api/utils/weekly-summary";
+import {closingWeek,dateKey} from "@/utils/closing-period";
+
+// Compatibilidad con versiones anteriores. Los datos vivos se leen desde los módulos de origen.
 export async function POST(request) {
-  try {
-    const body = await request.json();
-    const { addCarga, load_date, factura_folio, total_kg, total_amount, customer_name, notes } = body;
-
-    if (!addCarga) {
-      return NextResponse.json({ error: "use {addCarga:true, ...}" }, { status: 400 });
-    }
-
-    const d = load_date ? new Date(load_date) : new Date();
-    // Compute week start (monday)
-    const day = d.getDay();
-    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-    const weekStart = new Date(d);
-    weekStart.setDate(diff);
-    weekStart.setHours(0,0,0,0);
-    const weekStartStr = weekStart.toISOString().slice(0,10);
-
-    const weekEnd = new Date(weekStart);
-    weekEnd.setDate(weekStart.getDate() + 6);
-    const weekEndStr = weekEnd.toISOString().slice(0,10);
-    const weekLabel = `Semana ${weekStartStr} - ${weekEndStr}`;
-
-    // Find or insert current week closing
-    let [closing] = await sql`
-      SELECT * FROM weekly_closings 
-      WHERE week_start_date = ${weekStartStr} 
-      LIMIT 1
-    `;
-    if (!closing) {
-      const inserted = await sql`
-        INSERT INTO weekly_closings (
-          week_start_date, week_end_date, week_label, 
-          total_cargas_kg, total_cargas_dinero, total_cargas,
-          status, created_at, updated_at
-        ) VALUES (
-          ${weekStartStr}, ${weekEndStr}, ${weekLabel}, 
-          0, 0, 0, 'pendiente', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-        ) RETURNING *
-      `;
-      closing = inserted[0];
-    }
-
-    // PROTECCIÓN CONTRA DOBLE CONTEO (requisito bloque 13): 
-    // - Reutilizar entrada existente por folio estable (factura_folio) o ref
-    // - No modificar cierres ya autorizados (respeta snapshots y cálculos aprobados)
-    const currentStatus = (closing.status || '').toLowerCase();
-    if (currentStatus.includes('aprob')) {
-      return NextResponse.json({ 
-        success: true, 
-        note: 'Cierre autorizado - no se modifica para evitar reescritura retrospectiva. Reconciliación sin doble asiento.',
-        week_label: weekLabel 
-      });
-    }
-
-    let newDetalle = [];
-    try { 
-      newDetalle = Array.isArray(closing.cargas_detalle) ? closing.cargas_detalle : JSON.parse(closing.cargas_detalle || "[]"); 
-    } catch(e){ newDetalle = []; }
-
-    // Clave de idempotencia estable por operación de embarque
-    const stableRef = factura_folio || `${load_date || ''}|${customer_name || ''}|${parseFloat(total_kg||0)}`;
-    const yaProcesado = newDetalle.some(d => 
-      (d.folio && d.folio === factura_folio) || 
-      (d._stable_ref && d._stable_ref === stableRef)
-    );
-    if (yaProcesado) {
-      return NextResponse.json({ 
-        success: true, 
-        note: 'Carga ya registrada en cierre semanal (idempotencia). Sin doble conteo.',
-        week_label: weekLabel 
-      });
-    }
-
-    // Incrementar solo si es nuevo
-    const newKg = (parseFloat(closing.total_cargas_kg || 0) + parseFloat(total_kg || 0));
-    const newDin = (parseFloat(closing.total_cargas_dinero || 0) + parseFloat(total_amount || 0));
-
-    newDetalle.push({ 
-      fecha: load_date || new Date().toISOString().slice(0,10),
-      folio: factura_folio || 'sin-folio',
-      total_kg: parseFloat(total_kg||0),
-      total_amount: parseFloat(total_amount||0),
-      customer: customer_name || '',
-      origen: 'embarque',
-      estado: 'confirmado',
-      fuente: 'loads/complete o sync-android',
-      _stable_ref: stableRef
-    });
-
-    await sql`
-      UPDATE weekly_closings 
-      SET 
-        total_cargas_kg = ${newKg},
-        total_cargas_dinero = ${newDin},
-        total_cargas = COALESCE(total_cargas,0) + 1,
-        cargas_detalle = ${JSON.stringify(newDetalle)}::jsonb,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = ${closing.id}
-    `;
-
-    // Enrich automatically with gastos (expenses + operating), ingresos (loads/abonos), inventario frio value, etc.
-    // This ensures the cierre semanal is fully populated from all modules and converges in Administración
-    try {
-      const [gastosRow] = await sql`
-        SELECT COALESCE(SUM(total),0) as g FROM expenses WHERE expense_date BETWEEN ${weekStartStr} AND ${weekEndStr}
-      `;
-      const [opGastosRow] = await sql`
-        SELECT COALESCE(SUM(amount_mxn),0) as g FROM operating_costs 
-        WHERE cost_date BETWEEN ${weekStartStr} AND ${weekEndStr} AND status IN ('aprobado','pagado','pendiente')
-      `;
-      const totalGastos = parseFloat(gastosRow?.g || 0) + parseFloat(opGastosRow?.g || 0);
-
-      const [ingresosRow] = await sql`
-        SELECT COALESCE(SUM(total_amount),0) as i FROM load_history WHERE load_date BETWEEN ${weekStartStr} AND ${weekEndStr}
-      `;
-      const [abonosRow] = await sql`
-        SELECT COALESCE(SUM(equivalente_usd),0) as a FROM abonos WHERE fecha BETWEEN ${weekStartStr} AND ${weekEndStr}
-      `;
-      const totalIngresos = parseFloat(ingresosRow?.i || 0) + parseFloat(abonosRow?.a || 0);
-
-      // Ventas desecho/proceso
-      const [desRow] = await sql`SELECT COALESCE(SUM(total_price),0) as d FROM sales_of_process_and_waste WHERE waste_kg > 0 AND date BETWEEN ${weekStartStr} AND ${weekEndStr}`;
-      const [procRow] = await sql`SELECT COALESCE(SUM(total_price),0) as p FROM sales_of_process_and_waste WHERE process_kg > 0 AND date BETWEEN ${weekStartStr} AND ${weekEndStr}`;
-
-      // Valor inventario frio actual (no embarcadas)
-      const [frioRow] = await sql`
-        SELECT COALESCE(SUM(total_kg),0) as kg FROM pallet_output_summary 
-        WHERE COALESCE(estado,'') NOT IN ('EMBARCADA','CANCELADA')
-      `;
-
-      await sql`
-        UPDATE weekly_closings SET
-          total_gastos = ${totalGastos},
-          total_ingresos_dinero = ${totalIngresos},
-          total_egresos_dinero = COALESCE(total_egresos_dinero, 0) + ${totalGastos},
-          total_ventas_desecho_dinero = ${parseFloat(desRow?.d || 0)},
-          total_ventas_proceso_dinero = ${parseFloat(procRow?.p || 0)},
-          valor_inventario_frio = ${parseFloat(frioRow?.kg || 0)},
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = ${closing.id}
-      `;
-    } catch (enrichErr) {
-      // non blocking
-    }
-
-    return NextResponse.json({ success: true, week_label: weekLabel, updated_kg: newKg, updated_dinero: newDin, origen: 'embarque', estado: 'actualizado' });
-  } catch (error) {
-    console.error("Error POST weekly-closings carga sync:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  const {addCarga} = await request.json();
+  if (!addCarga) return NextResponse.json({error:"Solicitud inválida."},{status:400});
+  return NextResponse.json({success:true,origen:"consulta_en_vivo"});
 }
 
 // GET - Obtener cierres semanales (solo para administración)
@@ -163,6 +20,7 @@ export async function POST(request) {
 // Costos de corte/fletes vienen de Cuadrillas/Fletes (no se recalculan aquí).
 export async function GET(request) {
   try {
+    if (!await getVerifiedErpUser()) return NextResponse.json({error:"Inicia sesión en Tecavo Soft."},{status:401});
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status');
     const dateFrom = searchParams.get('dateFrom');
@@ -176,7 +34,7 @@ export async function GET(request) {
       const [closing] = await sql`
         SELECT * FROM weekly_closings WHERE id = ${parseInt(id)}
       `;
-      return NextResponse.json(closing || null);
+      return NextResponse.json(closing ? await withLiveClosing(closing) : null);
     }
 
     let where = sql`WHERE 1=1`;
@@ -195,6 +53,13 @@ export async function GET(request) {
       LIMIT 100
     `;
 
+    const {start,end} = closingWeek();
+    if (!status && !dateFrom && !dateTo) {
+      const current = closings.findIndex(c => dateKey(c.week_start_date) === start && dateKey(c.week_end_date) === end);
+      const active = current < 0 ? {week_start_date:start,week_end_date:end,week_label:`Semana ${start}`,
+        status:'abierto',virtual:true} : closings.splice(current,1)[0];
+      closings.unshift(await withLiveClosing(active));
+    }
     // Enriquecer con metadatos de actualización y estado (sin reescribir históricos)
     const closingsEnriquecidos = closings.map(c => {
       const st = (c.status || 'pendiente').toLowerCase();
@@ -308,6 +173,7 @@ export async function GET(request) {
 // PUT - Aprobar/Rechazar/Reabrir cierre semanal
 export async function PUT(request) {
   try {
+    if (!await getVerifiedErpUser()) return NextResponse.json({error:"Inicia sesión en Tecavo Soft."},{status:401});
     const { id, action, userId, notes } = await request.json();
 
     if (!id || !action || !userId) {

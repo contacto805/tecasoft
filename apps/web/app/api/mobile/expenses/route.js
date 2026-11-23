@@ -1,3 +1,4 @@
+import {fixedExpenseType} from "@/app/api/utils/fixed-expenses";
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
 
@@ -31,7 +32,7 @@ export async function GET(request) {
       photo_url,
       created_at,
       updated_at
-    FROM expenses WHERE 1=1`;
+    FROM expenses WHERE expense_type IS DISTINCT FROM ${fixedExpenseType}`;
 
     const conditions = [];
 
@@ -163,7 +164,7 @@ export async function PUT(request) {
           expense_date = ${expenseDate},
           photo_url = ${photoUrl || null},
           updated_at = CURRENT_TIMESTAMP
-      WHERE id = ${parseInt(id)}
+      WHERE id = ${parseInt(id)} AND expense_type IS DISTINCT FROM ${fixedExpenseType}
       RETURNING id, product_name, cost_per_unit, quantity, total, department, notes, expense_date, photo_url, created_at, updated_at
     `;
 
@@ -211,7 +212,7 @@ export async function DELETE(request) {
 
     const result = await sql`
       DELETE FROM expenses
-      WHERE id = ${parseInt(id)}
+      WHERE id = ${parseInt(id)} AND expense_type IS DISTINCT FROM ${fixedExpenseType}
       RETURNING id
     `;
 

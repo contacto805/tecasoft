@@ -156,12 +156,6 @@ export async function POST(request) {
           VALUES (${folio}, ${date}, EXTRACT(WEEK FROM ${date}::date), EXTRACT(YEAR FROM ${date}::date), 'reempaque', 'operativo', 'Reempaque', ${reason || 'Reempaque'}, ${totalAdd}, 'MXN', 'reempaque', 'confirmado', NOW())
         `;
       }
-      // Notificar cierre (0 kg/dinero, solo para que se enriquezca con el gasto en la semana correcta)
-      await fetch('/api/admin/weekly-closings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ addCarga: true, load_date: date, factura_folio: folio, total_kg: 0, total_amount: 0, customer_name: 'REEMPAQUE' })
-      }).catch(()=>{});
     } catch (_) {}
 
     return NextResponse.json({ success: true, op, folio });

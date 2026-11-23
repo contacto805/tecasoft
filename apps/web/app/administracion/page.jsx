@@ -104,6 +104,9 @@ export default function AdministracionPage() {
       } catch (_) {}
     };
     loadCierre();
+    const timer = setInterval(()=>{if (!document.hidden) loadCierre();},15000);
+    window.addEventListener('focus',loadCierre);
+    return () => {clearInterval(timer);window.removeEventListener('focus',loadCierre);};
   }, []);
 
   useEffect(() => {
@@ -378,10 +381,10 @@ export default function AdministracionPage() {
         </div>
         {cierreActual ? (
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
-            <div className="bg-emerald-50 p-3 rounded"><div className="text-emerald-700 text-xs">Ingresos</div><div className="font-bold text-xl">${parseFloat(cierreActual.total_ingresos_dinero || cierreActual.total_cargas_dinero || 0).toLocaleString()}</div></div>
-            <div className="bg-red-50 p-3 rounded"><div className="text-red-700 text-xs">Gastos / Egresos</div><div className="font-bold text-xl">${parseFloat(cierreActual.total_gastos || cierreActual.total_egresos_dinero || 0).toLocaleString()}</div></div>
+            <div className="bg-emerald-50 p-3 rounded"><div className="text-emerald-700 text-xs">Ingresos</div><div className="font-bold text-xl">${parseFloat(cierreActual.total_ingresos_dinero ?? 0).toLocaleString()}</div></div>
+            <div className="bg-red-50 p-3 rounded"><div className="text-red-700 text-xs">Gastos / Egresos</div><div className="font-bold text-xl">${parseFloat(cierreActual.total_egresos_dinero ?? 0).toLocaleString()}</div></div>
             <div className="bg-amber-50 p-3 rounded"><div className="text-amber-700 text-xs">Ventas Desecho</div><div className="font-bold text-xl">${parseFloat(cierreActual.total_ventas_desecho_dinero || 0).toLocaleString()}</div></div>
-            <div className="bg-blue-50 p-3 rounded"><div className="text-blue-700 text-xs">Inventario Frío (kg)</div><div className="font-bold text-xl">{parseFloat(cierreActual.valor_inventario_frio || 0).toLocaleString()}</div></div>
+            <div className="bg-blue-50 p-3 rounded"><div className="text-blue-700 text-xs">Inventario Frío (kg)</div><div className="font-bold text-xl">{parseFloat(cierreActual.inventario_frio_kg ?? 0).toLocaleString()}</div></div>
             <div className="bg-slate-100 p-3 rounded"><div className="text-slate-700 text-xs">Resultado Semana</div><div className="font-bold text-xl">${parseFloat(cierreActual.resultado_dinero || 0).toLocaleString()}</div></div>
           </div>
         ) : (

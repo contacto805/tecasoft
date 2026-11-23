@@ -6,6 +6,8 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { drawCompanyHeader } from '@/lib/company-header';
 import * as XLSX from 'xlsx';
+import {closingWeek, validDate, validWeek, closingTotals} from '@/utils/closing-period';
+import ClosingTrace from '@/components/closing-trace';
 
 const TABS = [
   { id: 'resumen', label: '1. RESUMEN EJECUTIVO' },
@@ -20,19 +22,6 @@ const TABS = [
 
 const fmt = (n) =>
   `$${parseFloat(n || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
-function getWeekBounds(offset = 0) {
-  const now = new Date();
-  const day = now.getDay(); // 0=Sun
-  const monday = new Date(now);
-  monday.setDate(now.getDate() - ((day + 6) % 7) + offset * 7);
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
-  return {
-    start: monday.toISOString().split('T')[0],
-    end: sunday.toISOString().split('T')[0],
-  };
-}
 
 const EMPTY_FORM = {
   weekStartDate: '',
@@ -53,8 +42,8 @@ const EMPTY_FORM = {
   totalCuadrillaDinero: '',
   totalBrokerNotes: '',
   nominaSemanal: '',
-  porcentajeRenta: '15000',
-  porcentajeLuz: '10000',
+  porcentajeRenta: '',
+  porcentajeLuz: '',
   totalFletes: '',
   // Ingreso de Fruta detalle (por lote automático)
   ingresoFrutaDetalle: [],
@@ -76,13 +65,13 @@ export default function CierresPage() {
   const router = useRouter();
   const [closings, setClosings] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [listError,setListError] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [loadingData, setLoadingData] = useState(false);
   const [saving, setSaving] = useState(false);
   const [selected, setSelected] = useState(null);
-  const [isEditable, setIsEditable] = useState(false);
 
   // Reestructurado - 8 secciones (formato integral + distinción contable/origen)
   const [activeTab, setActiveTab] = useState('resumen');
@@ -93,19 +82,21 @@ export default function CierresPage() {
 
   const fetchClosings = async () => {
     setLoading(true);
+    setListError('');
     try {
       const res = await fetch('/api/weekly-closings');
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
       setClosings(Array.isArray(data) ? data : []);
     } catch (e) {
-      console.error(e);
+      setListError(e.message);
     } finally {
       setLoading(false);
     }
   };
 
   const openNew = () => {
-    const { start, end } = getWeekBounds(0);
+    const { start, end } = closingWeek();
     setEditing(null);
     setForm({
       ...EMPTY_FORM,
@@ -120,11 +111,12 @@ export default function CierresPage() {
     });
     setShowForm(true);
     setSelected(null);
-    setIsEditable(false);
-    setTimeout(() => fetchRelatedModuleData(start, end), 10);
+    setIntegralData(null);
   };
 
   const openEdit = (c) => {
+    if (c.virtual) { openNew(); return; }
+    setIntegralData(null);
     setEditing(c);
     const invTarimas = {};
     try {
@@ -151,7 +143,7 @@ export default function CierresPage() {
       totalCuadrillaDinero: c.total_cuadrilla_dinero || '',
       totalBrokerNotes: c.total_broker_notes || '',
       nominaSemanal: c.nomina_semanal || '',
-      porcentajeRenta: c.porcentaje_renta || '',
+      porcentajeRenta: c.detalle_integral && Object.hasOwn(c.detalle_integral,'renta_manual') ? c.detalle_integral.renta_manual ?? '' : c.porcentaje_renta || '',
       porcentajeLuz: c.porcentaje_luz || '',
       totalCargasKg: c.total_cargas_kg || '',
       totalCuadrillaKg: c.total_cuadrilla_kg || '',
@@ -184,63 +176,63 @@ export default function CierresPage() {
     });
     setShowForm(true);
     setSelected(null);
-    setIsEditable(false);
   };
 
-  const fetchRelatedModuleData = async (startOverride = null, endOverride = null) => {
-    const start = startOverride || form.weekStartDate;
-    const end = endOverride || form.weekEndDate;
-    if (!start || !end) return;
-    setLoadingData(true);
-    try {
-      const res = await fetch(
-        `/api/weekly-closings?summary=true&startDate=${start}&endDate=${end}`
-      );
-      const data = await res.json();
+  const [summaryError,setSummaryError] = useState('');
+  const [refreshVersion,setRefreshVersion] = useState(0);
 
-      // V8 full integral
-      setIntegralData(data);
-
-      const detalle = Array.isArray(data.ingreso_fruta_detalle) ? data.ingreso_fruta_detalle : (data.produccion ? [] : []);
-      const cargasDet = Array.isArray(data.cargas_detalle) ? data.cargas_detalle : [];
-
-      let autoKg = parseFloat(data.total_entradas_fruta_kg || data.produccion?.kg_recibidos) || 0;
-      let autoDin = parseFloat(data.total_entradas_fruta_dinero) || 0;
-
-      let cargasKgCalc = parseFloat(data.total_cargas_kg || data.produccion?.kg_lotificados) || 0;
-      let cargasDinCalc = parseFloat(data.total_cargas_dinero) || 0;
-
-      setForm((f) => ({
-        ...f,
-        totalCargasDinero: cargasDinCalc.toFixed(2),
-        totalVentasProcesoDinero: (data.total_ventas_proceso_dinero || data.rentabilidad?.ingresos_netos || 0).toFixed(2),
-        valorInventarioMateriales: (data.valor_inventario_materiales || data.inventarios?.materiales_final || 0).toFixed(2),
-        totalGastos: (data.total_gastos || data.costos_gastos?.otros || 0).toFixed(2),
-        totalEntradasFrutaDinero: autoDin.toFixed(2),
-        totalCuadrillaDinero: (data.total_cuadrilla_dinero || data.costos_gastos?.cuadrillas || 0).toFixed(2),
-        nominaSemanal: (data.nomina_semanal || data.costos_gastos?.nomina || 0).toFixed(2),
-        totalCargasKg: cargasKgCalc.toFixed(2),
-        totalEntradasFrutaKg: autoKg.toFixed(2),
-        totalDesechoKg: (data.total_desecho_kg || data.produccion?.desecho || 0).toFixed(2),
-        totalProcesoKg: (data.total_proceso_kg || data.produccion?.proceso || 0).toFixed(2),
-        ingresoFrutaDetalle: detalle,
-        cargasDetalle: cargasDet,
-        bancos: (data.bancos_cobranza?.abonos_banco || 0).toFixed(2),
-      }));
-
-      if (data.conciliacion?.estado_general) {
+  useEffect(() => {
+    const {weekStartDate:start,weekEndDate:end} = form;
+    if (!showForm || !validWeek(start,end)) return;
+    const controller = new AbortController();
+    let busy = false;
+    async function read(full) {
+      if (busy) return;
+      busy = true;
+      if (full) setLoadingData(true);
+      try {
+        const res = await fetch(`/api/weekly-closings?summary=true&startDate=${start}&endDate=${end}&live=${!full}`,
+          {cache:'no-store',signal:controller.signal});
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        if (controller.signal.aborted) return;
+        setSummaryError('');
+        setIntegralData(prior => full ? data : {...prior,...data});
         setConciliacionStatus(data.conciliacion.estado_general);
+        setForm(f => ({
+          ...f, totalCargasDinero:data.total_cargas_dinero, totalVentasDesechoDinero:data.total_ventas_desecho_dinero,
+          totalVentasProcesoDinero:data.total_ventas_proceso_dinero, valorInventarioMateriales:data.valor_inventario_materiales,
+          inventarioTarimas:data.inventario_tarimas_por_calibre, totalGastos:data.total_gastos, totalEntradasFrutaDinero:data.total_entradas_fruta_dinero,
+          totalCuadrillaDinero:data.total_cuadrilla_dinero, totalBrokerNotes:data.total_broker_notes,
+          nominaSemanal:data.nomina_semanal, porcentajeLuz:data.luz_automatica, otrosFijos:data.otros_fijos,
+          totalCargasKg:data.total_cargas_kg, totalEntradasFrutaKg:data.total_entradas_fruta_kg,
+          totalDesechoKg:data.total_desecho_kg,totalProcesoKg:data.total_proceso_kg, mermaKg:data.merma_kg,
+          frioKg:data.frio_kg, totalFletes:data.total_fletes_dinero, ingresoFrutaDetalle:data.ingreso_fruta_detalle,
+          cargasDetalle:data.cargas_detalle,
+        }));
+      } catch (error) {
+        if (!controller.signal.aborted) setSummaryError(error.message || 'No se pudo actualizar el cierre.');
+      } finally {
+        if (!controller.signal.aborted) setLoadingData(false);
+        busy = false;
       }
-      setIsEditable(false);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoadingData(false);
     }
-  };
+    read(false).then(() => {if (!controller.signal.aborted) read(true);});
+    const timer = setInterval(() => {if (!document.hidden) read(false);},15000);
+    const focus = () => read(false);
+    window.addEventListener('focus',focus);
+    return () => {
+      controller.abort();
+      clearInterval(timer);
+      window.removeEventListener('focus',focus);
+    };
+  }, [showForm,form.weekStartDate,form.weekEndDate,refreshVersion]);
+
+  const fetchRelatedModuleData = () => setRefreshVersion(v=>v+1);
 
   const handleSave = async (extra = {}) => {
     setSaving(true);
+    setSummaryError('');
     try {
       const method = editing ? 'PUT' : 'POST';
       const body = {
@@ -256,11 +248,15 @@ export default function CierresPage() {
         body: JSON.stringify(body),
       });
       if (res.ok) {
+        const saved = await res.json();
+        setEditing(saved);
         fetchClosings();
         return true;
       }
+      const error = await res.json();
+      setSummaryError(error.error || 'No se pudo guardar el cierre.');
     } catch (e) {
-      console.error(e);
+      setSummaryError(e.message);
     } finally {
       setSaving(false);
     }
@@ -340,48 +336,13 @@ export default function CierresPage() {
     } catch (e) { console.error(e); }
   };
 
-  const setInventarioTarimaCalibre = (caliber, value) => {
-    setForm(f => ({
-      ...f,
-      inventarioTarimas: { ...f.inventarioTarimas, [caliber]: value }
-    }));
-  };
-
-  // Calculated totals from form
-  const totalIngresosDinero =
-    (parseFloat(form.totalCargasDinero) || 0) +
-    (parseFloat(form.totalVentasDesechoDinero) || 0) +
-    (parseFloat(form.totalVentasProcesoDinero) || 0) +
-    (parseFloat(form.valorInventarioMateriales) || 0) +
-    (parseFloat(form.bancos) || 0);
-
-  const totalEgresosDinero =
-    (parseFloat(form.totalEntradasFrutaDinero) || 0) +
-    (parseFloat(form.totalGastos) || 0) +
-    (parseFloat(form.totalCuadrillaDinero) || 0) +
-    (parseFloat(form.totalBrokerNotes) || 0) +
-    (parseFloat(form.nominaSemanal) || 0) +
-    (parseFloat(form.totalFletes) || 0) +
-    (parseFloat(form.porcentajeRenta) || 0) +
-    (parseFloat(form.porcentajeLuz) || 0);
-
-  const resultadoDinero = totalIngresosDinero - totalEgresosDinero;
-  const totalIngresosKg = (parseFloat(form.totalCargasKg) || 0);
-
-  const totalEgresosKg =
-    (parseFloat(form.totalCuadrillaKg) || 0) +
-    (parseFloat(form.totalDesechoKg) || 0) +
-    (parseFloat(form.totalProcesoKg) || 0);
-
-  // Kg de la semana: Entrada - (Proceso + Desecho + Inventario + Venta Empacado)
-  const kgDeLaSemana = 
-    (parseFloat(form.totalEntradasFrutaKg) || 0) - 
-    (parseFloat(form.totalProcesoKg) || 0) - 
-    (parseFloat(form.totalDesechoKg) || 0) - 
-    (Object.values(form.inventarioTarimas || {}).reduce((sum, val) => sum + (parseFloat(val) || 0), 0)) -
-    (parseFloat(form.totalCargasKg) || 0);
-
-  const resultadoKg = totalIngresosKg - totalEgresosKg;
+  const totals = closingTotals({
+    ...form, rentaAplicada:form.porcentajeRenta === '' ? integralData?.renta_automatica : form.porcentajeRenta
+  });
+  const totalIngresosDinero = totals.ingresos;
+  const totalEgresosDinero = totals.egresos;
+  const resultadoDinero = totals.resultado;
+  const kgDeLaSemana = totals.kilosPendientes;
 
   const esUtilidad = resultadoDinero >= 0;
 
@@ -468,7 +429,15 @@ export default function CierresPage() {
     ];
     const ws = XLSX.utils.aoa_to_sheet(data);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Cierre Integral V7');
+    XLSX.utils.book_append_sheet(wb, ws, 'Cierre');
+    if (integralData?.origen) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(integralData.origen.ventas.map(sale => ({
+        ...sale, detail_ids:sale.detail_ids?.join(', '),
+        tarimas:sale.tarimas.map(pallet=>pallet.folio || pallet.id).join(', ')
+      }))), 'Embarques por lote');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(integralData.conceptos_fijos.details),'Gastos fijos');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(integralData.movimientos_mxn),'Otros egresos');
+    }
     XLSX.writeFile(wb, `cierre_integral_${form.weekStartDate}.xlsx`);
   };
 
@@ -557,6 +526,7 @@ export default function CierresPage() {
 
       <main className="flex-1 pt-20 max-w-7xl mx-auto w-full px-4 py-8">
 
+        {listError && <p role="alert" className="text-red-700 mb-4">{listError}</p>}
         {/* Closings List */}
         {loading ? (
           <div className="text-center py-20 text-slate-400">Cargando cierres...</div>
@@ -580,12 +550,12 @@ export default function CierresPage() {
                 const esUtil = utilidad >= 0;
                 return (
                   <div
-                    key={c.id}
+                    key={c.id ?? c.week_start_date}
                     className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"
                   >
                     <div
                       className="p-5 cursor-pointer hover:bg-slate-50 transition-colors"
-                      onClick={() => setSelected(selected?.id === c.id ? null : c)}
+                      onClick={() => c.virtual ? openNew() : setSelected(selected?.id === c.id ? null : c)}
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-4">
@@ -602,19 +572,19 @@ export default function CierresPage() {
 
                         <div className="flex items-center gap-6">
                           <div className="text-right hidden sm:block">
-                            <p className="text-xs text-slate-500">Resultado</p>
+                            <p className="text-xs text-slate-500">{c.recalculado ? "Resultado vivo" : "Resultado guardado"}</p>
                             <p className={`font-bold text-lg ${esUtil ? 'text-emerald-700' : 'text-red-700'}`}>{fmt(utilidad)}</p>
                           </div>
                           <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${c.status === 'cerrado' ? 'bg-slate-100 text-slate-600' : c.status === 'aprobado' ? 'bg-emerald-100 text-emerald-700' : c.status === 'pendiente_aprobacion' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
-                            {c.estado_conciliacion || c.status || 'borrador'}
+                            {c.virtual ? 'Disponible en vivo' : c.estado_conciliacion || c.status || 'borrador'}
                           </span>
                           <div className="flex items-center gap-2">
                             <button onClick={(e) => { e.stopPropagation(); openEdit(c); }} className="p-2 text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition-colors">
                               <i className="ph ph-pencil-simple"></i>
                             </button>
-                            <button onClick={(e) => { e.stopPropagation(); handleDelete(c.id); }} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                            {!c.virtual && <button onClick={(e) => { e.stopPropagation(); handleDelete(c.id); }} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
                               <i className="ph ph-trash"></i>
-                            </button>
+                            </button>}
                           </div>
                           {(c.recorded_by || c.approved_by) && (
                             <div className="text-[10px] text-slate-500 text-right hidden md:block">
@@ -667,7 +637,7 @@ export default function CierresPage() {
             {form.status === 'cerrado' && (
               <div className="mx-6 mt-4 p-3 bg-slate-100 text-slate-600 text-sm rounded-xl flex items-center gap-2">
                 <i className="ph ph-lock text-base"></i>
-                Este cierre está CERRADO. Los datos están bloqueados para preservar el registro contable. Reabre para editar.
+                Este cierre conserva la captura aprobada. Ventas y gastos posteriores aparecen en la vista viva.
               </div>
             )}
 
@@ -680,12 +650,12 @@ export default function CierresPage() {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="space-y-1">
                     <label className="text-sm font-medium text-slate-600">Inicio (Lunes)</label>
-                    <input type="date" value={form.weekStartDate} onChange={(e) => setField('weekStartDate', e.target.value)}
+                    <input type="date" readOnly={!!editing} value={form.weekStartDate} onChange={(e) => setForm(f => ({...f,weekStartDate:validDate(e.target.value) ? closingWeek(e.target.value).start : '',weekEndDate:validDate(e.target.value) ? closingWeek(e.target.value).end : ''}))}
                       className="w-full px-4 py-2.5 rounded-xl border border-slate-200" />
                   </div>
                   <div className="space-y-1">
                     <label className="text-sm font-medium text-slate-600">Fin (Domingo)</label>
-                    <input type="date" value={form.weekEndDate} onChange={(e) => setField('weekEndDate', e.target.value)}
+                    <input type="date" value={form.weekEndDate} readOnly
                       className="w-full px-4 py-2.5 rounded-xl border border-slate-200" />
                   </div>
                   <div className="space-y-1">
@@ -700,15 +670,15 @@ export default function CierresPage() {
                     disabled={loadingData || !form.weekStartDate || !form.weekEndDate}
                     className="px-6 py-2.5 bg-emerald-700 text-white text-sm font-semibold rounded-xl hover:bg-emerald-800 disabled:opacity-50 flex items-center gap-2"
                   >
-                    {loadingData ? <><i className="ph ph-spinner animate-spin"></i> Calculando...</> : <><i className="ph ph-arrows-clockwise"></i> CALCULAR CIERRE INTEGRAL V7</>}
-                  </button>
-                  <button onClick={() => setIsEditable(!isEditable)} className="px-4 py-2.5 bg-amber-600 text-white rounded-xl text-sm">
-                    <i className={`ph ph-${isEditable ? 'lock' : 'pencil-simple'}`}></i> {isEditable ? 'Bloquear edición' : 'Permitir edición manual'}
+                    {loadingData ? <><i className="ph ph-spinner animate-spin"></i> Calculando...</> : <><i className="ph ph-arrows-clockwise"></i> Actualizar fuentes</>}
                   </button>
                   <button onClick={() => router.push('/administracion/conciliacion-bancaria')} className="px-4 py-2.5 border rounded-xl text-sm">Ir a Conciliación Bancaria (IA)</button>
                 </div>
               </div>
 
+              {summaryError && <p role="alert" className="text-sm text-red-700">{summaryError}</p>}
+              {!validWeek(form.weekStartDate,form.weekEndDate) && <p className="text-sm text-amber-800">Selecciona un período de lunes a domingo.</p>}
+              <ClosingTrace data={integralData} form={form} setField={setField}/>
               {/* TABS V8 */}
               <div className="border-b border-slate-200">
                 <div className="flex flex-wrap gap-1 -mb-px">
@@ -733,7 +703,7 @@ export default function CierresPage() {
                       <div className="bg-white border p-4 rounded-xl">
                         <div className="text-xs uppercase tracking-widest text-slate-500">Utilidad Contable (Semana Operación)</div>
                         <div className="text-3xl font-black mt-1">{fmt(integralData?.rentabilidad?.utilidad_bruta || 0)}</div>
-                        <div className="text-xs mt-1">Ventas reconocidas - Costo de ventas (devengo)</div>
+                        <div className="text-xs mt-1">Ventas convertibles a MXN menos costo de ventas, antes de descuentos</div>
                       </div>
                       <div className="bg-white border p-4 rounded-xl">
                         <div className="text-xs uppercase tracking-widest text-slate-500">Flujo de Efectivo Semana</div>
@@ -741,9 +711,9 @@ export default function CierresPage() {
                         <div className="text-xs mt-1">Cobros reales - Pagos reales (no devengo)</div>
                       </div>
                       <div className="bg-emerald-50 border p-4 rounded-xl">
-                        <div className="text-xs uppercase tracking-widest text-emerald-600">Capital de Trabajo (aprox.)</div>
-                        <div className="text-3xl font-black mt-1">{fmt((integralData?.inventarios?.fruta_final||0) + (integralData?.inventarios?.materiales_final||0) + (integralData?.bancos_cobranza?.cobros_clientes||0))}</div>
-                        <div className="text-xs mt-1">Inventario fruta + materiales + CxC (no es efectivo)</div>
+                        <div className="text-xs uppercase tracking-widest text-emerald-600">Inventario de materiales (MXN)</div>
+                        <div className="text-3xl font-black mt-1">{fmt(form.valorInventarioMateriales)}</div>
+                        <div className="text-xs mt-1">Saldo de materiales al momento de la consulta</div>
                       </div>
                     </div>
                     <div className="text-xs text-slate-500">El cierre explica dónde está el dinero: utilidad contable ≠ flujo ≠ capital de trabajo. Fruta en cámara es activo, no pérdida.</div>
@@ -787,11 +757,11 @@ export default function CierresPage() {
                   <div className="space-y-4">
                     <div className="text-xs text-emerald-700 font-medium">Fórmula Materiales: INICIAL + ENTRADAS - CONSUMOS + AJUSTES_AUTORIZADOS</div>
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                      <div className="bg-white p-3 border rounded"><div className="text-xs">Fruta Inicial</div><div className="font-bold">{(integralData?.inventarios?.fruta_inicial || 0).toFixed(0)} kg</div></div>
-                      <div className="bg-white p-3 border rounded"><div className="text-xs">Fruta Final</div><div className="font-bold">{(integralData?.inventarios?.fruta_final || 0).toFixed(0)} kg</div></div>
+                      <div className="bg-white p-3 border rounded"><div className="text-xs">Recibidos en la semana</div><div className="font-bold">{Number(form.totalEntradasFrutaKg || 0).toFixed(0)} kg</div></div>
+                      <div className="bg-white p-3 border rounded"><div className="text-xs">Saldo en frío de esos lotes</div><div className="font-bold">{Number(form.frioKg || 0).toFixed(0)} kg</div></div>
                       <div className="bg-white p-3 border rounded"><div className="text-xs">Tarimas Disponibles / Embarcadas</div><div className="font-bold">{(integralData?.inventarios?.tarimas_disponibles || 0)} / {(integralData?.inventarios?.tarimas_embarcadas || 0)}</div></div>
                       <div className="bg-emerald-50 p-3 border rounded col-span-2 md:col-span-3">
-                        <div>Materiales Final = { (integralData?.inventarios?.materiales_final || form.valorInventarioMateriales || 0).toFixed(2) }</div>
+                        <div>Materiales Final = { Number(form.valorInventarioMateriales || 0).toFixed(2) }</div>
                         <div className="text-[10px] mt-1">Entradas (aunque no pagadas): {(integralData?.inventarios?.materiales_entradas||0).toFixed(2)} • Consumos: {(integralData?.inventarios?.materiales_consumidos||0).toFixed(2)}</div>
                       </div>
                     </div>
@@ -838,7 +808,7 @@ export default function CierresPage() {
                       <div className="bg-white border p-3 rounded">Cargas (empacado) ${parseFloat(integralData?.total_cargas_dinero || 0).toFixed(2)} / {parseFloat(integralData?.total_cargas_kg || 0).toFixed(0)} kg</div>
                       <div className="bg-white border p-3 rounded">Proceso ${parseFloat(integralData?.total_ventas_proceso_dinero || 0).toFixed(2)} • Desecho ${parseFloat(integralData?.total_ventas_desecho_dinero || 0).toFixed(2)}</div>
                     </div>
-                    <div className="text-xs">Proceso y Desecho se mantienen SEPARADOS. No se suman a ventas de fruta empacada. Merma física no genera ingreso.</div>
+                    <div className="text-xs">Proceso y desecho se muestran por separado. No se suman a ventas de fruta empacada. Merma física no genera ingreso.</div>
                   </div>
                 )}
 
@@ -849,7 +819,8 @@ export default function CierresPage() {
                       {/* Contable */}
                       <div className="bg-white border p-4 rounded-xl">
                         <div className="uppercase text-xs tracking-widest text-slate-500 mb-1">RENTABILIDAD CONTABLE (Semana de Operación / Reconocimiento)</div>
-                        <div>Ingresos netos: <span className="font-bold">{(integralData?.rentabilidad?.ingresos_netos || 0).toFixed(2)}</span></div>
+                        <div>Ventas con importe MXN (antes de descuentos): <span className="font-bold">{(integralData?.rentabilidad?.ingresos_netos || 0).toFixed(2)}</span></div>
+                        {!!integralData?.rentabilidad?.ventas_sin_conversion && <p className="text-xs text-amber-800">Hay embarques sin tipo de cambio registrado.</p>}
                         <div>Costo de ventas: <span className="font-bold text-red-700">{(integralData?.rentabilidad?.costo_ventas || 0).toFixed(2)} {integralData?.rentabilidad?.costo_ventas_pendiente ? '(PENDIENTE DE DETERMINACIÓN)' : ''}</span></div>
                         <div className="mt-2 text-xl font-black">Utilidad Bruta: {(integralData?.rentabilidad?.utilidad_bruta || 0).toFixed(2)}</div>
                         <div className="text-[10px] mt-2 text-slate-500">Se registra en la semana en que ocurrió la venta/embarque (load_date). No duplica con origen.</div>
@@ -859,7 +830,7 @@ export default function CierresPage() {
                         <div className="uppercase text-xs tracking-widest text-emerald-600 mb-1">RENTABILIDAD GERENCIAL (Semana de Origen del Lote)</div>
                         <div className="text-sm">Los lotes de esta semana de producción muestran su resultado definitivo cuando se venden (aunque la venta sea en semana posterior).</div>
                         <div className="mt-2 text-xs">Costo histórico lote → venta posterior actualiza indicadores de su semana de origen.</div>
-                        <div className="mt-3 text-xs bg-white p-2 rounded">Fuente: lot.date / production_date + load_history atribuido por tarima/lote original (sin promedio general cuando hay datos por partida).</div>
+                        <div className="mt-3 text-xs bg-white p-2 rounded">Fuente: fecha de recepción física y partida del embarque por lote.</div>
                         {integralData?.rentabilidad?.costo_ventas_pendiente && <div className="mt-2 text-amber-700 text-xs">{integralData?.rentabilidad?.costo_ventas_label}</div>}
                       </div>
                     </div>

@@ -207,23 +207,6 @@ export default function ConciliacionBancaria() {
       // In full impl: also update the linked document (payment_schedule.monto_pagado etc)
     });
 
-    // Sync to cierre semanal if week matches
-    if (selected && selected.period_start) {
-      try {
-        await fetch('/api/weekly-closings', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            // lightweight: we just note the bank movement was reconciled
-            // In practice the cierre already has bancos field; here we can add a note
-            id: null, // would find the correct closing week
-            action: 'note',
-            notes: `Conciliación bancaria: ${m.reference || m.description} ${m.amount}`
-          })
-        });
-      } catch (_) {}
-    }
-
     alert('Movimiento conciliado. Recuerde actualizar el documento relacionado (pago programado / abono).');
   };
 

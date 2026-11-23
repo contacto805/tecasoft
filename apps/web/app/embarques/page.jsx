@@ -26,6 +26,7 @@ export default function EmbarquesPage() {
   const [facturaFolio, setFacturaFolio] = useState('');
   const [saderRegistro, setSaderRegistro] = useState('EMP0416082581/2024');
   const [moneda, setMoneda] = useState('USD');
+  const [tipoCambioVenta,setTipoCambioVenta] = useState('');
   const [clienteTel, setClienteTel] = useState('');
   // Block 16 additions (conservative): transport evidence + cotizaciones + reclamaciones (no duplication of loads)
   const [temperaturaConsignacion, setTemperaturaConsignacion] = useState('');
@@ -107,7 +108,7 @@ export default function EmbarquesPage() {
           cold_date: p.cold_date ? String(p.cold_date).slice(0, 10) : '',
           estado: p.estado || 'PENDIENTE_UBICACION',
           ubicacion: p.warehouse_slot || p.ubicacion_actual || null,
-        })).filter(t => !['EMBARCADA','CANCELADA'].includes(t.estado));
+        })).filter(t => !['EMBARCADA','CANCELADA','REEMPACADA'].includes(String(t.estado).toUpperCase()));
 
         // Fill warehouseSlots exactly like inventory page (A/B/C × rows 1-13)
         const newWarehouse = {};
@@ -1340,9 +1341,11 @@ export default function EmbarquesPage() {
       return;
     }
 
+    if (moneda === 'USD' && (!Number.isFinite(Number(tipoCambioVenta)) || Number(tipoCambioVenta) <= 0)) {
+      alert('Captura el tipo de cambio pactado (MXN por USD) antes de confirmar.');
+      return;
+    }
     setSubmitting(true);
-    const notaKg = getNotaTotalKg() || trailerPalletsList.reduce((s, p) => s + Math.round(p.kilos || 0), 0);
-    const notaMoney = parseFloat(getNotaGrandTotal() || 0);
 
     try {
       // Generar folio consecutivo automático TCV-VTA-00001 si no está
@@ -1366,25 +1369,27 @@ export default function EmbarquesPage() {
 
       // Una sola llamada comercial con TODOS los detalles (soporta multi-lote). 
       // Trailer-map draft visual; el descuento + UNA nota/CxC ocurre solo en loads/complete.
-      const allForSave = [...liveCaliberRows];
-      caliberPriceTable.filter(r => !liveCaliberRows.some(l => (l.caliber||'').toLowerCase()===(r.caliber||'').toLowerCase())).forEach(r => allForSave.push(r));
-
-      // Enviar tarimas EXACTAS + precios consistentes (por caja o kg) para integridad total
-      const exactPalletIds = trailerPalletsList.map(p => p.originalPalletId || p.id).filter(Boolean);
-      const caliberDetailsForSave = allForSave.map(r => {
-        const sample = trailerPalletsList.find(p => (p.caliber||'').toLowerCase() === (r.caliber||'').toLowerCase());
-        const isPerBox = true; // UI tabla = precio por caja
-        return {
-          lot_id: sample?.lot_id || null,
-          caliber: r.caliber,
-          class_name: sample?.class_name || 'Primera',
-          pallets: 1,
-          boxes: parseInt(r.boxes) || 0,
-          total_kg: Math.round((parseInt(r.boxes) || 0) * 10),
-          price_per_box: parseFloat(r.price) || 0,
-          unit: 'caja'
-        };
-      });
+      const key = caliber => String(caliber || 'Extra').trim().toLowerCase();
+      const prices = new Map(liveCaliberRows.map(row => [key(row.caliber), Number(row.price) || 0]));
+      if (notaEditItems.length) {
+        const live = new Map(liveCaliberRows.map(row => [key(row.caliber),row.boxes]));
+        const matched = new Set();
+        for (const row of notaEditItems) {
+          const caliber = key(String(row.producto || '').replace(/^aguacate hass\s*/i,''));
+          if (matched.has(caliber) || live.get(caliber) !== Number(row.cajas)) {
+            throw new Error('La nota debe tener las mismas cajas por calibre que las tarimas seleccionadas.');
+          }
+          matched.add(caliber);
+          prices.set(caliber, Number(row.precio) || 0);
+        }
+        if (matched.size !== live.size) throw new Error('Completa en la nota todos los calibres del embarque.');
+      }
+      const caliberDetailsForSave = trailerPalletsList.map(pallet => ({
+        pallet_id: pallet.originalPalletId || pallet.id,
+        boxes: Number(pallet.boxes) || 0,
+        price_per_box: prices.get(key(pallet.caliber)) || 0,
+        unit: 'caja'
+      }));
 
       const payload = {
         customer_id: selectedCustomer.id,
@@ -1394,11 +1399,9 @@ export default function EmbarquesPage() {
         trailer_plates: termoPlates || trailerPlates,
         caliber_details: caliberDetailsForSave,
         currency: moneda,
+        exchange_rate: moneda === 'USD' ? Number(tipoCambioVenta) : null,
         notes: `Embarque Nota Venta • Folio:${currentFolio || ''} • SADER:${saderRegistro} • Chofer:${driverName} • Tracto:${tractoPlates} Termo:${termoPlates} • Dir:${selectedCustomer.destination || ''} • Temp:${temperaturaConsignacion || ''} • Termografo:${termografoUrl || ''}`,
-        factura_folio: currentFolio || '',
-        nota_total_amount: notaMoney,
-        nota_total_kg: notaKg,
-        selected_pallet_ids: exactPalletIds
+        factura_folio: currentFolio || ''
       };
 
       const res = await fetch('/api/loads/complete', {
@@ -1413,6 +1416,9 @@ export default function EmbarquesPage() {
         confirmed = 1;
         const data = await res.json();
         mainLoadId = data?.load?.id || data?.id || null;
+      } else {
+        const error = await res.json().catch(() => null);
+        throw new Error(error?.error || 'No se pudo confirmar el embarque.');
       }
 
       // Guardar posiciones del mapa UNA SOLA VEZ (draft visual ya estaba; esto vincula al load confirmado)
@@ -1440,22 +1446,6 @@ export default function EmbarquesPage() {
         }
       }
 
-      // FINALIZAR - sincronizar los TOTALES DE LA NOTA (Kg + Dinero) instantaneamente al módulo de cierre de semana
-      if ((notaKg || notaMoney) && currentFolio) {
-        fetch('/api/admin/weekly-closings', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            addCarga: true,
-            load_date: loadDate,
-            factura_folio: currentFolio,
-            total_kg: notaKg,
-            total_amount: notaMoney,
-            customer_name: selectedCustomer?.customer_name || ''
-          })
-        }).catch(() => {});
-      }
-
       // Finalizar y limpiar
       if (confirmed > 0) {
         // Capture the warehouse configuration BEFORE we do final clean/reset (to print exact pre-load config)
@@ -1472,6 +1462,8 @@ export default function EmbarquesPage() {
         setPisoPallets(p => p.filter(pp => !shippedUids.has(pp.uid)));
 
         setTrailerSlots(Array.from({ length: 28 }, () => null));
+        setNotaEditItems([]);
+        setTipoCambioVenta('');
 
         // Obtener el SIGUIENTE folio automático para la próxima carga (refresca el mostrado TCV-VTA-...)
         try {
@@ -1485,21 +1477,12 @@ export default function EmbarquesPage() {
         // AUTOMATIC: print almacen map with config BEFORE performing this load
         setTimeout(() => printPreLoadWarehouseMap(preLoadSnapshot), 420);
 
-        alert(`✓ ${confirmed} carga(s) registrada(s) como VENTA. Folio auto: ${currentFolio}. Totales Nota (Kg/Dinero) enviados a Cierre de Semana automáticamente.`);
+        alert(`✓ ${confirmed} carga(s) registrada(s) como VENTA. Folio auto: ${currentFolio}. Las partidas actualizan los cierres de las semanas de ingreso.`);
       } else {
         alert('Carga guardada (modo fallback).');
       }
     } catch (e) {
-      // Fallback is graceful — also print pre-load map
-      const preLoadSnapshot = JSON.parse(JSON.stringify(warehouseSlots));
-      const shippedUids = new Set(trailerPalletsList.map(pp => pp.uid));
-      const nm = { ...warehouseSlots };
-      Object.keys(nm).forEach(k => { if (nm[k] && shippedUids.has(nm[k].uid)) delete nm[k]; });
-      setWarehouseSlots(nm);
-      setPisoPallets(p => p.filter(pp => !shippedUids.has(pp.uid)));
-      setTrailerSlots(Array.from({ length: 28 }, () => null));
-      setTimeout(() => printPreLoadWarehouseMap(preLoadSnapshot), 420);
-      alert('Carga guardada (datos locales actualizados). Inventario visual descontado.');
+      alert(e.message || 'No se pudo confirmar el embarque. Las tarimas siguen en el mapa para reintentar.');
     } finally {
       setSubmitting(false);
     }
@@ -1698,6 +1681,8 @@ export default function EmbarquesPage() {
                     <option value="USD">USD</option>
                     <option value="MXN">MXN</option>
                   </select>
+                  {moneda === 'USD' && <input aria-label="Tipo de cambio MXN por USD" type="number" min="0.0001" step="0.0001"
+                    value={tipoCambioVenta} onChange={e=>setTipoCambioVenta(e.target.value)} placeholder="MXN por USD" className="border px-2 py-1 rounded w-28"/>}
                   {/* Block 16: evidencia transporte (conserva lógica existente) */}
                   <input value={temperaturaConsignacion} onChange={e=>setTemperaturaConsignacion(e.target.value)} placeholder="Temp consignación °C" className="border px-2 py-1 rounded w-28" />
                   <input value={termografoUrl} onChange={e=>setTermografoUrl(e.target.value)} placeholder="Termógrafo URL" className="border px-2 py-1 rounded w-32" />
