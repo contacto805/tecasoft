@@ -1,3 +1,5 @@
+import {movePhysicalPallet} from "@/app/api/utils/pallet-location";
+import {getVerifiedErpUser} from "@/app/api/utils/erp-session-proof";
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
 
@@ -17,27 +19,15 @@ export async function GET(request) {
       return NextResponse.json(movements);
     }
 
-    // Obtener estado actual de todas las posiciones ocupadas
     const currentState = await sql`
-      SELECT DISTINCT ON (slot_id) 
-        w.slot_id,
-        w.lot_id,
-        w.caliber,
-        w.class_name,
-        w.boxes,
-        w.kilos,
-        w.presentation,
-        w.moved_at,
-        w.notes,
-        l.lot_number,
-        l.producer,
-        l.status
-      FROM warehouse_map_movements w
-      LEFT JOIN lots l ON w.lot_id = l.id
-      WHERE w.movement_type = 'assign'
-      ORDER BY w.slot_id, w.moved_at DESC
+      SELECT p.id AS pallet_id, p.warehouse_slot AS slot_id, p.lot_id, p.caliber, p.class_name,
+        p.total_kg AS kilos, l.lot_number, l.producer, p.estado AS status,
+        CASE WHEN UPPER(COALESCE(p.ubicacion_actual,'')) LIKE 'TRAILER-%' THEN true ELSE false END AS reserved
+      FROM pallet_output_summary p LEFT JOIN lots l ON l.id=p.lot_id
+      WHERE UPPER(COALESCE(p.warehouse_slot,'')) ~ '^[ABC]-([1-9]|1[0-3])$'
+        AND p.embarque_id IS NULL AND UPPER(COALESCE(p.estado,'')) NOT IN ('EMBARCADA','CANCELADA','REEMPACADA')
+      ORDER BY p.warehouse_slot
     `;
-
     return NextResponse.json(currentState);
   } catch (error) {
     console.error("Error fetching warehouse map:", error);
@@ -53,7 +43,7 @@ export async function POST(request) {
     // Forward to the single authoritative assign (handles 39 slots, one-at-a-time, pallet_output as source)
     const res = await fetch(new URL('/api/production/assign-to-slot', request.url), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', cookie: request.headers.get('cookie') || '' },
       body: JSON.stringify({
         pallet_output_id: body.pallet_output_id || body.palletId,
         slot_id: body.slotId || body.slot_id,
@@ -68,47 +58,15 @@ export async function POST(request) {
   }
 }
 
-// DELETE: vaciar una posición
 export async function DELETE(request) {
   try {
-    const { searchParams } = new URL(request.url);
-    const slotId = searchParams.get("slotId");
-    const userId = searchParams.get("userId");
-    const userName = searchParams.get("userName");
-
-    if (!slotId) {
-      return NextResponse.json({ error: "slotId requerido" }, { status: 400 });
-    }
-
-    // Obtener datos de la posición actual
-    const [currentSlot] = await sql`
-      SELECT * FROM warehouse_map_movements 
-      WHERE slot_id = ${slotId} 
-      AND movement_type = 'assign'
-      ORDER BY moved_at DESC 
-      LIMIT 1
-    `;
-
-    if (!currentSlot) {
-      return NextResponse.json({ error: "Posición ya vacía" }, { status: 404 });
-    }
-
-    // Registrar movimiento de vaciado
-    const [clearMovement] = await sql`
-      INSERT INTO warehouse_map_movements (
-        slot_id, lot_id, caliber, class_name, boxes, kilos, presentation,
-        movement_type, user_id, user_name, notes
-      ) VALUES (
-        ${slotId}, ${currentSlot.lot_id}, ${currentSlot.caliber}, ${currentSlot.class_name},
-        ${currentSlot.boxes}, ${currentSlot.kilos}, ${currentSlot.presentation || null},
-        'clear', ${userId || null}, ${userName || null}, 'Posición vaciada'
-      )
-      RETURNING *
-    `;
-
-    return NextResponse.json({ success: true, movement: clearMovement });
+    const user = await getVerifiedErpUser();
+    if (!user) return NextResponse.json({error:'Inicia sesión para mover tarimas.'},{status:401});
+    const sourceSlot = new URL(request.url).searchParams.get('slotId');
+    const {status,...result} = await movePhysicalPallet({sourceSlot,target:'PISO',allowTrailer:false,user});
+    return NextResponse.json({success:status===200,...result},{status});
   } catch (error) {
-    console.error("Error clearing warehouse slot:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error('Liberación de frío:',error.message);
+    return NextResponse.json({error:'No se pudo liberar la posición.'},{status:500});
   }
 }

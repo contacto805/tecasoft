@@ -12,11 +12,6 @@ export async function getCustomerLedger(customerId, fromDate = null, toDate = nu
   const cid = parseInt(customerId);
   if (!cid) throw new Error("customerId requerido");
 
-  const whereDate = [];
-  if (fromDate) whereDate.push(`fecha >= '${fromDate}'`);
-  if (toDate) whereDate.push(`fecha <= '${toDate}'`);
-  const dateFilter = whereDate.length ? `AND ${whereDate.join(" AND ")}` : "";
-
   // 1. Cargos: Notas (principal)
   const notas = await sql`
     SELECT 
@@ -32,9 +27,9 @@ export async function getCustomerLedger(customerId, fromDate = null, toDate = nu
       'Nota' as origen
     FROM notas n
     LEFT JOIN viajes v ON v.id = n.viaje_id
-    WHERE n.customer_id = ${cid}
-    ${fromDate ? sql`AND n.fecha >= ${fromDate}` : sql``}
-    ${toDate ? sql`AND n.fecha <= ${toDate}` : sql``}
+    WHERE n.customer_id = ${cid} AND LOWER(COALESCE(n.estatus,'')) NOT IN ('cancelado','cancelada','anulado','anulada')
+    AND (${fromDate}::date IS NULL OR n.fecha >= ${fromDate}::date)
+    AND (${toDate}::date IS NULL OR n.fecha <= ${toDate}::date)
     ORDER BY n.fecha ASC, n.id ASC
   `;
 
@@ -54,8 +49,8 @@ export async function getCustomerLedger(customerId, fromDate = null, toDate = nu
       'Depósito' as origen
     FROM abonos a
     WHERE a.customer_id = ${cid}
-    ${fromDate ? sql`AND a.fecha >= ${fromDate}` : sql``}
-    ${toDate ? sql`AND a.fecha <= ${toDate}` : sql``}
+    AND (${fromDate}::date IS NULL OR a.fecha >= ${fromDate}::date)
+    AND (${toDate}::date IS NULL OR a.fecha <= ${toDate}::date)
     ORDER BY a.fecha ASC, a.id ASC
   `;
 
@@ -88,7 +83,7 @@ export async function getCustomerLedger(customerId, fromDate = null, toDate = nu
 
   // Sort by date then type (cargos before abonos on same day)
   movements.sort((a, b) => {
-    if (a.fecha !== b.fecha) return (a.fecha || '').localeCompare(b.fecha || '');
+    if (a.fecha !== b.fecha) return String(a.fecha || '').localeCompare(String(b.fecha || ''));
     if (a.tipo === 'CARGO' && b.tipo === 'ABONO') return -1;
     if (a.tipo === 'ABONO' && b.tipo === 'CARGO') return 1;
     return 0;
@@ -103,10 +98,10 @@ export async function getCustomerLedger(customerId, fromDate = null, toDate = nu
 
   // Summary from authoritative tables
   const [saldoNotas] = await sql`
-    SELECT COALESCE(SUM(saldo_usd), 0) as saldo_pendiente FROM notas WHERE customer_id = ${cid}
+    SELECT COALESCE(SUM(saldo_usd), 0) as saldo_pendiente FROM notas n WHERE customer_id = ${cid} AND LOWER(COALESCE(n.estatus,'')) NOT IN ('cancelado','cancelada','anulado','anulada')
   `;
   const [totalCargos] = await sql`
-    SELECT COALESCE(SUM(importe_original_usd), 0) as total FROM notas WHERE customer_id = ${cid}
+    SELECT COALESCE(SUM(importe_original_usd), 0) as total FROM notas n WHERE customer_id = ${cid} AND LOWER(COALESCE(n.estatus,'')) NOT IN ('cancelado','cancelada','anulado','anulada')
   `;
   const [totalAbonos] = await sql`
     SELECT COALESCE(SUM(equivalente_usd), 0) as total FROM abonos WHERE customer_id = ${cid}

@@ -176,11 +176,11 @@ select:disabled {
   --ui-primary: var(--brand-primary, #024D32);
   --ui-secondary: var(--brand-secondary, #9E4633);
   --ui-accent: var(--brand-accent, #E8D547);
-  --ui-background: #f8fafc;
+  --ui-background: #f2f6f1;
   --ui-surface: #ffffff;
-  --ui-text: #0f172a;
-  --ui-text-muted: #475569;
-  --ui-border: #e2e8f0;
+  --ui-text: var(--brand-text);
+  --ui-text-muted: #486158;
+  --ui-border: #d9e4da;
   --ui-success: #10b981;
   --ui-warning: #f59e0b;
   --ui-danger: #ef4444;
@@ -227,3 +227,7 @@ footer a, footer h4 { color: #e2e8f0; }
 
 /* Icons inherit */
 i.ph, .ph { color: inherit; }
+
+/* Shared Tecavo tokens for focus and selection across the ERP. */
+::selection {background:var(--brand-accent);color:var(--brand-text);}
+:where(button, a, input, select, textarea):focus-visible {outline:2px solid var(--brand-primary);outline-offset:2px;}

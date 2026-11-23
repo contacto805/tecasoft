@@ -1,84 +1,37 @@
 import sql from "@/app/api/utils/sql";
-import { NextResponse } from "next/server";
+import {NextResponse} from "next/server";
+import {getCustomerLedger} from "@/app/api/utils/customer-account-ledger";
 
 export async function GET(request) {
   try {
-    const { searchParams } = new URL(request.url);
-    const customerId = searchParams.get("customerId");
-    if (!customerId) return NextResponse.json({ error: "customerId requerido" }, { status: 400 });
-
-    const cid = parseInt(customerId);
-
-    const movimientos = [];
-
-    // Notas = fuente canónica de venta/CxC (una por embarque comercial, incluso multi-lote)
-    const notas = await sql`
-      SELECT 'Nota' as tipo, n.folio, n.fecha, n.importe_original_usd as cargo, n.total_abonado_usd as abono, n.saldo_usd as saldo, n.estatus
-      FROM notas n WHERE n.customer_id = ${cid}
-    `;
-    notas.forEach(r => movimientos.push({ ...r, cargo: parseFloat(r.cargo)||0, abono: parseFloat(r.abono)||0 }));
-
-    // Facturas CFDI (adjuntas, nunca generan cargo adicional)
-    const facts = await sql`
-      SELECT 'Factura' as tipo, f.folio_interno as folio, f.fecha_timbrado as fecha, f.importe_usd as cargo, 0 as abono, f.uso_factura as estatus
-      FROM cfdi_facturas f WHERE f.customer_id = ${cid}
-    `;
-    facts.forEach(r => movimientos.push({ ...r, cargo: parseFloat(r.cargo)||0, abono: 0 }));
-
-    // Abonos (depósitos reportados)
-    const abs = await sql`
-      SELECT 'Depósito' as tipo, a.folio, a.fecha, 0 as cargo, a.equivalente_usd as abono, a.moneda_recibida as moneda
-      FROM abonos a WHERE a.customer_id = ${cid}
-    `;
-    abs.forEach(r => movimientos.push({ ...r, cargo: 0, abono: parseFloat(r.abono)||0 }));
-
-    // Aplicaciones
-    const apps = await sql`
-      SELECT 'Aplicación' as tipo, 'AP-'||ap.id as folio, ap.fecha_aplicacion as fecha, 0 as cargo, ap.monto_aplicado_usd as abono, n.folio as ref_nota
-      FROM abono_aplicaciones ap LEFT JOIN notas n ON ap.nota_id = n.id
-      WHERE n.customer_id = ${cid}
-    `;
-    apps.forEach(r => movimientos.push({ ...r, cargo: 0, abono: parseFloat(r.abono)||0 }));
-
-    // load_history solo como info (sin duplicar cargo)
-    const loadsInfo = await sql`
-      SELECT 'Carga' as tipo, lh.factura_folio as folio, lh.load_date as fecha, 0 as cargo, 0 as abono, lh.payment_status as estatus
-      FROM load_history lh WHERE lh.customer_id = ${cid}
-    `;
-    loadsInfo.forEach(r => movimientos.push({ ...r, cargo: 0, abono: 0 }));
-
-    // legacy accounts (compat)
-    const legacy = await sql`
-      SELECT 'Cuenta' as tipo, ca.description as folio, ca.trip_date as fecha, 
-             CASE WHEN ca.transaction_type ILIKE '%charge%' THEN ca.amount_usd ELSE 0 END as cargo,
-             CASE WHEN ca.transaction_type ILIKE '%payment%' THEN ca.amount_usd ELSE 0 END as abono
-      FROM customer_accounts ca WHERE ca.customer_id = ${cid}
-    `;
-    legacy.forEach(r => movimientos.push({ ...r, cargo: parseFloat(r.cargo)||0, abono: parseFloat(r.abono)||0 }));
-
-    // Sort + running
-    movimientos.sort((a,b) => (a.fecha || '').localeCompare(b.fecha || ''));
-    let saldo = 0;
-    const out = movimientos.map(m => {
-      saldo += (parseFloat(m.cargo)||0) - (parseFloat(m.abono)||0);
-      return { ...m, saldo_running: Math.round(saldo * 100) / 100 };
+    const customerId=new URL(request.url).searchParams.get('customerId');
+    if (!/^\d+$/.test(customerId || '')) return NextResponse.json({error:'Cliente inválido.'},{status:400});
+    const [ledger,attachments] = await Promise.all([
+      getCustomerLedger(customerId),
+      sql`SELECT 'CFDI adjunto' AS tipo,folio_interno AS folio,fecha_timbrado AS fecha
+        FROM cfdi_facturas WHERE customer_id=${customerId}
+        UNION ALL
+        SELECT 'Aplicación' AS tipo,'AP-'||ap.id,ap.fecha_aplicacion
+        FROM abono_aplicaciones ap JOIN notas n ON n.id=ap.nota_id WHERE n.customer_id=${customerId}`,
+    ]);
+    const movements = [...ledger.movimientos.map(row=>({
+      fecha:row.fecha,tipo:row.tipo==='CARGO'?'Nota':'Depósito',folio:row.folio,
+      cargo:row.cargo,abono:row.abono
+    })),...attachments.map(row=>({...row,cargo:0,abono:0}))];
+    movements.sort((a,b)=>String(a.fecha || '').localeCompare(String(b.fecha || '')) || b.cargo-a.cargo);
+    let balance=0;
+    const out=movements.map(row=>{
+      balance+=row.cargo-row.abono;
+      return {...row,saldo_running:Math.round(balance*100)/100};
     });
-
-    const totalCargo = out.reduce((s, m) => s + (parseFloat(m.cargo)||0), 0);
-    const totalAbono = out.reduce((s, m) => s + (parseFloat(m.abono)||0), 0);
-    const saldoPend = Math.round((totalCargo - totalAbono) * 100) / 100;
-
-    return NextResponse.json({
-      movimientos: out,
-      resumen: {
-        total_cargo_usd: Math.round(totalCargo * 100) / 100,
-        total_abono_usd: Math.round(totalAbono * 100) / 100,
-        saldo_pendiente_usd: saldoPend,
-        total_abonos: abs.length
-      }
-    });
-  } catch (e) {
-    console.error("estado-cuenta", e);
-    return NextResponse.json({ error: "Error estado cuenta" }, { status: 500 });
+    return NextResponse.json({movimientos:out,resumen:{
+      total_cargo_usd:ledger.resumen.total_cargos_usd,
+      total_abono_usd:ledger.resumen.total_abonos_usd,
+      saldo_pendiente_usd:ledger.resumen.saldo_por_pagar_usd,
+      total_abonos:ledger.movimientos.filter(row=>row.tipo==='ABONO').length
+    }});
+  } catch (error) {
+    console.error('Estado de cuenta:',error.message);
+    return NextResponse.json({error:'No se pudo consultar el estado de cuenta.'},{status:500});
   }
 }

@@ -7,22 +7,21 @@ export async function GET(request) {
     const customerId = searchParams.get("customerId");
     const estatus = searchParams.get("estatus");
 
-    let q = sql`
-      SELECT n.*, c.customer_name, v.folio as viaje_folio, v.valor_usd as viaje_valor
-      FROM notas n
-      LEFT JOIN customers c ON n.customer_id = c.id
-      LEFT JOIN viajes v ON n.viaje_id = v.id
-      ORDER BY n.fecha DESC, n.id DESC LIMIT 200
+    const rows = await sql`
+      SELECT n.*,c.customer_name,v.folio AS viaje_folio,v.valor_usd AS viaje_valor,
+        shipment.moneda,shipment.importe,shipment.kilos
+      FROM notas n LEFT JOIN customers c ON c.id=n.customer_id
+      LEFT JOIN viajes v ON v.id=n.viaje_id
+      LEFT JOIN LATERAL (
+        SELECT CASE WHEN COUNT(DISTINCT h.currency)=1 THEN MIN(h.currency) END AS moneda,
+          CASE WHEN COUNT(DISTINCT h.currency)=1 THEN SUM(h.total_amount) END AS importe,SUM(h.total_kg) AS kilos
+        FROM load_history h WHERE h.customer_id=n.customer_id AND h.factura_folio=n.folio
+          AND LOWER(COALESCE(h.payment_status,'')) NOT IN ('canceled','cancelled','cancelado','cancelada','anulado')
+      ) shipment ON true
+      WHERE (${customerId}::text IS NULL OR n.customer_id::text=${customerId})
+        AND (${estatus}::text IS NULL OR n.estatus=${estatus})
+      ORDER BY n.fecha DESC,n.id DESC LIMIT 200
     `;
-    if (customerId) {
-      q = sql`
-        SELECT n.*, c.customer_name, v.folio as viaje_folio
-        FROM notas n LEFT JOIN customers c ON n.customer_id = c.id
-        LEFT JOIN viajes v ON n.viaje_id = v.id
-        WHERE n.customer_id = ${parseInt(customerId)} ORDER BY n.fecha DESC
-      `;
-    }
-    const rows = await q;
     return NextResponse.json(rows);
   } catch (e) {
     return NextResponse.json({ error: "Error notas" }, { status: 500 });

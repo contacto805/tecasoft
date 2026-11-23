@@ -44,7 +44,7 @@ export default function CarteraClientes() {
     setLoading(false);
   }
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => { loadAll(); window.addEventListener('focus',loadAll);return () => window.removeEventListener('focus',loadAll); }, []);
 
   async function loadEstado(cid) {
     const res = await fetch(`/api/cartera/estado-cuenta?customerId=${cid}`);
@@ -238,6 +238,20 @@ NOTA: Requiere credenciales Senhub configuradas (solo Superadmin). Una operació
             </table>
           </div>
         )}
+
+        {tab === 'notas' && <div className="overflow-auto rounded-xl border bg-white">
+          <table className="w-full text-sm text-left">
+            <thead className="bg-brand-50"><tr><th className="p-3">Nota</th><th>Cliente</th><th>Kilos</th><th>Total de la nota</th><th>Cargo USD</th><th>Saldo USD</th><th>Estado</th></tr></thead>
+            <tbody>{notas.map(note=><tr key={note.id} className="border-t">
+              <td className="p-3"><strong>{note.folio}</strong><span className="block text-xs text-slate-500">{note.viaje_folio || '—'}</span></td>
+              <td>{note.customer_name}</td><td>{note.kilos ?? '—'}</td>
+              <td>{note.importe == null ? '—' : Number(note.importe).toLocaleString('es-MX',{style:'currency',currency:note.moneda}) + ' ' + note.moneda}</td>
+              <td>{Number(note.importe_original_usd || 0).toFixed(2)}</td>
+              <td>{Number(note.saldo_usd || 0).toFixed(2)}</td><td>{note.estatus}</td>
+            </tr>)}</tbody>
+          </table>
+          {!notas.length && <p className="p-3 text-sm text-slate-600">Sin notas registradas.</p>}
+        </div>}
 
         {tab === 'abonos' && (
           <div>

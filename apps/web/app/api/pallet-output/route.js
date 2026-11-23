@@ -1,3 +1,5 @@
+import {movePhysicalPallet} from "@/app/api/utils/pallet-location";
+import {getVerifiedErpUser} from "@/app/api/utils/erp-session-proof";
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
 
@@ -9,7 +11,7 @@ export async function GET(request) {
 
     if (batchId) {
       const outputs = await sql`
-        SELECT pos.*, 
+        SELECT pos.*,
           COALESCE(pos.folio_tarima, 'TAR-' || LPAD(pos.id::text,6,'0')) as folio_tarima,
           COALESCE(pos.estado, 'PENDIENTE_UBICACION') as estado,
           l.lot_number, l.producer
@@ -23,7 +25,7 @@ export async function GET(request) {
 
     if (lotId) {
       const outputs = await sql`
-        SELECT pos.*, 
+        SELECT pos.*,
           COALESCE(pos.folio_tarima, 'TAR-' || LPAD(pos.id::text,6,'0')) as folio_tarima,
           COALESCE(pos.estado, 'PENDIENTE_UBICACION') as estado,
           l.lot_number, l.producer
@@ -36,7 +38,7 @@ export async function GET(request) {
     }
 
     const outputs = await sql`
-      SELECT pos.*, 
+      SELECT pos.*,
         COALESCE(pos.folio_tarima, 'TAR-' || LPAD(pos.id::text,6,'0')) as folio_tarima,
         COALESCE(pos.estado, 'PENDIENTE_UBICACION') as estado,
         l.lot_number, l.producer
@@ -84,10 +86,10 @@ export async function POST(request) {
     // Find active batch if not provided
     if (!batchId && lot_id) {
       const existingBatch = await sql`
-        SELECT id FROM master_batches 
-        WHERE lot_id = ${lot_id} 
+        SELECT id FROM master_batches
+        WHERE lot_id = ${lot_id}
         AND status IN ('received', 'processing')
-        ORDER BY created_at DESC 
+        ORDER BY created_at DESC
         LIMIT 1
       `;
 
@@ -103,7 +105,7 @@ export async function POST(request) {
 
     // Idempotency / duplicate prevention: same batch + caliber + kg + date → return existing (no second tarima on retry or double click)
     const [dup] = await sql`
-      SELECT * FROM pallet_output_summary 
+      SELECT * FROM pallet_output_summary
       WHERE lot_id = ${parseInt(lot_id)}
         AND COALESCE(production_batch_id,0) = ${parseInt(production_batch_id) || 0}
         AND COALESCE(caliber,'') = ${caliber || ''}
@@ -172,7 +174,7 @@ export async function POST(request) {
 
       await sql`
         UPDATE master_batches
-        SET 
+        SET
           total_kg_processed = ${processed},
           total_kg_in_inventory = ${processed - shipped},
           status = 'processing',
@@ -270,48 +272,38 @@ export async function PUT(request) {
     }
 
     if (action === 'locate') {
-      const [updated] = await sql`
-        UPDATE pallet_output_summary
-        SET 
-          ubicacion_actual = ${new_ubicacion || null},
-          estado = 'UBICADA',
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = ${id}
-        RETURNING *
-      `;
-      return NextResponse.json(updated);
+      const user = await getVerifiedErpUser();
+      if (!user) return NextResponse.json({error:'Inicia sesión para mover tarimas.'},{status:401});
+      const target = String(new_ubicacion || 'PISO').trim().toUpperCase();
+      const {status,data,error} = await movePhysicalPallet({id,target,allowTrailer:false,user});
+      return NextResponse.json(data || {error},{status});
     }
 
     if (action === 'ship') {
       const [updated] = await sql`
         UPDATE pallet_output_summary
-        SET 
+        SET
           embarque_id = ${embarque_id || null},
           estado = 'EMBARCADA',
           updated_at = CURRENT_TIMESTAMP
-        WHERE id = ${id}
+        WHERE id = ${id} AND embarque_id IS NULL
+          AND UPPER(COALESCE(ubicacion_actual,'')) NOT LIKE 'TRAILER-%'
         RETURNING *
       `;
-      return NextResponse.json(updated);
+      return updated ? NextResponse.json(updated) :
+        NextResponse.json({error:'La tarima está en un embarque o no se encuentra disponible.'},{status:409});
     }
 
     if (action === 'clear') {
-      const [updated] = await sql`
-        UPDATE pallet_output_summary
-        SET 
-          warehouse_slot = NULL,
-          ubicacion_actual = NULL,
-          estado = 'PENDIENTE_UBICACION',
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = ${id}
-        RETURNING *
-      `;
-      return NextResponse.json(updated);
+      const user = await getVerifiedErpUser();
+      if (!user) return NextResponse.json({error:'Inicia sesión para mover tarimas.'},{status:401});
+      const {status,data,error} = await movePhysicalPallet({id,target:'PISO',allowTrailer:false,user});
+      return NextResponse.json(data || {error},{status});
     }
 
     const result = await sql`
       UPDATE pallet_output_summary
-      SET 
+      SET
         pallet_count = COALESCE(${pallet_count}, pallet_count),
         total_kg = COALESCE(${total_kg}, total_kg),
         cold_date = COALESCE(${cold_date}::date, cold_date),
@@ -349,8 +341,8 @@ async function deductMaterialsForProduction(productionBatchId, palletCount, tota
       const totalQuantity = quantityPerPallet * (palletCount || 1);
 
       const material = await sql`
-        SELECT id, quantity_available, COALESCE(stock_min,0) as stock_min 
-        FROM materials_inventory 
+        SELECT id, quantity_available, COALESCE(stock_min,0) as stock_min
+        FROM materials_inventory
         WHERE material_name = ${materialName} LIMIT 1
       `;
       if (material.length === 0) continue;

@@ -176,6 +176,10 @@ ${fmt(gsemis)}`;
     loadUnits();
     loadLots();
     loadTarimas();
+    const refresh = () => {if (!document.hidden) loadTarimas();};
+    const timer = setInterval(refresh,8000);
+    window.addEventListener('focus',refresh);
+    return () => {clearInterval(timer);window.removeEventListener('focus',refresh);};
   }, []);
 
   // Cargar tarimas reales desde pallet_output_summary (fuente única del sistema para ubicaciones en frío)
@@ -195,8 +199,8 @@ ${fmt(gsemis)}`;
       const newSlots = {};
       (Array.isArray(allPallets) ? allPallets : []).forEach((p) => {
         const slot = (p.warehouse_slot || p.ubicacion_actual || '').toUpperCase().trim();
-        if (!slot) return;
-        if (['EMBARCADA', 'CANCELADA'].includes((p.estado || '').toUpperCase())) return;
+        if (!/^[ABC]-(?:[1-9]|1[0-3])$/.test(slot)) return;
+        if (p.embarque_id || ['EMBARCADA','CANCELADA','REEMPACADA'].includes((p.estado || '').toUpperCase())) return;
         const is6 = (p.pallet_type || '').toLowerCase().includes('6');
         const boxesPerPallet = is6 ? 40 : 96;
         newSlots[slot] = {
@@ -208,6 +212,7 @@ ${fmt(gsemis)}`;
           lot_number: p.lot_number || '',
           presentation: is6 ? '6 kg' : '10 kg',
           folio: p.folio_tarima || ('TAR-' + String(p.id).padStart(6, '0')),
+          reserved: /^TRAILER-/i.test(p.ubicacion_actual || ''),
           pallet_id: p.id
         };
       });
@@ -476,43 +481,29 @@ ${fmt(gsemis)}`;
   const closeAssignModal = () => setAssignSlot(null);
 
   const handleSaveSlot = async (slotId, data) => {
-    const slotData = { presentation: '10 kg', ...data };
-    setWarehouseSlots(prev => ({
-      ...prev,
-      [slotId]: slotData
-    }));
-    setEditingSlot(null);
-
-    // Registrar/actualizar en backend (warehouse map)
+    const id = data.pallet_id || warehouseSlots[slotId]?.pallet_id;
+    if (!id) {
+      setError('Asigna una tarima registrada desde la lista de pendientes.');
+      return;
+    }
     try {
-      await fetch('/api/warehouse-map', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          slotId,
-          lotId: slotData.lot_id || 0,
-          caliber: slotData.caliber,
-          className: slotData.quality || 'A',
-          boxes: parseInt(slotData.boxes) || 0,
-          kilos: Math.round((parseInt(slotData.boxes) || 0) * 10), // estimación
-          notes: `Posición actualizada - ${slotData.presentation || '10 kg'}`
-        })
+      const response = await fetch('/api/production/assign-to-slot',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({pallet_output_id:id,slot_id:slotId})
       });
-    } catch (_) { /* mantener consistencia en memoria si falla la red */ }
+      if (!response.ok) throw new Error((await response.json()).error);
+      setEditingSlot(null);
+      await loadTarimas();
+    } catch(error) {setError(error.message);}
   };
 
-  const handleClearSlot = async (slotId) => {
-    const newSlots = { ...warehouseSlots };
-    delete newSlots[slotId];
-    setWarehouseSlots(newSlots);
-    setEditingSlot(null);
-
-    // Registrar limpieza
+  const handleClearSlot = async slotId => {
     try {
-      await fetch(`/api/warehouse-map?slotId=${encodeURIComponent(slotId)}`, {
-        method: 'DELETE'
-      });
-    } catch (_) {}
+      const response = await fetch(`/api/warehouse-map?slotId=${encodeURIComponent(slotId)}`,{method:'DELETE'});
+      if (!response.ok) throw new Error((await response.json()).error);
+      setEditingSlot(null);
+      await loadTarimas();
+    } catch(error) {setError(error.message);}
   };
 
   const handleAssignPendingToSlot = async (slotId, pendingItem) => {
@@ -1152,7 +1143,7 @@ ${fmt(gsemis)}`;
                                   return (
                                     <div 
                                       key={slotId}
-                                      className={`border-2 rounded-lg p-3 hover:shadow-md transition-shadow cursor-pointer relative group ${isOccupied ? 'border-emerald-400 bg-emerald-50' : 'border-slate-300 bg-slate-50'}`}
+                                      className={`border-2 rounded-lg p-3 hover:shadow-md transition-shadow cursor-pointer relative group ${slotData?.reserved ? 'border-amber-300 bg-amber-50' : isOccupied ? 'border-emerald-400 bg-emerald-50' : 'border-slate-300 bg-slate-50'}`}
                                       onClick={() => handleSlotClick(slotId)}
                                       onDragOver={(e) => {
                                         e.preventDefault();
@@ -1185,6 +1176,7 @@ ${fmt(gsemis)}`;
                                       </div>
                                       {isOccupied ? (
                                         <>
+                                          {slotData.reserved && <div className="text-xs font-semibold text-amber-900">Apartada para tráiler</div>}
                                           <div className="text-[10px] text-slate-600">📅 {slotData.date}</div>
                                           <div className="text-[10px] font-medium text-slate-900">{slotData.boxes} cajas × {slotData.presentation || '10 kg'}</div>
                                           <div className="text-[10px] text-slate-600">Calibre: {slotData.caliber || '—'}</div>

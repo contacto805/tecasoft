@@ -13,7 +13,8 @@ export async function GET() {
       FROM pallet_output_summary pos
       LEFT JOIN lots l ON pos.lot_id = l.id
       WHERE (pos.warehouse_slot IS NULL OR pos.warehouse_slot = '')
-      AND COALESCE(pos.estado, 'PENDIENTE_UBICACION') NOT IN ('EMBARCADA', 'CANCELADA')
+      AND pos.embarque_id IS NULL AND UPPER(COALESCE(pos.estado,'')) NOT IN ('EMBARCADA','CANCELADA','REEMPACADA')
+      AND UPPER(COALESCE(pos.ubicacion_actual,'')) NOT LIKE 'TRAILER-%'
       ORDER BY pos.created_at DESC
     `;
 

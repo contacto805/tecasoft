@@ -24,9 +24,8 @@ export default function MapaAlmacenPage() {
   const allCalibres = ["Super (40's)", "Extra (48's)", "Primera (60's)", "Mediano (70's)", "Tercera (84's)", "Cuarta"];
 
   // Load real data from system (pallet_output_summary is single source)
-  const loadData = async () => {
-    setLoading(true);
-    setError('');
+  const loadData = async (showLoading=true) => {
+    if (showLoading) {setLoading(true);setError('');}
     try {
       const [palletRes, pendingRes] = await Promise.all([
         fetch('/api/pallet-output'),
@@ -43,7 +42,7 @@ export default function MapaAlmacenPage() {
       (Array.isArray(pallets) ? pallets : []).forEach(p => {
         const slot = (p.warehouse_slot || p.ubicacion_actual || '').toUpperCase().trim();
         const estado = (p.estado || '').toUpperCase();
-        if (!slot || ['EMBARCADA', 'CANCELADA'].includes(estado)) return;
+        if (!slot || p.embarque_id || ['EMBARCADA','CANCELADA','REEMPACADA'].includes(estado)) return;
         
         const is6 = (p.pallet_type || '').toLowerCase().includes('6');
         const boxesPer = is6 ? 40 : 96;
@@ -60,7 +59,7 @@ export default function MapaAlmacenPage() {
           total_kg: parseFloat(p.total_kg || 0),
           cold_date: p.cold_date ? String(p.cold_date).slice(0, 10) : (p.packing_date ? String(p.packing_date).slice(0, 10) : ''),
           presentation: is6 ? '6 kg' : '10 kg',
-          estado: estado || 'EN_FRIO'
+          estado: /^TRAILER-/i.test(p.ubicacion_actual || '') ? 'RESERVADA PARA CARGA' : estado || 'EN_FRIO'
         };
       });
       setWarehouseSlots(newSlots);
@@ -75,12 +74,16 @@ export default function MapaAlmacenPage() {
     } catch (e) {
       setError('Error cargando datos del almacén');
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   };
 
   useEffect(() => {
     loadData();
+    const refresh = () => {if (!document.hidden) loadData(false);};
+    const timer = setInterval(refresh,8000);
+    window.addEventListener('focus',refresh);
+    return () => {clearInterval(timer);window.removeEventListener('focus',refresh);};
   }, []);
 
   // Filtered pending for assign/search
@@ -194,25 +197,19 @@ export default function MapaAlmacenPage() {
     setLoading(true);
     setError('');
     try {
-      // Clear old location
-      await fetch('/api/pallet-output', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: src.pallet_id, action: 'clear' })
+      const response = await fetch('/api/production/assign-to-slot', {
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({pallet_output_id:src.pallet_id,slot_id:newSlotId})
       });
-      // Assign to new
-      await fetch('/api/production/assign-to-slot', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pallet_output_id: src.pallet_id, slot_id: newSlotId })
-      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
       setMessage(`Movida: ${oldSlot} → ${newSlotId}`);
       setMoveSource(null);
       setShowAssignModal(false);
       await loadData();
       setTimeout(() => setMessage(''), 2400);
     } catch (e) {
-      setError('Error al mover la tarima');
+      setError(e.message || 'Error al mover la tarima');
     } finally {
       setLoading(false);
     }
