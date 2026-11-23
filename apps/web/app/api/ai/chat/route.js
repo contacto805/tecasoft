@@ -34,7 +34,8 @@ async function getAuthenticatedUser(request) {
   return null;
 }
 
-const openai = new OpenAI({
+// Create the optional AI client only when a request needs it, not at build time.
+const createOpenAI = () => new OpenAI({
   apiKey: process.env.APPGEN_API_KEY,
   baseURL: process.env.OPENAI_BASE_URL || "https://appgen.com/api/cloud/openai/v1",
   defaultHeaders: { "X-AppGen-App-Id": process.env.APP_ID || "" }
@@ -54,6 +55,11 @@ export async function POST(request) {
     if (!message || typeof message !== "string") {
       return NextResponse.json({ error: "Mensaje requerido" }, { status: 400 });
     }
+
+    if (!process.env.APPGEN_API_KEY && !process.env.OPENAI_API_KEY) {
+      return NextResponse.json({ error: "TECAVO IA pendiente de configurar" }, { status: 503 });
+    }
+    const openai = createOpenAI();
 
     // Catálogo de herramientas (solo las permitidas por rol)
     const availableTools = IA_TOOLS; // el caller filtra internamente
@@ -188,6 +194,7 @@ export async function GET() {
     if (!process.env.APPGEN_API_KEY) {
       return NextResponse.json({ connected: false, error: "APPGEN_API_KEY no configurada" });
     }
+    const openai = createOpenAI();
     // Llamada minima sin tools
     const test = await openai.chat.completions.create({
       model: "gpt-4o-mini",

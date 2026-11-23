@@ -1,113 +1,64 @@
 import sql from "@/app/api/utils/sql";
+import { administrativeDate, outstandingPayments } from "@/app/api/utils/financial-balances";
 import { NextResponse } from "next/server";
 
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
-    const month = searchParams.get("month");
-    const year = searchParams.get("year");
+    const today = administrativeDate();
+    const month = Number(searchParams.get("month") ?? today.slice(5, 7));
+    const year = Number(searchParams.get("year") ?? today.slice(0, 4));
 
-    const today = new Date().toISOString().split('T')[0];
-
-    // Get weekly scheduled payments
-    const weekStart = new Date();
-    const dayOfWeek = weekStart.getDay();
-    const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-    weekStart.setDate(weekStart.getDate() + diff);
-    const weekEnd = new Date(weekStart);
-    weekEnd.setDate(weekEnd.getDate() + 6);
-
-    const weekStartStr = weekStart.toISOString().split('T')[0];
-    const weekEndStr = weekEnd.toISOString().split('T')[0];
-    const weeklyPayments = await sql`
-      SELECT COALESCE(SUM(amount), 0) as total
-      FROM payment_schedule
-      WHERE scheduled_payment_date >= ${weekStartStr}
-        AND scheduled_payment_date <= ${weekEndStr}
-        AND status = 'scheduled'
-    `;
-
-    // Get monthly scheduled payments
-    const currentMonth = new Date().getMonth() + 1;
-    const currentYear = new Date().getFullYear();
-
-    const monthlyPayments = await sql`
-      SELECT COALESCE(SUM(amount), 0) as total
-      FROM payment_schedule
-      WHERE EXTRACT(MONTH FROM scheduled_payment_date) = ${currentMonth}
-        AND EXTRACT(YEAR FROM scheduled_payment_date) = ${currentYear}
-        AND status = 'scheduled'
-    `;
-
-    // Get producers pending payment
-    const pendingProducers = await sql`
-      SELECT COUNT(DISTINCT producer_name) as count
-      FROM payment_schedule
-      WHERE status = 'scheduled'
-    `;
-
-    // Get fruit about to expire (13 days or less) — safe date range
-    const urgentEnd = new Date();
-    urgentEnd.setDate(urgentEnd.getDate() + 13);
-    const urgentEndStr = urgentEnd.toISOString().split('T')[0];
-    const urgentPayments = await sql`
-      SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as total
-      FROM payment_schedule
-      WHERE due_date >= ${today}
-        AND due_date <= ${urgentEndStr}
-        AND status = 'scheduled'
-    `;
-
-    // Get overdue payments — safe
-    const overduePayments = await sql`
-      SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as total
-      FROM payment_schedule
-      WHERE due_date < ${today}
-        AND status = 'scheduled'
-    `;
-
-    // Get accumulated liabilities
-    const totalLiabilities = await sql`
-      SELECT COALESCE(SUM(amount), 0) as total
-      FROM payment_schedule
-      WHERE status = 'scheduled'
-    `;
-
-    // Get calendar data (all Fridays with payments)
-    let calendarData = [];
-    if (month && year) {
-      calendarData = await sql`
-        SELECT 
-          scheduled_payment_date,
-          COUNT(*) as payment_count,
-          COALESCE(SUM(amount), 0) as total_amount,
-          ARRAY_AGG(DISTINCT producer_name) as producers,
-          ARRAY_AGG(DISTINCT bank_name) as banks
-        FROM payment_schedule
-        WHERE EXTRACT(MONTH FROM scheduled_payment_date) = ${parseInt(month)}
-          AND EXTRACT(YEAR FROM scheduled_payment_date) = ${parseInt(year)}
-          AND status = 'scheduled'
-        GROUP BY scheduled_payment_date
-        ORDER BY scheduled_payment_date
-      `;
+    if (!Number.isInteger(month) || month < 1 || month > 12 ||
+        !Number.isInteger(year) || year < 1 || year > 9999) {
+      return NextResponse.json({ error: "Mes o año inválido" }, { status: 400 });
     }
 
+    const monthStart = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-01`;
+    const [[stats], calendar] = await Promise.all([
+      sql`
+        WITH payments AS (${outstandingPayments()})
+        SELECT
+          COALESCE(SUM(balance) FILTER (
+            WHERE scheduled_payment_date >= date_trunc('week', ${today}::date)
+              AND scheduled_payment_date < date_trunc('week', ${today}::date) + INTERVAL '7 days'
+          ), 0) AS weekly_scheduled,
+          COALESCE(SUM(balance) FILTER (
+            WHERE scheduled_payment_date >= ${monthStart}::date
+              AND scheduled_payment_date < ${monthStart}::date + INTERVAL '1 month'
+          ), 0) AS monthly_scheduled,
+          COUNT(DISTINCT producer_name) AS pending_producers,
+          COUNT(*) FILTER (WHERE due_date BETWEEN ${today}::date AND ${today}::date + 13) AS urgent_count,
+          COALESCE(SUM(balance) FILTER (WHERE due_date BETWEEN ${today}::date AND ${today}::date + 13), 0) AS urgent_amount,
+          COUNT(*) FILTER (WHERE due_date < ${today}::date) AS overdue_count,
+          COALESCE(SUM(balance) FILTER (WHERE due_date < ${today}::date), 0) AS overdue_amount,
+          COALESCE(SUM(balance), 0) AS total_liabilities
+        FROM payments
+        WHERE balance > 0
+      `,
+      sql`
+        SELECT scheduled_payment_date::text AS scheduled_payment_date, COUNT(*) AS payment_count, SUM(balance) AS total_amount,
+          ARRAY_AGG(DISTINCT producer_name) FILTER (WHERE producer_name IS NOT NULL) AS producers,
+          ARRAY_AGG(DISTINCT bank_name) FILTER (WHERE bank_name IS NOT NULL) AS banks
+        FROM (${outstandingPayments()}) AS payments
+        WHERE balance > 0 AND scheduled_payment_date >= ${monthStart}::date
+          AND scheduled_payment_date < ${monthStart}::date + INTERVAL '1 month'
+        GROUP BY scheduled_payment_date ORDER BY scheduled_payment_date
+      `
+    ]);
+
     return NextResponse.json({
-      weekly_scheduled: parseFloat(weeklyPayments[0].total || 0),
-      monthly_scheduled: parseFloat(monthlyPayments[0].total || 0),
-      pending_producers: parseInt(pendingProducers[0].count || 0),
-      urgent_count: parseInt(urgentPayments[0].count || 0),
-      urgent_amount: parseFloat(urgentPayments[0].total || 0),
-      overdue_count: parseInt(overduePayments[0].count || 0),
-      overdue_amount: parseFloat(overduePayments[0].total || 0),
-      total_liabilities: parseFloat(totalLiabilities[0].total || 0),
-      calendar_data: calendarData
+      ...Object.fromEntries(Object.entries(stats).map(([key, value]) => [key, Number(value)])),
+      calendar_data: calendar.map(row => ({
+        ...row,
+        payment_count: Number(row.payment_count),
+        total_amount: Number(row.total_amount),
+        producers: row.producers ?? [],
+        banks: row.banks ?? []
+      }))
     });
   } catch (error) {
     console.error("Error fetching payment stats:", error);
-    return NextResponse.json(
-      { error: "Error al obtener estadísticas de pagos" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Error al obtener estadísticas de pagos" }, { status: 500 });
   }
 }

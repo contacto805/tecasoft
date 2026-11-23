@@ -1,7 +1,7 @@
 import sql from "@/app/api/utils/sql";
 import { cookies } from "next/headers";
 
-export async function getCurrentUser() {
+export async function getCurrentUser({ allowLegacyToken = true } = {}) {
   const cookieStore = await cookies();
   const possibleTokens = [
     cookieStore.get("tecavo_session_token")?.value,
@@ -20,6 +20,7 @@ export async function getCurrentUser() {
       `;
       if (sessions.length) return sessions[0];
     } catch (_) {}
+    if (!allowLegacyToken) continue;
     try {
       const decoded = Buffer.from(token, "base64").toString();
       const data = JSON.parse(decoded);
