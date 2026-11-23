@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { lotPublicPath, lotPublicUrl } from "@/utils/lot-public-url";
 import { QRCodeCanvas } from "qrcode.react";
 import { Copy, Check, Upload, ExternalLink, RefreshCw } from "lucide-react";
 
@@ -19,7 +20,6 @@ export default function DashboardPublicoQRAdmin() {
 
   useEffect(() => {
     checkAccess();
-    fetchData();
   }, []);
 
   const checkAccess = async () => {
@@ -40,6 +40,7 @@ export default function DashboardPublicoQRAdmin() {
       }
 
       setIsAuthorized(authorized);
+      if (authorized) await fetchData();
     } catch (e) {}
     setLoadingAuth(false);
   };
@@ -51,6 +52,10 @@ export default function DashboardPublicoQRAdmin() {
         fetch("/api/public-lots"),
         fetch("/api/public-dashboard-config")
       ]);
+      if (linkRes.status === 401) {
+        setMessage("Vuelve a iniciar sesión en Tecavo Soft para gestionar los QR.");
+        return;
+      }
       const l = await lotsRes.json().catch(() => []);
       const lk = await linkRes.json().catch(() => []);
       const cf = await cfgRes.json().catch(() => null);
@@ -64,7 +69,7 @@ export default function DashboardPublicoQRAdmin() {
   };
 
   const getPublicToken = (lotId) => {
-    const found = links.find((li) => li.lot_id === lotId);
+    const found = links.find((li) => String(li.lot_id) === String(lotId));
     return found?.public_token || null;
   };
 
@@ -80,7 +85,8 @@ export default function DashboardPublicoQRAdmin() {
         await fetchData();
         setMessage("QR generado.");
       } else {
-        setMessage("Error generando QR");
+        const error = await res.json().catch(() => null);
+        setMessage(error?.error || "Error generando QR");
       }
     } catch {
       setMessage("Error al generar el QR del lote");
@@ -125,7 +131,7 @@ export default function DashboardPublicoQRAdmin() {
   };
 
   const copyLink = (token) => {
-    const full = typeof window !== "undefined" ? `${window.location.origin}/lot/${token}` : `/lot/${token}`;
+    const full = typeof window !== "undefined" ? lotPublicUrl(token, window.location.origin) : lotPublicPath(token);
     navigator.clipboard.writeText(full);
     setCopied(token);
     setTimeout(() => setCopied(null), 1600);
@@ -215,7 +221,7 @@ export default function DashboardPublicoQRAdmin() {
                 {lots.length === 0 && <tr><td colSpan={5} className="px-6 py-12 text-center text-slate-500">No hay lotes registrados. Registra el primer lote en Ingreso de Fruta.</td></tr>}
                 {lots.slice(0, 30).map((lot) => {
                   const tok = getPublicToken(lot.id);
-                  const publicUrl = tok ? `/lot/${tok}` : null;
+                  const publicUrl = tok ? lotPublicUrl(tok, window.location.origin) : null;
                   return (
                     <tr key={lot.id} className="hover:bg-slate-50">
                       <td className="pl-6 py-4 font-semibold">{lot.lot_number}</td>
@@ -224,7 +230,7 @@ export default function DashboardPublicoQRAdmin() {
                       <td className="py-4 text-center">
                         {tok ? (
                           <div className="inline-block bg-slate-50 p-1.5 rounded">
-                            <QRCodeCanvas value={`${typeof window !== "undefined" ? window.location.origin : ""}${publicUrl}`} size={72} level="H" />
+                            <QRCodeCanvas value={publicUrl} size={72} level="H" />
                           </div>
                         ) : <span className="text-xs text-amber-600">Sin QR</span>}
                       </td>
@@ -240,7 +246,7 @@ export default function DashboardPublicoQRAdmin() {
                               <button onClick={() => copyLink(tok)} className="inline-flex items-center gap-1 text-xs border px-3 py-1 rounded hover:bg-white">
                                 {copied === tok ? <Check size={14}/> : <Copy size={14}/>} {copied === tok ? "Copiado" : "Copiar enlace"}
                               </button>
-                              <a href={`/lot/${tok}`} target="_blank" className="inline-flex items-center gap-1 px-3 py-1 text-xs border rounded bg-white hover:bg-slate-50">
+                              <a href={publicUrl} target="_blank" className="inline-flex items-center gap-1 px-3 py-1 text-xs border rounded bg-white hover:bg-slate-50">
                                 <ExternalLink size={14} /> Ver público
                               </a>
                             </>

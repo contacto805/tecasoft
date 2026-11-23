@@ -1,3 +1,4 @@
+import { newLotToken } from "@/app/api/utils/lot-portal";
 import sql from '@/app/api/utils/sql';
 import { NextResponse } from 'next/server';
 
@@ -44,6 +45,7 @@ export async function POST(request) {
 
         // Insert lot
         const result = await sql`
+        WITH new_lot AS (
           INSERT INTO lots (
             lot_number, producer, origin, fruit_type, date, 
             fruit_price, collector_name, commission_amount, 
@@ -57,6 +59,12 @@ export async function POST(request) {
             ${lot.orchard_name}, 'Pendiente'
           )
           RETURNING id, lot_number
+        ), new_link AS (
+          INSERT INTO public_lot_links (lot_id, public_token, is_active, created_at, updated_at)
+          SELECT id, ${newLotToken()}, true, NOW(), NOW() FROM new_lot
+          RETURNING lot_id
+        )
+        SELECT new_lot.* FROM new_lot JOIN new_link ON new_link.lot_id = new_lot.id
         `;
 
         if (result.length > 0) {

@@ -1,3 +1,4 @@
+import { newLotToken } from "@/app/api/utils/lot-portal";
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
 import { getCurrentUser, isSuperAdmin, sanitizeForNonSuper } from "@/app/api/utils/super-admin";
@@ -102,6 +103,7 @@ export async function POST(request) {
       
       // Crear nuevo lote en la tabla maestra
       const newLot = await sql`
+        WITH new_lot AS (
         INSERT INTO lots (
           lot_number,
           producer,
@@ -132,6 +134,12 @@ export async function POST(request) {
           null
         )
         RETURNING *
+        ), new_link AS (
+          INSERT INTO public_lot_links (lot_id, public_token, is_active, created_at, updated_at)
+          SELECT id, ${newLotToken()}, true, NOW(), NOW() FROM new_lot
+          RETURNING lot_id
+        )
+        SELECT new_lot.* FROM new_lot JOIN new_link ON new_link.lot_id = new_lot.id
       `;
       
       lotId = newLot[0].id;

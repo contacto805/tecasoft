@@ -16,12 +16,11 @@ export default function PublicTraceabilityPage() {
     if (!token) return;
     
     fetchLotData();
-    logAccess();
   }, [token]);
 
   const fetchLotData = async () => {
     try {
-      const response = await fetch(`/api/trazabilidad/${token}`);
+      const response = await fetch(`/api/trazabilidad/${encodeURIComponent(token)}`, { cache: "no-store" });
       if (!response.ok) {
         throw new Error('Lote no encontrado');
       }
@@ -32,27 +31,6 @@ export default function PublicTraceabilityPage() {
       setError(err.message);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const logAccess = async () => {
-    try {
-      // Get device type
-      const userAgent = navigator.userAgent;
-      let deviceType = 'desktop';
-      if (/mobile/i.test(userAgent)) deviceType = 'mobile';
-      if (/tablet/i.test(userAgent)) deviceType = 'tablet';
-      
-      await fetch(`/api/trazabilidad/${token}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          device_type: deviceType,
-          referer: document.referrer
-        })
-      });
-    } catch (err) {
-      console.error('Error logging access:', err);
     }
   };
 

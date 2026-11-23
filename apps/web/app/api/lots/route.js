@@ -1,6 +1,6 @@
+import { newLotToken } from "@/app/api/utils/lot-portal";
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
-import crypto from "crypto";
 
 export async function GET(request) {
   try {
@@ -154,6 +154,7 @@ export async function POST(request) {
     
     // Insert lot with calculated payment_scheduled_date
     const result = await sql`
+        WITH new_lot AS (
       INSERT INTO lots (
         lot_number, 
         producer, 
@@ -201,6 +202,12 @@ export async function POST(request) {
         ${guide_folio ? guide_folio.trim() : null}
       )
       RETURNING *
+        ), new_link AS (
+          INSERT INTO public_lot_links (lot_id, public_token, is_active, created_at, updated_at)
+          SELECT id, ${newLotToken()}, true, NOW(), NOW() FROM new_lot
+          RETURNING lot_id
+        )
+        SELECT new_lot.* FROM new_lot JOIN new_link ON new_link.lot_id = new_lot.id
     `;
     
     // If it's cut fruit, create a cutting order
@@ -216,28 +223,6 @@ export async function POST(request) {
       INSERT INTO sync_audit_log (entity_type, entity_id, action, new_values, module_name, created_at)
       VALUES ('lot', ${result[0].id}, 'create', ${JSON.stringify(result[0])}, 'fruit-input', CURRENT_TIMESTAMP)
     `;
-
-    // Generar automáticamente QR y token público del lote (para Dashboard público por QR)
-    try {
-      const [existingLink] = await sql`
-        SELECT id FROM public_lot_links WHERE lot_id = ${result[0].id} LIMIT 1
-      `;
-      if (!existingLink) {
-        const publicToken = crypto.randomBytes(16).toString("hex");
-        await sql`
-          INSERT INTO public_lot_links (lot_id, public_token, is_active, created_at, updated_at)
-          VALUES (${result[0].id}, ${publicToken}, true, NOW(), NOW())
-        `;
-        // Opcional crear entrada básica de dashboard visual
-        await sql`
-          INSERT INTO lot_dashboard_info (lot_id, public_token, is_active, created_at)
-          VALUES (${result[0].id}, ${publicToken}, true, NOW())
-          ON CONFLICT DO NOTHING
-        `;
-      }
-    } catch (qrErr) {
-      console.error("QR auto-generation warning (continuing):", qrErr.message);
-    }
 
     return NextResponse.json(result[0]);
   } catch (error) {

@@ -194,10 +194,11 @@ export async function getPortalAccessStatus(customerId) {
 // === PRODUCTOR / TRANSPORTISTA (reuse same secure PIN + lock logic, per existing function) ===
 const PRODUCER_COOKIE = "tecavo_producer_portal";
 const TRANSPORTER_COOKIE = "tecavo_transporter_portal";
+const producerTokenHash = token => "p:" + crypto.createHash("sha256").update(token).digest("hex").slice(0, 58);
 
 export async function createProducerSession(producerName) {
   const token = generateSecureToken();
-  const tokenHash = await bcrypt.hash(token, 10);
+  const tokenHash = producerTokenHash(token);
   const expiresAt = new Date(Date.now() + SESSION_DURATION_HOURS * 60 * 60 * 1000);
   await sql`INSERT INTO producer_portal_sessions (producer_name, token_hash, expires_at) VALUES (${producerName}, ${tokenHash}, ${expiresAt}) ON CONFLICT (producer_name) DO UPDATE SET token_hash=${tokenHash}, expires_at=${expiresAt}`;
   const cookieStore = await cookies();
@@ -209,16 +210,29 @@ export async function getProducerSession() {
   const cookieStore = await cookies();
   const token = cookieStore.get(PRODUCER_COOKIE)?.value;
   if (!token) return null;
-  // Token-specific match (not arbitrary most-recent)
-  const rows = await sql`SELECT * FROM producer_portal_sessions WHERE expires_at > NOW() LIMIT 100`;
-  for (const s of rows) {
-    const ok = await bcrypt.compare(token, s.token_hash);
-    if (ok) {
-      await sql`UPDATE producer_portal_sessions SET last_activity_at = NOW() WHERE producer_name = ${s.producer_name}`;
-      return { producerName: s.producer_name, expiresAt: s.expires_at };
+  if (!/^[a-f0-9]{64}$/.test(token)) return null;
+  const hash = producerTokenHash(token);
+  const [s] = await sql`
+    UPDATE producer_portal_sessions s SET last_activity_at = NOW()
+    WHERE s.token_hash = ${hash} AND s.expires_at > NOW()
+      AND (SELECT count(*) FROM producer_portal_access a
+           WHERE lower(btrim(a.producer_name)) = lower(btrim(s.producer_name))) = 1
+      AND EXISTS (SELECT 1 FROM producer_portal_access a WHERE a.producer_name = s.producer_name AND a.is_enabled)
+    RETURNING s.producer_name, s.expires_at
+  `;
+  return s ? { producerName: s.producer_name, expiresAt: s.expires_at, tokenHash: hash } : null;
+}
+
+export async function destroyProducerSession() {
+  const jar = await cookies();
+  try {
+    const session = await getProducerSession();
+    if (session) {
+      await sql`DELETE FROM producer_portal_sessions WHERE producer_name = ${session.producerName} AND token_hash = ${session.tokenHash}`;
     }
+  } finally {
+    jar.delete(PRODUCER_COOKIE);
   }
-  return null;
 }
 
 export async function requireProducerSession() {
@@ -228,14 +242,21 @@ export async function requireProducerSession() {
 }
 
 export async function validateProducerPortalAccess(identifier, pin) {
-  // identifier can be producer_number (preferred) or producer_name for legacy
   const rows = await sql`
-    SELECT * FROM producer_portal_access 
-    WHERE (producer_number = ${identifier} OR producer_name = ${identifier}) 
-    AND is_enabled = true 
-    LIMIT 1
+    SELECT a.* FROM producer_portal_access a
+    WHERE a.is_enabled AND (
+      upper(btrim(a.producer_number::text)) = upper(btrim(${identifier}))
+      OR EXISTS (
+        SELECT 1 FROM cutting_orders o
+        WHERE upper(btrim(o.folio)) = upper(btrim(${identifier}))
+          AND lower(btrim(o.producer_name)) = lower(btrim(a.producer_name))
+      )
+    )
+    AND (SELECT count(*) FROM producer_portal_access other
+         WHERE lower(btrim(other.producer_name)) = lower(btrim(a.producer_name))) = 1
+    LIMIT 2
   `;
-  if (!rows.length) return { ok: false, error: "Acceso no configurado" };
+  if (rows.length !== 1) return { ok: false, error: "Acceso no configurado" };
   const a = rows[0];
   if (a.locked_until && new Date(a.locked_until) > new Date()) return { ok: false, error: "Cuenta bloqueada temporalmente" };
   const valid = await bcrypt.compare(String(pin).trim(), a.pin_hash);

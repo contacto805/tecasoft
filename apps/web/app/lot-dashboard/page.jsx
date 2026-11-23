@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { Plus, Copy, ExternalLink, Trash2, Check } from "lucide-react";
-import QRCode from "qrcode.react";
+import { QRCodeCanvas } from "qrcode.react";
+import { lotPublicUrl } from "@/utils/lot-public-url";
 
 export default function LotDashboard() {
   const [lots, setLots] = useState([]);
@@ -21,10 +22,13 @@ export default function LotDashboard() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [lotsRes, templatesRes, dashboardsRes] = await Promise.all([
+      const dashboardsRes = await fetch("/api/lot-dashboard");
+      if (dashboardsRes.status === 401) {
+        throw new Error("Vuelve a iniciar sesión en Tecavo Soft para gestionar los QR.");
+      }
+      const [lotsRes, templatesRes] = await Promise.all([
         fetch("/api/lots"),
         fetch("/api/dashboard-templates"),
-        fetch("/api/lot-dashboard"),
       ]);
 
       if (!lotsRes.ok || !templatesRes.ok || !dashboardsRes.ok) {
@@ -74,7 +78,7 @@ export default function LotDashboard() {
   };
 
   const handleDelete = async (lotId) => {
-    if (!confirm("¿Estás seguro de que deseas eliminar este dashboard?")) return;
+    if (!confirm("¿Desactivar la vista y los QR de este lote?")) return;
 
     try {
       const response = await fetch(`/api/lot-dashboard?lotId=${lotId}`, {
@@ -94,7 +98,7 @@ export default function LotDashboard() {
   };
 
   const getLotInfo = (lotId) => {
-    return lots.find((l) => l.id === lotId);
+    return lots.find((l) => String(l.id) === String(lotId));
   };
 
   if (loading) {
@@ -198,7 +202,7 @@ export default function LotDashboard() {
             <div className="grid grid-cols-1 gap-6">
               {dashboards.map((dashboard) => {
                 const lotInfo = getLotInfo(dashboard.lot_id);
-                const publicUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/lot/${dashboard.public_token}`;
+                const publicUrl = lotPublicUrl(dashboard.public_token, window.location.origin);
 
                 return (
                   <div

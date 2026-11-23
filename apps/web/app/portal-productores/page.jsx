@@ -15,6 +15,7 @@ export default function PortalProductores() {
   const [folio, setFolio] = useState('');
   const [pin, setPin] = useState('');
   const [orden, setOrden] = useState(null);
+  const [orders, setOrders] = useState(null);
   const [paymentInfo, setPaymentInfo] = useState(null);
   const [docs, setDocs] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -36,97 +37,103 @@ export default function PortalProductores() {
     return 'Por definir';
   };
 
+  const cargarOrden = async (orderFolio) => {
+    const res = await fetch(`/api/producer-portal/auth/me?folio=${encodeURIComponent(orderFolio)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    setOrden(data.order);
+    setPaymentInfo(data.paymentInfo);
+    setDocs(data.docs);
+  };
+
   const buscarOrden = async () => {
-    if (!folio.trim() || pin.length !== 6) { setError('Folio/Número y PIN de 6 dígitos requeridos'); return; }
     setLoading(true);
     setError('');
-    setOrden(null);
-    setPaymentInfo(null);
-    setDocs([]);
     try {
-      // Usar producerNumber (inmutable) o folio/name como identificador según spec
       const loginRes = await fetch('/api/producer-portal/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ producerNumber: folio.trim(), producerName: '', folio: folio.trim(), pin })
+        body: JSON.stringify({ producerNumber: folio.trim(), pin })
       });
-      const loginData = await loginRes.json();
-      if (!loginRes.ok || !loginData.success) {
-        setError(loginData.error || 'PIN o número/folio inválido');
-        setLoading(false);
-        return;
-      }
-      const res = await fetch(`/api/cutting-orders?folio=${encodeURIComponent(folio.trim())}`);
+      const login = await loginRes.json();
+      if (!loginRes.ok) throw new Error(login.error);
+      setPin('');
+      const res = await fetch('/api/producer-portal/auth/me');
       const data = await res.json();
-      const match = Array.isArray(data) ? data.find(o => (o.folio || '').toUpperCase() === folio.trim().toUpperCase()) : null;
-      if (match) {
-        setOrden(match);
-        // Cargar info de pago y documentos asociados (por referencia, sin duplicar)
-        try {
-          const [psRes, pdRes] = await Promise.all([
-            fetch(`/api/payment-schedule?producer=${encodeURIComponent(match.producer_name || '')}`),
-            fetch('/api/payment-documents')
-          ]);
-          const ps = psRes.ok ? await psRes.json() : [];
-          const pd = pdRes.ok ? await pdRes.json() : [];
-          const pay = Array.isArray(ps) ? ps.find(p => 
-            (p.producer_name || '').toLowerCase() === (match.producer_name || '').toLowerCase() ||
-            (p.lot_id && p.lot_id === match.lot_id)
-          ) : null;
-          setPaymentInfo(pay || null);
-          const relatedDocs = Array.isArray(pd) ? pd.filter(d => 
-            (d.observations || '').includes(match.folio) || 
-            (d.module_origin || '').includes('portal') ||
-            (d.module_origin || '').includes('productor')
-          ) : [];
-          setDocs(relatedDocs);
-        } catch (_) {}
-      } else {
-        setError('Orden no encontrada. Verifica el folio.');
-      }
-    } catch (e) {
-      setError('No se pudo consultar. Intenta de nuevo.');
+      if (!res.ok) throw new Error(data.error);
+      setOrders(data.orders);
+      if (login.folio) await cargarOrden(login.folio);
+    } catch (problem) {
+      setError(problem.message || 'No se pudo consultar.');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
-  const descargarContrato = () => {
-    if (!orden) return;
-    window.open(`/api/lots/${orden.lot_id || 0}/contract`, '_blank');
+  const seleccionarOrden = async (orderFolio) => {
+    if (!orderFolio) return;
+    setError('');
+    setDocFile(null);
+    setOrden(null);
+    try {
+      await cargarOrden(orderFolio);
+    } catch (problem) {
+      setError(problem.message || 'No se pudo consultar la orden.');
+    }
+  };
+
+  const salir = async () => {
+    try {
+      const response = await fetch('/api/producer-portal/auth/logout', { method: 'POST' });
+      if (!response.ok) throw new Error();
+      setOrden(null);
+      setFolio('');
+      setPin('');
+      setOrders(null);
+      setPaymentInfo(null);
+      setDocs([]);
+      setDocFile(null);
+      setError('');
+    } catch {
+      setError('No se pudo cerrar la sesión. Intenta de nuevo.');
+    }
+  };
+
+  const descargarContrato = async () => {
+    if (!orden?.hasContract) return;
+    try {
+      const res = await fetch(`/api/producer-portal/contract?folio=${encodeURIComponent(orden.folio)}`);
+      if (!res.ok) throw new Error();
+      const url = URL.createObjectURL(await res.blob());
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `Contrato-${orden.folio}.pdf`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      setError('No se pudo descargar el contrato.');
+    }
   };
 
   const subirDocumento = async () => {
     if (!docFile || !orden) return;
     setUploading(true);
+    setError('');
     const fd = new FormData();
     fd.append('file', docFile);
+    fd.append('folio', orden.folio);
+    fd.append('documentType', docType);
     try {
-      const up = await fetch('/api/upload', { method: 'POST', body: fd });
-      const uj = await up.json();
-      const url = uj.url || uj.path || '';
-      if (url) {
-        await fetch('/api/payment-documents', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            provider_id: null,
-            customer_id: null,
-            document_type: docType,
-            original_file_name: docFile.name,
-            file_url: url,
-            module_origin: 'portal-productor',
-            observations: `Orden ${orden.folio} - Productor ${orden.producer_name || ''} - Folio: ${orden.folio}`
-          })
-        });
-        alert('Documento subido. Administración lo revisará.');
-        setDocFile(null);
-        // refrescar docs
-        await buscarOrden();
-      }
-    } catch (e) {
-      alert('Error al subir. Intenta otra vez.');
+      const res = await fetch('/api/producer-portal/documents', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setDocFile(null);
+      await cargarOrden(orden.folio);
+    } catch (problem) {
+      setError(problem.message || 'No se pudo guardar el documento.');
+    } finally {
+      setUploading(false);
     }
-    setUploading(false);
   };
 
   const getDocStatus = (type) => {
@@ -153,7 +160,7 @@ export default function PortalProductores() {
   const estados = ['CORTE REGISTRADO', 'DOCUMENTACIÓN PENDIENTE', 'DOCUMENTACIÓN EN REVISIÓN', 'DOCUMENTACIÓN COMPLETA', 'PROGRAMADO PARA PAGO', 'PAGO AUTORIZADO', 'PAGADO'];
   const prog = getProgressIndex();
 
-  const fechaPago = calcularFechaPago(orden || {});
+  const fechaPago = paymentInfo?.scheduled_payment_date || calcularFechaPago(orden);
   const importe = ((orden?.net_weight || orden?.gross_weight || 0) * (orden?.agreed_price_per_kg || 0)).toFixed(2);
 
   return (
@@ -162,19 +169,21 @@ export default function PortalProductores() {
         <div className="text-center mb-6 pt-8">
           <div className="text-emerald-700 text-xs tracking-[3px] font-semibold">TECAVO FRUITS</div>
           <div className="text-2xl font-semibold tracking-tighter mt-1">Portal de Productores</div>
-          <div className="text-sm text-slate-500 mt-1">Ingresa con el folio de tu Orden de Corte</div>
+          <div className="text-sm text-slate-500 mt-1">Consulta tus órdenes con tu número de productor o folio y PIN</div>
         </div>
 
-        {!orden && (
+        {!orders && (
           <div className="bg-white rounded-3xl border p-6">
             <input
               value={folio}
               onChange={e => setFolio(e.target.value.toUpperCase())}
-              placeholder="FOLIO ORDEN DE CORTE (ej: COR-000123)"
+              placeholder="Número de productor o folio"
               className="w-full border px-4 py-3 rounded-2xl text-center font-mono text-lg tracking-widest"
             />
             <input
               value={pin}
+              type="password"
+              inputMode="numeric"
               onChange={e => setPin(e.target.value.replace(/\D/g,'').slice(0,6))}
               placeholder="PIN (6 dígitos) - acceso seguro"
               className="w-full border px-4 py-3 mt-2 rounded-2xl text-center font-mono text-lg tracking-[6px]"
@@ -187,11 +196,22 @@ export default function PortalProductores() {
             >
               {loading ? 'Verificando...' : 'INGRESAR CON PIN SEGURO'}
             </button>
-            {error && <div className="text-red-600 text-xs mt-2 text-center">{error}</div>}
             <div className="text-[10px] text-center text-slate-400 mt-4">Acceso con PIN + folio según esquema seguro existente. Solo tus datos.</div>
           </div>
         )}
 
+        {error && <p role="alert" className="text-red-700 text-sm my-3">{error}</p>}
+        {orders && (
+          <div className="bg-white rounded-3xl border p-4 mb-4 flex items-center gap-3">
+            {orders.length ? (
+              <select aria-label="Tus órdenes de corte" value={orden?.folio || ""} onChange={e => seleccionarOrden(e.target.value)} className="min-w-0 flex-1 border rounded-lg p-2">
+                <option value="">Elige una orden</option>
+                {orders.map(item => <option key={item.folio} value={item.folio}>{item.folio} · {item.orchard_name}</option>)}
+              </select>
+            ) : <p className="flex-1">Todavía no tienes órdenes registradas.</p>}
+            <button onClick={salir} className="rounded-lg border p-2 text-sm">Cerrar sesión</button>
+          </div>
+        )}
         {orden && (
           <div className="space-y-4">
             {/* Datos del productor */}
@@ -245,8 +265,7 @@ export default function PortalProductores() {
             </div>
 
             <div className="flex gap-2">
-              <button onClick={descargarContrato} className="flex-1 py-3 border rounded-2xl text-sm font-medium">DESCARGAR CONTRATO</button>
-              <button onClick={() => { setOrden(null); setFolio(''); setDocs([]); setPaymentInfo(null); }} className="flex-1 py-3 border rounded-2xl text-sm">Salir</button>
+              <button onClick={descargarContrato} disabled={!orden.hasContract} className="flex-1 py-3 border rounded-2xl text-sm font-medium">DESCARGAR CONTRATO</button>
             </div>
 
             <div className="text-center text-[10px] text-slate-400">Toda la información está ligada a tu Orden de Corte. Contacta Administración para dudas.</div>

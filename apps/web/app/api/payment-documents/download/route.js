@@ -1,3 +1,5 @@
+import { getVerifiedErpUser } from "@/app/api/utils/erp-session-proof";
+import { producerDocumentPath } from "@/app/api/utils/producer-document-storage";
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
 import { promises as fs } from 'fs';
@@ -32,7 +34,17 @@ export async function GET(request) {
     }
 
     // Construir ruta completa
-    const fullPath = path.join('/home/user/apps/web/public', document.internal_file_path);
+    const privateProducerFile = document.module_origin === "portal-productor" &&
+      document.internal_file_path === "producer-private/" + document.system_file_name;
+    const erpUser = privateProducerFile ? await getVerifiedErpUser() : null;
+    if (privateProducerFile && !erpUser) {
+      return NextResponse.json({ error: "Inicia sesión en Tecavo Soft" }, { status: 401 });
+    }
+    if (erpUser && !erpUser.is_super_admin && !/admin/i.test(erpUser.admin_role || "")) {
+      return NextResponse.json({ error: "Se requiere acceso administrativo" }, { status: 403 });
+    }
+    const fullPath = privateProducerFile ? producerDocumentPath(document.system_file_name) :
+      path.join('/home/user/apps/web/public', document.internal_file_path);
 
     // Verificar que el archivo existe
     try {
@@ -57,8 +69,8 @@ export async function GET(request) {
         document_name
       ) VALUES (
         ${documentId},
-        ${userId || 'system'},
-        ${userName || 'Sistema'},
+        ${erpUser?.id || userId || 'system'},
+        ${erpUser ? 'Administración' : userName || 'Sistema'},
         'downloaded',
         ${document.original_file_name}
       )

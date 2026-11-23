@@ -1,3 +1,4 @@
+import { attachErpProof } from "@/app/api/utils/erp-session-proof";
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
@@ -83,6 +84,14 @@ export async function POST(request) {
 
     // Note: session row is optional. /api/auth/check has fallback decode + user existence
     // Omit DB insert here to avoid runtime errors with differing session schema.
+
+    attachErpProof(cookieStore, sessionToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 60 * 60 * 24 * 7,
+      path: "/",
+    });
 
     // Set BOTH cookies 
     cookieStore.set("tecavo_session_token", sessionToken, {

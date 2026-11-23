@@ -1,3 +1,4 @@
+import { getVerifiedErpUser } from "@/app/api/utils/erp-session-proof";
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
 
@@ -24,6 +25,7 @@ export async function GET() {
 
 export async function POST(request) {
   try {
+    if (!await getVerifiedErpUser()) return NextResponse.json({ error: "Inicia sesión en Tecavo Soft" }, { status: 401 });
     const body = await request.json();
     const { header_image_url, template_image_url, company_name } = body;
 

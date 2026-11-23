@@ -1,5 +1,7 @@
 'use client';
 
+import { lotPublicUrl } from '@/utils/lot-public-url';
+
 import { useEffect, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { format } from "date-fns";
@@ -14,40 +16,12 @@ export default function PublicLotDashboard({ params }) {
   useEffect(() => {
     const fetchDashboard = async () => {
       try {
-        const token = (await params).token;
-        const tokenValue = token;
-        const [dashRes, cfgRes, pubRes] = await Promise.all([
-          fetch(`/api/lot-dashboard?token=${tokenValue}`),
-          fetch(`/api/public-dashboard-config`),
-          fetch(`/api/public-lots?token=${tokenValue}`)
-        ]);
-
-        const cfg = await cfgRes.json().catch(() => null);
-        let data = null;
-        if (dashRes.ok) {
-          data = await dashRes.json();
-        }
-        if (!data && pubRes.ok) {
-          const pl = await pubRes.json();
-          // adapt to shape expected
-          if (pl && pl.lot) {
-            data = { 
-              ...pl.lot, 
-              public_token: pl.token,
-              lot_number: pl.lot.lot_number,
-              producer: pl.lot.producer,
-              fruit_type: pl.lot.fruit_type,
-              total_kg_received: pl.lot.total_kg || pl.lot.total_kg_received,
-              date: pl.lot.date,
-              status: pl.lot.status || 'active'
-            };
-          }
-        }
-
-        if (!data) throw new Error("No se pudo cargar el dashboard");
-
-        setDashboard(data);
-        setConfig(cfg || null);
+        const { token } = await params;
+        const response = await fetch(`/api/public-lots?token=${encodeURIComponent(token)}`, { cache: "no-store" });
+        if (!response.ok) throw new Error("Enlace de lote no disponible");
+        const data = await response.json();
+        setDashboard({ ...data.lot, public_token: data.token });
+        setConfig(data.config || null);
       } catch (err) {
         setError(err.message || "Error al cargar el dashboard");
       } finally {
@@ -98,7 +72,7 @@ export default function PublicLotDashboard({ params }) {
     dashboard.dashboard_image_url || 
     dashboard.template_image_url || null;
 
-  const publicUrl = typeof window !== "undefined" ? `${window.location.origin}/lot/${dashboard.public_token}` : "";
+  const publicUrl = typeof window !== "undefined" ? lotPublicUrl(dashboard.public_token, window.location.origin) : "";
 
   const bgImage = templateImage || null;
   const displayCompany = config?.company_name || "Tecavo Fruits";
@@ -109,7 +83,7 @@ export default function PublicLotDashboard({ params }) {
         {/* Top branding */}
         <div className="flex justify-between items-center mb-4 text-white/80 text-sm">
           <div className="font-semibold tracking-widest">{displayCompany}</div>
-          <div className="uppercase text-xs tracking-[3px]">Dashboard Público • Solo Lectura</div>
+          <div className="uppercase text-xs tracking-[3px]">{config?.header_text || "Dashboard Público • Solo Lectura"}</div>
         </div>
 
         {/* Main visual container: editable plantilla as large background */}
@@ -169,6 +143,9 @@ export default function PublicLotDashboard({ params }) {
             </div>
           )}
 
+          {config?.commercial_message && <p className="px-9 pt-6 text-lg font-semibold">{config.commercial_message}</p>}
+          {dashboard.orchard_name && <p className="px-9 pt-6 text-slate-700">Huerta · {dashboard.orchard_name}</p>}
+          {lotInfo.total_kg_packed && <p className="px-9 pt-3 text-slate-700">Kg empacados · {Number(lotInfo.total_kg_packed).toLocaleString('es-MX')}</p>}
           {/* Clean extra info saliendo de plantilla */}
           <div className="p-9 md:p-12 bg-white border-t text-slate-800">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8 text-center md:text-left">
@@ -189,7 +166,7 @@ export default function PublicLotDashboard({ params }) {
           </div>
         </div>
 
-        <div className="text-center text-white/50 mt-6 text-xs tracking-widest">TECAVO • DASHBOARD PÚBLICO POR QR • SOLO CONSULTA</div>
+        <div className="text-center text-white/50 mt-6 text-xs tracking-widest">{config?.footer_text || "TECAVO • DASHBOARD PÚBLICO POR QR • SOLO CONSULTA"}</div>
       </div>
     </div>
   );

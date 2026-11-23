@@ -1,46 +1,24 @@
-import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
-import crypto from 'crypto';
+import { getVerifiedErpUser } from "@/app/api/utils/erp-session-proof";
+import { ensureLotLink, getPublicLot } from "@/app/api/utils/lot-portal";
+import { lotPublicPath, lotPublicUrl } from "@/utils/lot-public-url";
 
 export async function POST(request) {
   try {
+    if (!await getVerifiedErpUser()) return NextResponse.json({ error: "Inicia sesión en Tecavo Soft" }, { status: 401 });
     const { lot_id } = await request.json();
-    
-    if (!lot_id) {
-      return NextResponse.json({ error: 'lot_id requerido' }, { status: 400 });
-    }
-    
-    // Check if token already exists
-    const [existing] = await sql`
-      SELECT * FROM public_lot_links 
-      WHERE lot_id = ${lot_id} AND is_active = true
-    `;
-    
-    if (existing) {
-      return NextResponse.json({
-        token: existing.public_token,
-        url: `/trazabilidad/${existing.public_token}`,
-        full_url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://trazabilidad.empresa.com'}/trazabilidad/${existing.public_token}`
-      });
-    }
-    
-    // Generate new token
-    const token = crypto.randomBytes(16).toString('hex');
-    
-    const [link] = await sql`
-      INSERT INTO public_lot_links (lot_id, public_token, is_active, created_at, updated_at)
-      VALUES (${lot_id}, ${token}, true, NOW(), NOW())
-      RETURNING *
-    `;
-    
+    if (!/^\d+$/.test(String(lot_id))) return NextResponse.json({ error: "lot_id inválido" }, { status: 400 });
+    const link = await ensureLotLink(lot_id);
+    if (!link) return NextResponse.json({ error: "Lote no encontrado" }, { status: 404 });
+    const lot = link.is_active ? await getPublicLot(link.public_token) : null;
+    if (!lot) return NextResponse.json({ error: "El enlace del lote está inactivo" }, { status: 409 });
     return NextResponse.json({
-      token: link.public_token,
-      url: `/trazabilidad/${link.public_token}`,
-      full_url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://trazabilidad.empresa.com'}/trazabilidad/${link.public_token}`
+      token: lot.public_token,
+      url: lotPublicPath(lot.public_token),
+      full_url: lotPublicUrl(lot.public_token, new URL(request.url).origin)
     });
-    
   } catch (error) {
-    console.error('Error generating QR token:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("No se pudo generar el QR:", error.message);
+    return NextResponse.json({ error: "No se pudo generar el QR" }, { status: 500 });
   }
 }

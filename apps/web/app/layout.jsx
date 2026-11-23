@@ -62,9 +62,10 @@ Antes de retirar un módulo repetido, trasladar sus datos y relaciones al regist
 // polished startup flow for clean preview loads
 
 import "./globals.css";
-import "@/utils/route-change-detector";
-import { AppGenProvider } from "@/components/appgen-provider";
+import dynamic from "next/dynamic";
+const AppGenProvider = dynamic(() => import("@/components/appgen-provider").then(module => module.AppGenProvider));
 import MaterialAlertsPanel from "@/components/MaterialAlertsPanel";
+import Script from "next/script";
 import { useRouter, usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useSettings } from "@/hooks/useSettings";
@@ -430,6 +431,19 @@ function LayoutContent({ children }) {
   );
 }
 
+function DashboardShell({ children }) {
+  const pathname = usePathname() || "";
+  if (pathname === "/portal-productores" || /^\/(lot|trazabilidad)\/[^/]+$/.test(pathname)) {
+    return children;
+  }
+  return (
+    <AppGenProvider>
+      <Script src="https://unpkg.com/@phosphor-icons/web" />
+      <LayoutContent>{children}</LayoutContent>
+    </AppGenProvider>
+  );
+}
+
 export default function RootLayout({ children }) {
   return (
     <html lang="en" suppressHydrationWarning>
@@ -443,7 +457,6 @@ export default function RootLayout({ children }) {
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto:wght@400;500;700&family=Poppins:wght@400;500;600;700&family=Montserrat:wght@400;500;600;700&family=Open+Sans:wght@400;600;700&family=Lato:wght@400;700&display=swap" />
-        <script src="https://unpkg.com/@phosphor-icons/web"></script>
       </head>
       <body className="antialiased flex flex-col min-h-screen">
         {/* Fondo de toda la aplicación: patrón TECAVO (global para toda la app) */}
@@ -458,11 +471,9 @@ export default function RootLayout({ children }) {
             backgroundColor: '#f8fafc'
           }}
         />
-        <AppGenProvider>
-          <div className="flex-1 relative z-0">
-            <LayoutContent>{children}</LayoutContent>
-          </div>
-        </AppGenProvider>
+        <div className="flex-1 relative z-0">
+          <DashboardShell>{children}</DashboardShell>
+        </div>
       </body>
     </html>
   );
