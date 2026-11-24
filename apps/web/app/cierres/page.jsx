@@ -3,11 +3,13 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+import { autoTable } from 'jspdf-autotable';
 import { drawCompanyHeader } from '@/lib/company-header';
 import * as XLSX from 'xlsx';
 import {closingWeek, validDate, validWeek, closingTotals} from '@/utils/closing-period';
 import ClosingTrace from '@/components/closing-trace';
+import ClosingExtraordinary from '@/components/closing-extraordinary';
+import { getExtraordinaryEntries, sameExtraordinaryEntries } from '@/utils/closing-extraordinary';
 
 const TABS = [
   { id: 'resumen', label: '1. RESUMEN EJECUTIVO' },
@@ -27,6 +29,7 @@ const EMPTY_FORM = {
   weekStartDate: '',
   weekEndDate: '',
   weekLabel: '',
+  conceptosExtraordinarios: [],
   // Ingresos - dinero
   totalCargasDinero: '',
   totalVentasDesechoDinero: '',
@@ -132,6 +135,7 @@ export default function CierresPage() {
       weekStartDate: c.week_start_date?.split('T')[0] || '',
       weekEndDate: c.week_end_date?.split('T')[0] || '',
       weekLabel: c.week_label || '',
+      conceptosExtraordinarios: getExtraordinaryEntries(c),
       totalCargasDinero: c.total_cargas_dinero || '',
       totalVentasDesechoDinero: c.total_ventas_desecho_dinero || '',
       totalVentasProcesoDinero: c.total_ventas_proceso_dinero || '',
@@ -237,8 +241,13 @@ export default function CierresPage() {
     setSummaryError('');
     try {
       const method = editing ? 'PUT' : 'POST';
+      const { conceptosExtraordinarios, ...fields } = form;
+      const previousEntries = getExtraordinaryEntries(editing);
       const body = {
-        ...form,
+        ...fields,
+        ...(!sameExtraordinaryEntries(conceptosExtraordinarios, previousEntries) && {
+            conceptosExtraordinarios, conceptosExtraordinariosPrevios: previousEntries,
+          }),
         id: editing?.id,
         detalle_integral: integralData,
         estado_conciliacion: conciliacionStatus,
@@ -252,6 +261,7 @@ export default function CierresPage() {
       if (res.ok) {
         const saved = await res.json();
         setEditing(saved);
+        setForm(current => ({ ...current, conceptosExtraordinarios: getExtraordinaryEntries(saved) }));
         fetchClosings();
         return true;
       }
@@ -269,23 +279,10 @@ export default function CierresPage() {
   const quickStatusChange = async (newStatus) => {
     if (!editing) return;
     const newConc = newStatus === 'cerrado' ? 'cerrado' : (newStatus === 'aprobado' ? 'pendiente_autorizacion' : 'borrador');
-    const body = { 
-      ...form, 
-      id: editing.id, 
-      status: newStatus,
-      estado_conciliacion: newConc,
-      detalle_integral: integralData 
-    };
-    try {
-      await fetch('/api/weekly-closings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+    if (await handleSave({ status: newStatus, estado_conciliacion: newConc })) {
       setForm(f => ({ ...f, status: newStatus }));
       setConciliacionStatus(newConc);
-      fetchClosings();
-    } catch (e) { console.error(e); }
+    }
   };
 
   const handleDelete = async (id) => {
@@ -322,20 +319,11 @@ export default function CierresPage() {
       notes: form.notes,
       detalle_integral: integralData,
     };
-    try {
-      const res = await fetch('/api/weekly-closings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (res.ok) {
-        const updated = await res.json();
-        setForm((f) => ({ ...f, status: updated.status, approvedBy: updated.approved_by || f.approvedBy }));
-        setConciliacionStatus(newConc);
-        fetchClosings();
-        alert(action === 'cerrar' ? 'Cierre cerrado (snapshot guardado).' : 'Estado actualizado.');
-      }
-    } catch (e) { console.error(e); }
+    if (await handleSave(payload)) {
+      setForm(f => ({ ...f, status: newStatus, approvedBy: payload.approvedBy || f.approvedBy }));
+      setConciliacionStatus(newConc);
+      alert(action === 'cerrar' ? 'Cierre cerrado (snapshot guardado).' : 'Estado actualizado.');
+    }
   };
 
   const totals = closingTotals({
@@ -347,6 +335,9 @@ export default function CierresPage() {
   const kgDeLaSemana = totals.kilosPendientes;
 
   const esUtilidad = resultadoDinero >= 0;
+  const extraordinaryReport = form.conceptosExtraordinarios.map(entry => [
+    entry.type === 'ingreso' ? 'Ingreso' : 'Egreso', entry.concept, entry.amount,
+  ]);
 
   // Exportar PDF V8 - multi pestaña + conciliación
   const exportPDF = () => {
@@ -392,6 +383,13 @@ export default function CierresPage() {
     doc.setFontSize(9);
     doc.text(`Utilidad Bruta: ${(integralData?.rentabilidad?.utilidad_bruta || 0).toFixed(2)} | Estado Conc.: ${conciliacionStatus}`, 14, yPos);
 
+    if (extraordinaryReport.length) {
+      autoTable(doc, {
+        startY: yPos + 8,
+        head: [['Tipo', 'Concepto extraordinario', 'Importe (MXN)']],
+        body: extraordinaryReport.map(([type, concept, value]) => [type, concept, fmt(value)]),
+      });
+    }
     doc.save(`cierre_semanal_integral_${form.weekStartDate}.pdf`);
   };
 
@@ -432,6 +430,11 @@ export default function CierresPage() {
     const ws = XLSX.utils.aoa_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Cierre');
+    if (extraordinaryReport.length) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+        ['Tipo', 'Concepto extraordinario', 'Importe (MXN)'], ...extraordinaryReport,
+      ]), 'Conceptos extraordinarios');
+    }
     if (integralData?.origen) {
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(integralData.origen.ventas.map(sale => ({
         ...sale, detail_ids:sale.detail_ids?.join(', '),
@@ -479,7 +482,13 @@ export default function CierresPage() {
       ['Utilidad/Pérdida', resultadoDinero],
     ];
 
-    const csvContent = data.map(row => row.join(',')).join('\n');
+    if (extraordinaryReport.length) {
+      data.push([], ['Tipo', 'Concepto extraordinario', 'Importe (MXN)'],
+        ...extraordinaryReport.map(([type, concept, value]) =>
+          [type, /^[=+@-]/.test(concept) ? "'" + concept : concept, value]));
+    }
+    const csvContent = data.map(row => row.map(value =>
+      `"${String(value ?? '').replaceAll('"', '""')}"`).join(',')).join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
@@ -862,6 +871,10 @@ export default function CierresPage() {
                 )}
               </div>
 
+              <ClosingExtraordinary key={form.weekStartDate} entries={form.conceptosExtraordinarios}
+                onChange={entries => setField('conceptosExtraordinarios', entries)} saving={saving}
+                readOnly={['cerrado', 'aprobado'].includes(form.status)} />
+
               {/* RESULTADOS RÁPIDOS (siempre visibles) */}
               <div className="bg-slate-100 p-4 rounded-2xl flex flex-wrap gap-6 items-center">
                 <div>
@@ -1000,7 +1013,7 @@ export default function CierresPage() {
                   Cancelar
                 </button>
                 <button
-                  onClick={handleSave}
+                  onClick={() => handleSave()}
                   disabled={saving}
                   className="px-5 py-2.5 bg-brand-600 text-white text-sm font-semibold rounded-xl hover:bg-brand-700 disabled:opacity-50 transition-colors flex items-center gap-2"
                 >
