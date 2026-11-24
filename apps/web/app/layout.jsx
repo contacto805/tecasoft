@@ -433,7 +433,7 @@ function LayoutContent({ children }) {
 
 function DashboardShell({ children }) {
   const pathname = usePathname() || "";
-  if (pathname === "/portal-productores" || /^\/(lot|trazabilidad)\/[^/]+$/.test(pathname)) {
+  if (pathname === "/cierres/vista-previa" || pathname === "/portal-productores" || /^\/(lot|trazabilidad)\/[^/]+$/.test(pathname)) {
     return children;
   }
   return (

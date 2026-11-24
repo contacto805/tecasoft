@@ -76,6 +76,7 @@ export default function CierresPage() {
   // Reestructurado - 8 secciones (formato integral + distinción contable/origen)
   const [activeTab, setActiveTab] = useState('resumen');
   const [integralData, setIntegralData] = useState(null);
+  const [summaryPeriod, setSummaryPeriod] = useState(null);
   const [conciliacionStatus, setConciliacionStatus] = useState('borrador');
 
   useEffect(() => { fetchClosings(); }, []);
@@ -198,6 +199,7 @@ export default function CierresPage() {
         if (controller.signal.aborted) return;
         setSummaryError('');
         setIntegralData(prior => full ? data : {...prior,...data});
+        setSummaryPeriod({ start, end });
         setConciliacionStatus(data.conciliacion.estado_general);
         setForm(f => ({
           ...f, totalCargasDinero:data.total_cargas_dinero, totalVentasDesechoDinero:data.total_ventas_desecho_dinero,
@@ -678,7 +680,9 @@ export default function CierresPage() {
 
               {summaryError && <p role="alert" className="text-sm text-red-700">{summaryError}</p>}
               {!validWeek(form.weekStartDate,form.weekEndDate) && <p className="text-sm text-amber-800">Selecciona un período de lunes a domingo.</p>}
-              <ClosingTrace data={integralData} form={form} setField={setField}/>
+              {summaryPeriod?.start === form.weekStartDate && summaryPeriod?.end === form.weekEndDate && (
+                <ClosingTrace data={integralData} period={summaryPeriod} form={form} setField={setField}/>
+              )}
               {/* TABS V8 */}
               <div className="border-b border-slate-200">
                 <div className="flex flex-wrap gap-1 -mb-px">
