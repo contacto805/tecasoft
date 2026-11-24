@@ -41,10 +41,13 @@ export function weeklyPortion(total, from, to, weekStart, weekEnd) {
 
 export function closingTotals(form) {
   const n = key => amount(form[key]);
-  const ingresos = money(n('totalCargasDinero') + n('totalVentasDesechoDinero') + n('totalVentasProcesoDinero'));
+  const extraordinary = form.conceptosExtraordinarios ?? [];
+  const extra = type => extraordinary.reduce((sum, entry) =>
+    entry.type === type ? sum + Math.round(amount(entry.amount) * 100) : sum, 0) / 100;
+  const ingresos = money(n('totalCargasDinero') + n('totalVentasDesechoDinero') + n('totalVentasProcesoDinero') + extra('ingreso'));
   const egresos = money(n('totalEntradasFrutaDinero') + n('totalGastos') + n('totalCuadrillaDinero') +
     n('totalBrokerNotes') + n('nominaSemanal') + n('totalFletes') + n('rentaAplicada') +
-    n('porcentajeLuz') + n('otrosFijos'));
+    n('porcentajeLuz') + n('otrosFijos') + extra('egreso'));
   const salidas = n('totalCargasKg') + n('totalProcesoKg') + n('totalDesechoKg') + n('mermaKg');
   return {
     ingresos, egresos, resultado: money(ingresos - egresos), salidas,

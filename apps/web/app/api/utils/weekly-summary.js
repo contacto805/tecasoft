@@ -2,6 +2,7 @@ import sql from "@/app/api/utils/sql";
 import {fixedExpenseType} from "@/app/api/utils/fixed-expenses";
 import {getWeeklyOrigin} from "@/app/api/utils/weekly-cohort";
 import {amount, closingTotals, dateKey, money, validWeek} from "@/utils/closing-period";
+import {getExtraordinaryEntries} from "@/utils/closing-extraordinary";
 
 export async function getWeeklySummary(start, end) {
   const [origin, [week]] = await Promise.all([
@@ -103,8 +104,9 @@ export function getManualRent(closing) {
   return amount(closing.porcentaje_renta) || null;
 }
 
-export function closingForm(flow, manualRent) {
+export function closingForm(flow, manualRent, extra = []) {
   return {
+    conceptosExtraordinarios:extra,
     totalCargasDinero:flow.total_cargas_dinero, totalVentasDesechoDinero:flow.total_ventas_desecho_dinero,
     totalVentasProcesoDinero:flow.total_ventas_proceso_dinero, valorInventarioMateriales:flow.valor_inventario_materiales,
     inventarioTarimas:flow.inventario_tarimas_por_calibre,
@@ -124,7 +126,7 @@ export async function withLiveClosing(closing) {
   const end = dateKey(closing.week_end_date);
   if (!validWeek(start,end)) return closing;
   const flow = await getWeeklySummary(start,end);
-  const totals = closingTotals(closingForm(flow,getManualRent(closing)));
+  const totals = closingTotals(closingForm(flow,getManualRent(closing),getExtraordinaryEntries(closing)));
   return {
     ...closing, total_cargas_kg:flow.total_cargas_kg, total_cargas_dinero:flow.total_cargas_dinero,
     total_ingresos_dinero:totals.ingresos, total_egresos_dinero:totals.egresos, resultado_dinero:totals.resultado,

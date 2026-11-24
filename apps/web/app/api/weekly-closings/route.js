@@ -5,6 +5,7 @@ import { calculateIntegralLotCost, calculateUtility, calculateMargin } from "@/a
 
 import {closingForm, getManualRent, getWeeklySummary, withLiveClosing} from "@/app/api/utils/weekly-summary";
 import {closingTotals, closingWeek, dateKey, validWeek} from "@/utils/closing-period";
+import {getExtraordinaryEntries, normalizeExtraordinaryEntries, sameExtraordinaryEntries} from "@/utils/closing-extraordinary";
 
 // Core integral calculator - queries ONLY confirmed source tables. No duplication.
 function toNum(v) { return (v == null || isNaN(parseFloat(v))) ? 0 : parseFloat(v); }
@@ -329,7 +330,7 @@ export async function GET(request) {
         }
       }
       const rent = getManualRent(stored);
-      const live = closingTotals(closingForm(flow,rent));
+      const live = closingTotals(closingForm(flow,rent,getExtraordinaryEntries(stored)));
       return NextResponse.json({
         ...supplemental, ...flow, renta_manual:rent, totales_vivos:live,
         guardado:stored && {
@@ -373,14 +374,19 @@ async function prepareClosing(input, existing = null) {
   if (manual !== null && (!Number.isFinite(manual) || manual < 0 || manual > 1000000000)) {
     return {error:"Renta manual inválida."};
   }
+  let extraordinary = getExtraordinaryEntries(existing);
+  if (Object.hasOwn(input,'conceptosExtraordinarios')) {
+    try { extraordinary = normalizeExtraordinaryEntries(input.conceptosExtraordinarios); }
+    catch (error) { return {error:error.message}; }
+  }
   const flow = await getWeeklySummary(start,end);
   return {
-    ...input, ...closingForm(flow,manual), weekStartDate:start, weekEndDate:end,
+    ...input, ...closingForm(flow,manual,extraordinary), weekStartDate:start, weekEndDate:end,
     weekLabel:input.weekLabel ?? existing?.week_label ?? `Semana ${start}`,
     status:input.status ?? existing?.status ?? 'abierto', notes:input.notes ?? existing?.notes ?? null,
     bancos:input.bancos ?? existing?.bancos ?? 0,
     efectivoDisponible:input.efectivoDisponible ?? existing?.efectivo_disponible ?? 0,
-    detalle_integral:{...flow,renta_manual:manual,calculado_en:new Date().toISOString()},
+    detalle_integral:{...flow,renta_manual:manual,conceptos_extraordinarios:extraordinary,calculado_en:new Date().toISOString()},
   };
 }
 
@@ -462,6 +468,14 @@ export async function PUT(request) {
     if (existing.status === 'cerrado' && input.status !== 'abierto') {
       return NextResponse.json({error:"Reabre el cierre para modificar la captura manual."},{status:409});
     }
+    const previousEntries = getExtraordinaryEntries(existing);
+    if (Object.hasOwn(input,'conceptosExtraordinarios')) {
+      const unchanged = sameExtraordinaryEntries(previousEntries,input.conceptosExtraordinariosPrevios);
+      if (!unchanged) return NextResponse.json({error:"Los conceptos cambiaron. Vuelve a abrir el cierre antes de guardar."},{status:409});
+      if (['cerrado','aprobado'].includes(existing.status)) {
+        return NextResponse.json({error:"Reabre el cierre antes de editar los conceptos extraordinarios."},{status:409});
+      }
+    }
     const body = await prepareClosing(input,existing);
     if (body.error) return NextResponse.json({error:body.error},{status:400});
     const {
@@ -520,9 +534,12 @@ export async function PUT(request) {
         snapshot_cierre = CASE WHEN ${status || 'abierto'} = 'cerrado' THEN COALESCE(${detalleIntegral ? JSON.stringify(detalleIntegral) : null}::jsonb, snapshot_cierre) ELSE snapshot_cierre END,
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ${parseInt(id)}
+        AND status IS NOT DISTINCT FROM ${existing.status ?? null}
+        AND COALESCE(detalle_integral->'conceptos_extraordinarios','[]'::jsonb) = ${JSON.stringify(previousEntries)}::jsonb
       RETURNING *
     `;
 
+    if (!result.length) return NextResponse.json({error:"El cierre cambió. Vuelve a abrirlo antes de guardar."},{status:409});
     return NextResponse.json(result[0]);
   } catch (error) {
     console.error("Error updating weekly closing:", error);
