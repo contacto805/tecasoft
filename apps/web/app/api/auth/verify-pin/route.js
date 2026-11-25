@@ -1,72 +1,25 @@
-import sql from "@/app/api/utils/sql";
+import { compare } from "bcryptjs";
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
+import { getVerifiedErpUser } from "@/app/api/utils/erp-session-proof";
+import sql from "@/app/api/utils/sql";
 
 export async function POST(request) {
   try {
-    const { pin } = await request.json();
-    if (!pin || !/^\d{4}$/.test(pin.toString().trim())) {
-      return NextResponse.json({ success: false, error: "PIN debe tener 4 dígitos" }, { status: 400 });
-    }
-
-    const cookieStore = await cookies();
-    let userId = null;
-
-    const possibleTokens = [
-      cookieStore.get("tecavo_session_token")?.value,
-      cookieStore.get("better-auth.session_token")?.value,
-    ].filter(Boolean);
-
-    for (const token of possibleTokens) {
-      if (!token) continue;
-      try {
-        const sessions = await sql`
-          SELECT s."userId"
-          FROM session s
-          WHERE s.token = ${token} AND s."expiresAt" > NOW()
-          LIMIT 1
-        `;
-        if (sessions.length > 0) {
-          userId = sessions[0].userId;
-          break;
-        }
-      } catch (_) {}
-      try {
-        const decoded = Buffer.from(token, "base64").toString();
-        const sessionData = JSON.parse(decoded);
-        if (sessionData.userId) {
-          userId = sessionData.userId;
-          break;
-        }
-      } catch (_) {}
-    }
-
-    if (!userId) {
-      return NextResponse.json({ success: false, error: "No autenticado" }, { status: 401 });
-    }
-
-    const result = await sql`
-      SELECT u.id, a.password as stored_pin
-      FROM "user" u
-      LEFT JOIN account a ON u.id = a."userId" AND a."providerId" = 'credential'
-      WHERE u.id = ${userId}
-      LIMIT 1
-    `;
-
-    if (result.length === 0) {
-      return NextResponse.json({ success: false, error: "Usuario no encontrado" }, { status: 404 });
-    }
-
-    const u = result[0];
-    if (!u.stored_pin) {
-      return NextResponse.json({ success: false, error: "Usuario no tiene PIN configurado" }, { status: 400 });
-    }
-
-    const match = pin.toString().trim() === u.stored_pin.toString().trim();
-
-    return NextResponse.json({ success: match, isSuperAdmin: true });
-  } catch (err) {
-    console.error("verify-pin error", err);
-    return NextResponse.json({ success: false, error: "Error servidor" }, { status: 500 });
+    const user=await getVerifiedErpUser();
+    if (!user) return NextResponse.json({success:false,error:"Inicia sesión."},{status:401});
+    const pin=String((await request.json()).pin||"").trim();
+    if (!/^(?:\d{4}|\d{6})$/.test(pin)) return NextResponse.json({success:false,error:"PIN inválido."},{status:400});
+    const [budget]=await sql`INSERT INTO erp_login_attempts(email,attempts,started_at) VALUES('verify:'||${user.id},1,now())
+      ON CONFLICT(email) DO UPDATE SET
+        attempts=CASE WHEN erp_login_attempts.started_at<now()-interval '15 minutes' THEN 1 ELSE least(erp_login_attempts.attempts+1,6) END,
+        started_at=CASE WHEN erp_login_attempts.started_at<now()-interval '15 minutes' THEN now() ELSE erp_login_attempts.started_at END RETURNING attempts`;
+    if (budget.attempts>5) return NextResponse.json({success:false,error:"Intenta de nuevo en 15 minutos."},{status:429});
+    const [account]=await sql`SELECT password FROM account WHERE "userId"=${user.id} AND "providerId"='credential' LIMIT 1`;
+    const secret=account?.password;
+    const match=secret?.startsWith("$2")?await compare(pin,secret):!!secret&&secret===pin;
+    return NextResponse.json({success:match,isSuperAdmin:!!(match&&user.is_super_admin)});
+  } catch (error) {
+    console.error("Verificación del PIN de ERP",error.message);
+    return NextResponse.json({success:false,error:"No se pudo verificar el PIN."},{status:500});
   }
 }
