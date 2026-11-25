@@ -202,8 +202,8 @@ export default function LandingPage() {
   };
 
   const handleCredentialLogin = async () => {
-    if (!credEmail.trim() || credPin.length !== 4) {
-      setCredError('Ingresa tu correo y el PIN de 4 dígitos asignado');
+    if (!credEmail.trim() || !/^(?:\d{4}|\d{6})$/.test(credPin)) {
+      setCredError('Ingresa tu correo y el PIN de 4 o 6 dígitos asignado');
       return;
     }
     setCredLoading(true);
@@ -314,7 +314,7 @@ export default function LandingPage() {
             <div className="mb-5">
               <div className="text-2xl font-semibold tracking-tight">{selectedCredential.label}</div>
               <p className="text-sm text-slate-500 mt-1">
-                Ingresa correo y PIN (4 dígitos) asignado. Los Superadministradores tienen acceso completo a todos los módulos y datos una vez autenticados.
+                Ingresa correo y PIN (4 o 6 dígitos) asignado. Los Superadministradores tienen acceso completo a todos los módulos y datos una vez autenticados.
               </p>
             </div>
 
@@ -330,8 +330,8 @@ export default function LandingPage() {
               <input
                 type="text"
                 inputMode="numeric"
-                maxLength={4}
-                placeholder="PIN (4 dígitos)"
+                maxLength={6}
+                placeholder="PIN (4 o 6 dígitos)"
                 value={credPin}
                 onChange={(e) => setCredPin(e.target.value.replace(/\D/g, ''))}
                 className="w-full border px-4 py-3 rounded-2xl text-center font-mono tracking-[6px] text-xl"
