@@ -1,39 +1,6 @@
-import sql from "@/app/api/utils/sql";
-import { cookies } from "next/headers";
+import { getVerifiedErpUser } from "@/app/api/utils/erp-session-proof";
 
-export async function getCurrentUser() {
-  const cookieStore = await cookies();
-  const possibleTokens = [
-    cookieStore.get("tecavo_session_token")?.value,
-    cookieStore.get("better-auth.session_token")?.value,
-  ].filter(Boolean);
-
-  for (const token of possibleTokens) {
-    if (!token) continue;
-    try {
-      const sessions = await sql`
-        SELECT s."userId", u.id, u.email, u.name, u.is_super_admin, u.admin_role
-        FROM session s
-        JOIN "user" u ON s."userId" = u.id
-        WHERE s.token = ${token} AND s."expiresAt" > NOW()
-        LIMIT 1
-      `;
-      if (sessions.length) return sessions[0];
-    } catch (_) {}
-    try {
-      const decoded = Buffer.from(token, "base64").toString();
-      const data = JSON.parse(decoded);
-      const uid = data.userId || data.id;
-      if (uid) {
-        const [u] = await sql`
-          SELECT id, email, name, is_super_admin, admin_role FROM "user" WHERE id = ${uid} LIMIT 1
-        `;
-        if (u) return u;
-      }
-    } catch (_) {}
-  }
-  return null;
-}
+export const getCurrentUser = getVerifiedErpUser;
 
 export async function isSuperAdmin() {
   const user = await getCurrentUser();
