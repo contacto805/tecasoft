@@ -24,7 +24,7 @@ export async function getVerifiedErpUser() {
     if (expected && timingSafeEqual(expected, Buffer.from(proof, "hex"))) {
       const data = JSON.parse(Buffer.from(token, "base64").toString("utf8"));
       if (data.userId && data.expiresAt > Date.now()) {
-        const [user] = await sql`SELECT id, admin_role, is_super_admin FROM "user" WHERE id = ${data.userId}`;
+        const [user] = await sql`SELECT id, name, email, admin_role, is_super_admin FROM "user" WHERE id = ${data.userId}`;
         if (user) return user;
       }
     }
@@ -33,7 +33,7 @@ export async function getVerifiedErpUser() {
   if (!storedToken) return null;
   try {
     const [user] = await sql`
-      SELECT u.id, u.admin_role, u.is_super_admin FROM session s JOIN "user" u ON u.id = s."userId"
+      SELECT u.id, u.name, u.email, u.admin_role, u.is_super_admin FROM session s JOIN "user" u ON u.id = s."userId"
       WHERE s.token = ${storedToken} AND s."expiresAt" > NOW()
     `;
     return user || null;
