@@ -25,6 +25,10 @@ export async function getWeeklySummary(start, end) {
               AND e.id::text=COALESCE(to_jsonb(o)->>'source_id',to_jsonb(o)->>'related_id')))
           AND lower(COALESCE(o.cost_category,'')) NOT IN ('produccion','compra_inventario','nomina','nómina')
         UNION ALL
+        SELECT 'Material consumido',d.id,p.packing_date,p.folio_tarima,d.costo_total
+        FROM material_deductions d JOIN pallet_output_summary p ON p.id=d.pallet_output_id
+        WHERE p.packing_date BETWEEN ${start}::date AND ${end}::date
+        UNION ALL
         SELECT 'Fletes', f.id, COALESCE(f.freight_date::date,f.created_at::date), NULL, f.price::numeric
         FROM crew_freights f WHERE COALESCE(f.freight_date::date,f.created_at::date) BETWEEN ${start}::date AND ${end}::date
         UNION ALL
@@ -63,7 +67,7 @@ export async function getWeeklySummary(start, end) {
     total_ventas_desecho_dinero:origin.desecho_mxn, total_ventas_proceso_dinero:origin.proceso_mxn,
     total_entradas_fruta_dinero:origin.entrada_mxn, total_entradas_fruta_kg:origin.kg_recibidos,
     total_desecho_kg:origin.kg_desecho, total_proceso_kg:origin.kg_proceso, merma_kg:origin.kg_merma,
-    total_gastos:sumConcept("Gastos ordinarios","Costos operativos"), total_cuadrilla_dinero:sumConcept("Cuadrillas"),
+    total_gastos:sumConcept("Gastos ordinarios","Costos operativos","Material consumido"), total_cuadrilla_dinero:sumConcept("Cuadrillas"),
     movimientos_mxn:week.financial_lines,
     produccion:{
       kg_recibidos:origin.kg_recibidos, kg_lotificados:origin.lotes.reduce((sum,lot)=>sum+amount(lot.packed_kg),0),
@@ -78,7 +82,7 @@ export async function getWeeklySummary(start, end) {
     valor_inventario_materiales:amount(week.materiales), inventario_tarimas_por_calibre:origin.inventario_por_calibre,
     conceptos_fijos:origin.renta_y_fijos,
     renta_automatica:fixed.renta, luz_automatica:money(fixed.luz_frio + fixed.luz_empaque),
-    otros_fijos:money(fixed.renta_unidades + fixed.mantenimientos), frio_kg:origin.kg_frio,
+    otros_fijos:money(fixed.renta_unidades + fixed.mantenimientos), frio_kg:origin.kg_frio, valor_inventario_frio:origin.valor_fruta_en_frio_mxn,
     closing_id:week.closing_id,
     fuentes:[
       ['Recepción y costo de fruta','Pesadas de ingreso; en su ausencia, pesadas individuales. Precio pactado del lote.'],
