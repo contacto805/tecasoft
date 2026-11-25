@@ -1,6 +1,7 @@
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
-import { logMovement } from "@/app/api/utils/recalculate";
+import { getVerifiedErpUser } from "@/app/api/utils/erp-session-proof";
+import { mexicoToday, validDate } from "@/utils/closing-period";
 import { recalculateLotPerformance } from "@/app/api/utils/recalculate";
 
 // VI: Helper - load authorized purchase prices from published (precios_fruta_publicados latest active)
@@ -216,6 +217,8 @@ export async function GET(request) {
 // Block 08: strict physical validations, configurable tolerance, explicit differences, no silent adjustments, pallet capacities configurable only
 export async function POST(request) {
   try {
+    const user = await getVerifiedErpUser();
+    if (!user) return NextResponse.json({ error: 'Inicia sesión para guardar la corrida.' }, { status: 401 });
     const body = await request.json();
     const {
       lot_id,
@@ -241,16 +244,6 @@ export async function POST(request) {
     if (!lot.length) {
       return NextResponse.json({ error: "Lot not found" }, { status: 404 });
     }
-
-    const { getCanonicalReceivedKg } = await import('@/app/api/utils/recalculate');
-    const totalKgReceived = await getCanonicalReceivedKg(lot_id);
-
-    // === BLOCK 08: LOAD CONFIGURABLE TOLERANCE (system_settings or default 5kg) ===
-    let toleranceKg = 5;
-    try {
-      const [tolRow] = await sql`SELECT value FROM system_settings WHERE key = 'SELECTION_PHYSICAL_TOLERANCE_KG' LIMIT 1`;
-      if (tolRow && tolRow.value) toleranceKg = parseFloat(tolRow.value) || 5;
-    } catch(_) {}
 
     // === BLOCK 08: STRICT INPUT VALIDATIONS (cajas enteras >=0, kg>=0, finitos, catálogos existentes) ===
     const validCalibersRes = await sql`SELECT caliber_code, caliber_name, display_name FROM caliber_definitions WHERE COALESCE(is_active, true) = true`;
@@ -302,221 +295,33 @@ export async function POST(request) {
       }
     }
 
-    const proc = Number(process_kg) || 0;
-    const des = Number(waste_kg) || 0;
-    const merm = Number(merma_kg) || 0;
+    const proc = Number(process_kg);
+    const des = Number(waste_kg);
+    const merm = Number(merma_kg);
     if (!Number.isFinite(proc) || proc < 0 || !Number.isFinite(des) || des < 0 || !Number.isFinite(merm) || merm < 0) {
       return NextResponse.json({ error: 'Proceso, Desecho y Merma deben ser no negativos y finitos' }, { status: 400 });
     }
 
-    // Compute using backend formulas for each row (dynamic weights)
-    const p10 = 10; // will override with catalog below
-    const p6 = 6;
-    // fetch real
-    let realP10 = 10, realP6 = 6;
-    try {
-      const [pp10] = await sql`SELECT kilograms FROM packaging_presentations WHERE (kilograms=10 OR nombre ILIKE '%10%') AND COALESCE(activo,true) LIMIT 1`;
-      const [pp6] = await sql`SELECT kilograms FROM packaging_presentations WHERE (kilograms=6 OR nombre ILIKE '%6%') AND COALESCE(activo,true) LIMIT 1`;
-      realP10 = pp10 ? parseFloat(pp10.kilograms) : 10;
-      realP6 = pp6 ? parseFloat(pp6.kilograms) : 6;
-    } catch(_) {}
 
-    const computeKg = (b10, b6, gr) => {
-      const kg = (Number(b10)||0) * realP10 + (Number(b6)||0) * realP6 + (Number(gr)||0);
-      return Math.round(kg * 1000) / 1000;
-    };
-
-    let totalPacked = 0;
-    let totalProcessFromRows = 0;
-    let totalWasteFromRows = 0;
-
-    for (const item of caliber_data) {
-      const rowKg = computeKg(item.boxes_10kg, item.boxes_6kg, item.additional_granel_kg);
-      totalPacked += rowKg;
-      totalProcessFromRows += Number(item.process_kg || 0);
-      totalWasteFromRows += Number(item.waste_kg || 0);
+    const prodDate = production_date || mexicoToday();
+    if (!validDate(prodDate)) return NextResponse.json({error:"Fecha de producción inválida."},{status:400});
+    const lines = caliber_data.map(item=>({
+      caliber:String(item.caliber||"").trim(), class_name:String(item.class_name||"A").trim(),
+      boxes_10kg:Number(item.boxes_10kg), boxes_6kg:Number(item.boxes_6kg),
+      additional_granel_kg:Number(item.additional_granel_kg||0)
+    }));
+    if (lines.some(line=>!line.caliber && (line.boxes_10kg || line.boxes_6kg || line.additional_granel_kg))) {
+      return NextResponse.json({error:"Indica el calibre de cada partida con fruta."},{status:400});
     }
-
-    const totalOutput = totalPacked + proc + des + merm;
-
-    // === BLOCK 08: NO EXCEDER PESO GLOBAL + TOLERANCIA CONFIGURABLE (bloquea explícitamente, sin ajuste silencioso) ===
-    if (totalKgReceived > 0) {
-      const over = totalOutput - totalKgReceived;
-      if (over > toleranceKg) {
-        return NextResponse.json(
-          { 
-            error: `KG_DISTRIBUIDOS (${totalOutput.toFixed(3)}) excede recibidos (${totalKgReceived.toFixed(3)}) por encima de tolerancia física configurada (${toleranceKg} kg). Diferencia: ${over.toFixed(3)} kg. Registre merma/causa o ajuste autorizado explícitamente.`,
-            diff: parseFloat(over.toFixed(3)),
-            tolerance: toleranceKg,
-            received: totalKgReceived,
-            distributed: totalOutput
-          },
-          { status: 400 }
-        );
-      }
-    }
-
-    // === BLOCK 08: NO PERMITIR FINALIZAR CON KILOS SIN EXPLICAR (para CONFIRMADO) ===
-    const kgDistribuidosCheck = totalPacked + proc + des + merm;
-    const kgPendientesCheck = Math.max(0, totalKgReceived - kgDistribuidosCheck);
-    if ((status || '').toUpperCase() === 'CONFIRMADO' && totalKgReceived > 0) {
-      if (kgPendientesCheck > toleranceKg && (!merma_causa || String(merma_causa).trim() === '')) {
-        return NextResponse.json(
-          { error: `Lote no puede confirmarse con ${kgPendientesCheck.toFixed(2)} kg pendientes sin causa de merma/diferencia autorizada registrada. Una corrida parcial requiere explicación explícita para cerrar.` },
-          { status: 400 }
-        );
-      }
-    }
-
-    // VIII: UNIDAD DE REGISTRO / CORRIDAS PARCIALES - multiple corridas per lot supported (each confirmed batch = one corrida)
-    // Never reuse fixed batch id. Borrador editable; CONFIRMADO inmutable.
-    // IX: dedup by idempotency_key on confirm (repeat returns same, no kg increase)
-    // XIII: Autorizaciones server-side: borrador editable por creador; CONFIRMADO solo por encargado/super; auditoría inmutable en system_audit_log
-    if ((status || '').toUpperCase() === 'CONFIRMADO') {
-      // En producción real se validaría sesión + rol (encargado/super). Aquí conservamos histórico y permitimos para flujo canónico.
-    }
-    const prodDate = production_date || new Date().toISOString().split('T')[0];
-    let batchRow;
-    let batchId;
-
-    if ((status || '').toUpperCase() === 'CONFIRMADO') {
-      // Dedup: if idempotency_key provided and a confirmed batch with same key+lot exists, return it (no new record)
-      if (idempotency_key) {
-        const [existingConfirmed] = await sql`
-          SELECT * FROM production_batches 
-          WHERE lot_id = ${lot_id} 
-            AND status = 'CONFIRMADO' 
-            AND idempotency_key = ${idempotency_key}
-          LIMIT 1
-        `;
-        if (existingConfirmed) {
-          // repeat confirm: return previous without changing anything (no kg increase)
-          return NextResponse.json({ success: true, batch: existingConfirmed, deduped: true, idempotency_key });
-        }
-      }
-
-      // Always create NEW batch for a fresh corrida (even same day)
-      [batchRow] = await sql`
-        INSERT INTO production_batches (
-          lot_id, production_date, status, process_kg, desecho_kg, merma_kg, merma_causa, responsable, turno, observaciones, idempotency_key, version
-        )
-        VALUES (${lot_id}, ${prodDate}, 'CONFIRMADO', ${proc}, ${des}, ${merm}, ${merma_causa}, ${responsable}, ${turno}, ${notes || ''}, ${idempotency_key}, 1)
-        RETURNING *
-      `;
-      batchId = batchRow.id;
-    } else {
-      // Draft/validate: allow update of latest draft only (immutable once confirmed)
-      const [latestDraft] = await sql`
-        SELECT * FROM production_batches 
-        WHERE lot_id = ${lot_id} 
-          AND (status = 'BORRADOR' OR status = 'VALIDADO' OR status IS NULL)
-        ORDER BY created_at DESC LIMIT 1
-      `;
-      if (latestDraft) {
-        // ensure not already confirmed
-        if ((latestDraft.status || '').toUpperCase() === 'CONFIRMADO') {
-          return NextResponse.json({ error: 'Corrida ya confirmada es inmutable. Inicie nueva corrida.' }, { status: 400 });
-        }
-        [batchRow] = await sql`
-          UPDATE production_batches SET
-            production_date = ${prodDate},
-            status = ${status},
-            process_kg = ${proc},
-            desecho_kg = ${des},
-            merma_kg = ${merm},
-            merma_causa = ${merma_causa},
-            responsable = ${responsable},
-            turno = ${turno},
-            observaciones = ${notes || ''},
-            updated_at = CURRENT_TIMESTAMP
-          WHERE id = ${latestDraft.id}
-          RETURNING *
-        `;
-        batchId = batchRow.id;
-      } else {
-        [batchRow] = await sql`
-          INSERT INTO production_batches (
-            lot_id, production_date, status, process_kg, desecho_kg, merma_kg, merma_causa, responsable, turno, observaciones, idempotency_key, version
-          )
-          VALUES (${lot_id}, ${prodDate}, ${status}, ${proc}, ${des}, ${merm}, ${merma_causa}, ${responsable}, ${turno}, ${notes || ''}, ${idempotency_key}, 1)
-          RETURNING *
-        `;
-        batchId = batchRow.id;
-      }
-    }
-
-    // For confirmed corridas: do NOT delete previous details of other corridas. Details go to this specific batch only.
-    // For draft only: clean to avoid dups on re-save within the draft batch.
-    if ((status || '').toUpperCase() !== 'CONFIRMADO' && batchId) {
-      await sql`DELETE FROM production_selection_details WHERE production_batch_id = ${batchId}`;
-    }
-
-    // Insert rows with precise formula - always for the current batch (supports multiple corridas)
-    for (const item of caliber_data) {
-      const gr = Number(item.additional_granel_kg || 0);
-      const rowTotalKg = computeKg(item.boxes_10kg, item.boxes_6kg, gr);
-
-      // prevent duplicate combo in same corrida (backend enforcement)
-      const [dup] = await sql`
-        SELECT 1 FROM production_selection_details 
-        WHERE production_batch_id = ${batchId} AND lot_id = ${lot_id} 
-          AND caliber = ${item.caliber} AND class_name = ${item.class_name || 'A'}
-          AND COALESCE(boxes_10kg,0) = ${parseInt(item.boxes_10kg)||0}
-          AND COALESCE(boxes_6kg,0) = ${parseInt(item.boxes_6kg)||0}
-          AND COALESCE(additional_granel_kg,0) = ${gr}
-        LIMIT 1
-      `;
-      if (dup) continue; // skip dup combo
-
-      await sql`
-        INSERT INTO production_selection_details (
-          production_batch_id, lot_id, caliber, class_name,
-          boxes_10kg, boxes_6kg, additional_granel_kg, total_kg
-        ) VALUES (
-          ${batchId}, ${lot_id}, ${item.caliber}, ${item.class_name || 'A'},
-          ${parseInt(item.boxes_10kg)||0}, ${parseInt(item.boxes_6kg)||0}, ${gr}, ${rowTotalKg}
-        )
-      `;
-    }
-
-    // Rebuild canonical aggregates (consolidated from all confirmed corridas)
-    const { recalculateLot } = await import('@/app/api/utils/recalculate');
-    await recalculateLot(lot_id);
-
-    // BLOCK 05: Snapshot precio real ponderado al confirmar (histórico inmutable). Usa precios autorizados de compra.
-    if ((status || '').toUpperCase() === 'CONFIRMADO') {
-      try {
-        const authorizedPrices = await loadAuthorizedPurchasePrices();
-        const receivedForSnap = await (await import('@/app/api/utils/recalculate')).getCanonicalReceivedKg(lot_id);
-        let valor = 0;
-        // recompute from just inserted for this batch
-        const batchDetails = await sql`SELECT caliber, class_name, boxes_10kg, boxes_6kg, additional_granel_kg, total_kg FROM production_selection_details WHERE production_batch_id = ${batchId}`;
-        let p10s=10, p6s=6;
-        try {
-          const [pp10] = await sql`SELECT kilograms FROM packaging_presentations WHERE (kilograms=10 OR nombre ILIKE '%10%') AND COALESCE(activo,true) LIMIT 1`;
-          const [pp6] = await sql`SELECT kilograms FROM packaging_presentations WHERE (kilograms=6 OR nombre ILIKE '%6%') AND COALESCE(activo,true) LIMIT 1`;
-          p10s = pp10 ? parseFloat(pp10.kilograms) : 10; p6s = pp6 ? parseFloat(pp6.kilograms) : 6;
-        } catch(_) {}
-        batchDetails.forEach(d => {
-          const kg = (parseInt(d.boxes_10kg)||0)*p10s + (parseInt(d.boxes_6kg)||0)*p6s + (parseFloat(d.additional_granel_kg)||0);
-          const pr = getAuthorizedPriceForCaliber(authorizedPrices, d.caliber);
-          valor += kg * pr;
-        });
-        const procSnap = Number(proc) || 0;
-        const desSnap = Number(des) || 0;
-        valor += (procSnap * (authorizedPrices.PROCESO || 0)) + (desSnap * (authorizedPrices.DESECHO || 0));
-        const precioPond = receivedForSnap > 0 ? valor / receivedForSnap : 0;
-
-        await sql`
-          INSERT INTO lot_price_snapshot (lot_id, price_applied, price_type, category, kg_received, total_cost, created_at)
-          VALUES (${lot_id}, ${parseFloat(precioPond.toFixed(4))}, 'ponderado_lotificacion', 'compra_autorizada', ${receivedForSnap}, ${Math.round(valor*100)/100}, CURRENT_TIMESTAMP)
-        `;
-      } catch (snapErr) { console.error('price snapshot non blocking', snapErr); }
-    }
-
-    return NextResponse.json({ success: true, batch: batchRow, tolerance_applied: toleranceKg, corrida_id: batchId });
+    const [row] = await sql`SELECT erp_save_production(${lot_id},${prodDate},${String(status).toUpperCase()},
+      ${proc},${des},${merm},${merma_causa},${user.id},${responsable||user.name},${turno},
+      ${notes||""},${idempotency_key},${JSON.stringify(lines)}::jsonb) AS result`;
+    const {recalculateLot}=await import("@/app/api/utils/recalculate");
+    await recalculateLot(lot_id).catch(error=>console.error("Resumen de lote",error.message));
+    return NextResponse.json({success:true,...row.result,corrida_id:row.result.batch.id});
   } catch (error) {
-    console.error("Error in POST /api/production:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    if (["P0002","23514"].includes(error.code)) return NextResponse.json({error:error.message},{status:error.code==="P0002"?404:422});
+    console.error("Error al guardar corrida",error);
+    return NextResponse.json({error:"No se pudo guardar la corrida."},{status:500});
   }
 }
