@@ -21,7 +21,7 @@ export default function LoginPage() {
 
   const handlePinChange = (e) => {
     const value = e.target.value.replace(/\D/g, ''); // Only digits
-    if (value.length <= 4) {
+    if (value.length <= 6) {
       setPin(value);
     }
   };
@@ -31,29 +31,24 @@ export default function LoginPage() {
     setError('');
 
     // Validate PIN length
-    if (pin.length !== 4) {
-      setError(t('login.pinLengthError', language));
+    if (!/^(?:\d{4}|\d{6})$/.test(pin)) {
+      setError(language === 'es' ? 'El PIN debe tener 4 o 6 dígitos.' : 'The PIN must have 4 or 6 digits.');
       return;
     }
 
     setLoading(true);
 
-    // 🔍 FRONTEND LOG - What we're sending
     const payload = {
       email: email.trim().toLowerCase(),
       pin: pin,
     };
-    console.log('========================================');
-    console.log('🔵 FRONTEND: Login form submitted (PIN Auth)');
-    console.log('🔵 FRONTEND: Raw email from input:', email);
-    console.log('🔵 FRONTEND: Raw PIN from input:', pin);
-    console.log('🔵 FRONTEND: Email length:', email.length);
-    console.log('🔵 FRONTEND: PIN length:', pin.length);
-    console.log('🔵 FRONTEND: PIN is numeric:', /^\d{4}$/.test(pin));
-    console.log('🔵 FRONTEND: Trimmed & lowercased email:', payload.email);
-    console.log('🔵 FRONTEND: Payload being sent:', payload);
-    console.log('🔵 FRONTEND: Payload as JSON string:', JSON.stringify(payload));
-    console.log('========================================');
+
+
+
+
+
+
+
 
     try {
       const response = await fetch('/api/auth/login-simple', {
@@ -63,29 +58,27 @@ export default function LoginPage() {
         credentials: 'include',
       });
 
-      console.log('🔵 FRONTEND: Response status:', response.status);
-      console.log('🔵 FRONTEND: Response ok:', response.ok);
+
 
       const data = await response.json();
-      console.log('🔵 FRONTEND: Response data:', data);
+
 
       if (!response.ok || !data.success) {
-        console.log('🔵 FRONTEND: Login failed:', data.error);
+
         setError(data.error || t('login.invalidCredentials', language));
         setLoading(false);
         return;
       }
 
-      console.log('🔵 FRONTEND: Login successful!');
-      console.log('🔵 FRONTEND: User data:', data.user);
-      console.log('🔵 FRONTEND: Token received:', data.token?.substring(0, 30) + '...');
-      console.log('🔵 FRONTEND: Redirecting to dashboard...');
+
+
+
 
       // Login successful - session cookie is set
       // Force reload after redirect to ensure auth state is refreshed
       window.location.href = '/';
     } catch (err) {
-      console.error('Login error:', err);
+
       setError(t('login.connectionError', language));
       setLoading(false);
     }
@@ -100,7 +93,7 @@ export default function LoginPage() {
         setCredentialsMessage(data.message);
       }
     } catch (err) {
-      console.error('SMTP status check error:', err);
+
     }
   };
 
@@ -136,7 +129,7 @@ export default function LoginPage() {
         setCredentialsMessage('');
       }, 3000);
     } catch (err) {
-      console.error('Send credentials error:', err);
+
       setCredentialsMessage('Error de conexión. Verifica tu conexión a internet e intenta nuevamente.');
     } finally {
       setCredentialsLoading(false);
@@ -196,13 +189,14 @@ export default function LoginPage() {
                 {t('login.pin', language)}
               </label>
               <input
-                type="text"
+                type="password"
+                autoComplete="current-password"
                 inputMode="numeric"
-                pattern="\d{4}"
+                pattern="(?:\d{4}|\d{6})"
                 value={pin}
                 onChange={handlePinChange}
                 placeholder={t('login.pinPlaceholder', language)}
-                maxLength="4"
+                maxLength={6}
                 required
                 className="w-full px-4 py-4 rounded-lg border-2 border-slate-300 bg-white text-slate-900 placeholder-slate-400 text-center focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition-all font-black text-4xl tracking-[1rem]"
               />

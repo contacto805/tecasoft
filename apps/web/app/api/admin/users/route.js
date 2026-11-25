@@ -1,9 +1,14 @@
+import { hash } from "bcryptjs";
+import { getVerifiedErpUser } from "@/app/api/utils/erp-session-proof";
 import sql from "@/app/api/utils/sql";
 import { NextResponse } from "next/server";
 
 // List admin users (for assignments and general admin group)
 export async function GET() {
   try {
+    const caller = await getVerifiedErpUser();
+    if (!caller) return NextResponse.json({error:'Inicia sesión.'},{status:401});
+    if (!caller.is_super_admin && caller.admin_role !== 'administrador') return NextResponse.json({error:'Acceso restringido.'},{status:403});
     const users = await sql`
       SELECT id, name, email, admin_role, is_super_admin
       FROM "user"
@@ -21,6 +26,7 @@ export async function GET() {
 // Create new user
 export async function POST(request) {
   try {
+    if (!(await getVerifiedErpUser())?.is_super_admin) return NextResponse.json({error:"Acceso exclusivo de Superadministración."},{status:403});
     const { name, email, pin, is_super_admin, admin_role } = await request.json();
 
     const n = String(name || '').trim();
@@ -34,9 +40,9 @@ export async function POST(request) {
       );
     }
 
-    if (!/^\d{4}$/.test(p)) {
+    if (!/^(?:\d{4}|\d{6})$/.test(p)) {
       return NextResponse.json(
-        { error: "El PIN debe tener exactamente 4 dígitos" },
+        { error: "El PIN debe tener 4 o 6 dígitos" },
         { status: 400 }
       );
     }
@@ -60,44 +66,22 @@ export async function POST(request) {
       );
     }
 
-    const callerIsSuper = await (async () => {
-      // lightweight check
-      const { getCurrentUser } = await import('@/app/api/utils/super-admin');
-      const u = await getCurrentUser();
-      return !!(u && (u.is_super_admin || u.admin_role === 'superadministrador'));
-    })();
-    if ((!!is_super_admin || (admin_role||'').toLowerCase()==='superadministrador') && !callerIsSuper) {
-      return NextResponse.json({ error: 'Solo Superadministrador puede crear usuarios Superadministrador' }, { status: 403 });
-    }
-
     const roleValue = is_super_admin ? 'superadministrador' : (admin_role || 'administrador');
 
     // Generate UUID for new user
     const userId = crypto.randomUUID();
 
-    // Create user with roles
-    await sql`
-      INSERT INTO "user" (id, name, email, "emailVerified", "createdAt", "updatedAt", is_super_admin, admin_role)
-      VALUES (${userId}, ${n}, ${e}, false, NOW(), NOW(), ${!!is_super_admin}, ${roleValue})
-    `;
-
-    // Create account with PIN (always credential provider for PIN login)
-    const accountId = crypto.randomUUID();
-    await sql`
-      INSERT INTO account (id, "userId", "accountId", "providerId", password, "createdAt", "updatedAt")
-      VALUES (${accountId}, ${userId}, ${e}, 'credential', ${p}, NOW(), NOW())
-    `;
-
-    return NextResponse.json({
-      success: true,
-      userId,
-      message: "Usuario creado exitosamente"
-    });
+    const pinHash=await hash(p,12);
+    await sql.transaction([
+      sql`INSERT INTO "user"(id,name,email,"emailVerified",is_super_admin,admin_role)
+        VALUES(${userId},${n},${e},false,${!!is_super_admin},${roleValue})`,
+      sql`INSERT INTO account(id,"userId","accountId","providerId",password)
+        VALUES(${crypto.randomUUID()},${userId},${e},'credential',${pinHash})`
+    ]);
+    return NextResponse.json({success:true,userId,message:"Usuario creado exitosamente"});
   } catch (error) {
-    console.error("Error creating user:", error);
-    return NextResponse.json(
-      { error: "Error al crear usuario" },
-      { status: 500 }
-    );
+    if (error.code==="23505") return NextResponse.json({error:"Ya existe un usuario con ese correo."},{status:409});
+    console.error("Error creando usuario",error.message);
+    return NextResponse.json({error:"No se pudo crear el usuario."},{status:500});
   }
 }

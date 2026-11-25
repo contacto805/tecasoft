@@ -79,6 +79,7 @@ export async function POST(request) {
                  r.position, r.boxes, r.price, round(r.boxes * r.price,2) AS amount
           FROM requested r JOIN pallet_output_summary p ON p.id=r.pallet_id
           WHERE p.embarque_id IS NULL AND UPPER(COALESCE(p.estado,'')) NOT IN ('EMBARCADA','CANCELADA','REEMPACADA')
+            AND (p.boxes_count IS NULL OR p.boxes_count=r.boxes)
             AND p.total_kg > 0 AND p.lot_id IS NOT NULL AND UPPER(TRIM(p.ubicacion_actual))=r.position
         ), totals AS (
           SELECT SUM(amount) AS amount, SUM(total_kg) AS kg FROM stock HAVING COUNT(*)=${selection.length} AND NOT EXISTS (

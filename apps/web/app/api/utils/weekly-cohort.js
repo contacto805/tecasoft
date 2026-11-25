@@ -28,7 +28,8 @@ function cohortRows(start, end) {
     ), cold AS (
       SELECT p.lot_id, SUM(p.total_kg) AS kg, SUM(p.pallet_count) AS pallets,
         jsonb_agg(jsonb_build_object('id',p.id,'folio',p.folio_tarima,'caliber',p.caliber,
-          'kg',p.total_kg,'pallets',p.pallet_count,'status',p.estado) ORDER BY p.id) AS details
+          'kg',p.total_kg,'pallets',p.pallet_count,'status',p.estado,
+          'presentacion_kg',p.package_kg,'cajas',p.boxes_count,'configuracion_id',p.pallet_config_id,'capacidad_cajas',p.capacity_snapshot) ORDER BY p.id) AS details
       FROM pallet_output_summary p JOIN cohort c ON p.lot_id = c.lot_id
       WHERE p.embarque_id IS NULL AND UPPER(COALESCE(p.estado,'')) NOT IN ('EMBARCADA','CANCELADA','REEMPACADA')
       GROUP BY p.lot_id
@@ -44,6 +45,15 @@ function cohortRows(start, end) {
       ) ps ON true
       WHERE UPPER(COALESCE(pb.status,'')) = 'CONFIRMADO'
       GROUP BY pb.lot_id
+    ), repack AS (
+      SELECT d.lot_id, SUM(d.kg) FILTER (WHERE d.destination_type='proceso') AS process_kg,
+        SUM(d.kg) FILTER (WHERE d.destination_type='desecho') AS waste_kg,
+        SUM(d.kg) FILTER (WHERE d.destination_type='merma') AS loss_kg,
+        array_agg(DISTINCT o.id ORDER BY o.id) AS ids
+      FROM reempaque_details d JOIN reempaque_operations o ON o.id=d.reempaque_id
+      JOIN cohort c ON c.lot_id=d.lot_id
+      WHERE o.status='CONFIRMADO'
+      GROUP BY d.lot_id
     ), live_loads AS (
       SELECT lh.*, COALESCE(lh.lot_id, mb.lot_id) AS legacy_lot_id
       FROM load_history lh LEFT JOIN master_batches mb ON lh.master_batch_id = mb.id
@@ -89,29 +99,33 @@ function cohortRows(start, end) {
           'fecha',s.load_date,'cliente',s.customer_name,'kg',s.kg,'importe',s.amount,'moneda',s.currency,
           'tipo_cambio',s.fx,'dinero',CASE WHEN s.currency = 'MXN' THEN s.amount
              WHEN s.currency = 'USD' AND s.fx > 0 THEN round((s.amount * s.fx)::numeric,2) END,
-          'tarimas',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',p.id,'folio',p.folio_tarima,'kg',p.total_kg) ORDER BY p.id)
+          'tarimas',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',p.id,'folio',p.folio_tarima,'kg',p.total_kg,'presentacion_kg',p.package_kg,'cajas',p.boxes_count) ORDER BY p.id)
            FROM pallet_output_summary p WHERE p.embarque_id = s.load_id AND p.lot_id = s.lot_id),'[]'::jsonb))
           ORDER BY s.load_date,s.load_id) AS details
       FROM amounts s JOIN cohort c ON c.lot_id = s.lot_id
       GROUP BY s.lot_id
     ), waste_sales AS (
       SELECT c.lot_id, jsonb_agg(jsonb_build_object('id',w.id,'folio',w.sales_folio,'fecha',w.date,
-          'proceso_kg',w.process_kg,'desecho_kg',w.waste_kg,'importe',w.total_price,
-          'proceso_dinero',round(w.total_price::numeric * COALESCE(w.process_kg,0) / NULLIF(COALESCE(w.process_kg,0) + COALESCE(w.waste_kg,0),0),2),
-          'desecho_dinero',w.total_price - round(w.total_price::numeric * COALESCE(w.process_kg,0) / NULLIF(COALESCE(w.process_kg,0) + COALESCE(w.waste_kg,0),0),2))
+          'proceso_kg',w.process_kg,'desecho_kg',w.waste_kg,'importe',w.total_price,'moneda',COALESCE(w.currency,'MXN'),'tipo_cambio',w.exchange_rate,
+          'proceso_dinero',round((w.total_price::numeric * CASE WHEN UPPER(COALESCE(w.currency,'MXN'))='MXN' THEN 1 ELSE NULLIF(w.exchange_rate,0) END) * COALESCE(w.process_kg,0) / NULLIF(COALESCE(w.process_kg,0) + COALESCE(w.waste_kg,0),0),2),
+          'desecho_dinero',round(w.total_price::numeric * CASE WHEN UPPER(COALESCE(w.currency,'MXN'))='MXN' THEN 1 ELSE NULLIF(w.exchange_rate,0) END,2) - round((w.total_price::numeric * CASE WHEN UPPER(COALESCE(w.currency,'MXN'))='MXN' THEN 1 ELSE NULLIF(w.exchange_rate,0) END) * COALESCE(w.process_kg,0) / NULLIF(COALESCE(w.process_kg,0) + COALESCE(w.waste_kg,0),0),2))
           ORDER BY w.id) AS details
       FROM sales_of_process_and_waste w LEFT JOIN master_batches mb ON w.master_batch_id = mb.id
       JOIN cohort c ON c.lot_id = COALESCE(w.lot_id,mb.lot_id)
-      WHERE w.total_price IS NOT NULL AND w.net_weight > 0
+      WHERE w.total_price IS NOT NULL AND COALESCE(w.process_kg,0)+COALESCE(w.waste_kg,0)>0
         AND lower(COALESCE(w.payment_status,'')) NOT IN ('cancelado','cancelada','cancelled','canceled','anulado')
       GROUP BY c.lot_id
     )
     SELECT c.*, round(c.kg::numeric * c.fruit_price::numeric,2) AS cost,
-      p.process_kg, p.waste_kg, p.loss_kg, p.packed_kg, p.kg_a, p.kg_b, p.ids AS production_ids,
+      COALESCE(p.process_kg,0)+COALESCE(r.process_kg,0) AS process_kg,
+      COALESCE(p.waste_kg,0)+COALESCE(r.waste_kg,0) AS waste_kg,
+      COALESCE(p.loss_kg,0)+COALESCE(r.loss_kg,0) AS loss_kg,
+      p.packed_kg,p.kg_a,p.kg_b,p.ids AS production_ids,r.ids AS repacking_ids,
+      round(i.kg*c.fruit_price::numeric,2) AS cold_fruit_cost_mxn,
       COALESCE(i.kg,0) AS cold_kg, COALESCE(i.pallets,0) AS cold_pallets, COALESCE(i.details,'[]'::jsonb) AS cold_details,
       COALESCE(s.kg,0) AS sold_kg, COALESCE(s.details,'[]'::jsonb) AS sales,
       COALESCE(ws.details,'[]'::jsonb) AS waste_sales
-    FROM cohort c LEFT JOIN cold i USING(lot_id) LEFT JOIN batches p USING(lot_id)
+    FROM cohort c LEFT JOIN cold i USING(lot_id) LEFT JOIN batches p USING(lot_id) LEFT JOIN repack r USING(lot_id)
     LEFT JOIN sales s USING(lot_id) LEFT JOIN waste_sales ws USING(lot_id)
     ORDER BY c.received_on,c.lot_id
   `;
@@ -147,6 +161,7 @@ export async function getWeeklyOrigin(start, end) {
     lotes:lots, ventas, descartes, embarques_sin_recepcion:unresolved,
     ventas_pendientes_mxn:ventas.filter(sale => sale.dinero == null),
     kg_recibidos:sum(lots,'kg'), kg_vendidos:sum(lots,'sold_kg'), kg_frio:sum(lots,'cold_kg'),
+    valor_fruta_en_frio_mxn:money(sum(lots,'cold_fruit_cost_mxn')),
     kg_proceso:sum(lots,'process_kg'), kg_desecho:sum(lots,'waste_kg'), kg_merma:sum(lots,'loss_kg'),
     renta_y_fijos:allocateFixedExpenses(expenses,start,end),
     inventario_por_calibre:porCalibre,
